@@ -2376,13 +2376,13 @@ export default function App() {
                     <table className="asset-table">
                       <thead>
                         <tr>
-                          <th>Ticker</th>
-                          <th style={{ textAlign: 'right' }}>Shares</th>
-                          <th style={{ textAlign: 'right' }}>Avg Cost</th>
-                          <th style={{ textAlign: 'right' }}>Current Price</th>
-                          <th style={{ textAlign: 'right' }}>Equity Value</th>
-                          <th style={{ textAlign: 'center' }}>Return (PnL)</th>
-                          <th style={{ textAlign: 'center' }}>Advisor Verdict</th>
+                          <th style={{ width: '12%', textAlign: 'left' }}>Ticker</th>
+                          <th style={{ width: '14%', textAlign: 'right' }}>Shares</th>
+                          <th style={{ width: '14%', textAlign: 'right' }}>Avg Cost</th>
+                          <th style={{ width: '14%', textAlign: 'right' }}>Current Price</th>
+                          <th style={{ width: '16%', textAlign: 'right' }}>Equity Value</th>
+                          <th style={{ width: '15%', textAlign: 'center' }}>Return (PnL)</th>
+                          <th style={{ width: '15%', textAlign: 'center' }}>Advisor Verdict</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2430,84 +2430,75 @@ export default function App() {
                   </div>
 
                   {advisorData ? (
-                    <div style={{ marginTop: '20px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '16px' }}>
-                        
-                        {/* Radial Gauge Visual */}
-                        <div className="radial-container" style={{ margin: '0', flexShrink: 0 }}>
-                          <svg height="120" width="120" style={{ transform: 'rotate(-90deg)' }}>
-                            {/* Track Circle */}
-                            <circle
-                              stroke="rgba(255, 255, 255, 0.03)"
-                              fill="transparent"
-                              strokeWidth="8"
-                              r="45"
-                              cx="60"
-                              cy="60"
-                            />
-                            {/* Glowing Background Glow Circle */}
-                            <circle
-                              stroke={advisorData.action === 'BUY' ? 'rgba(16, 185, 129, 0.15)' : advisorData.action === 'SELL' ? 'rgba(244, 63, 94, 0.15)' : 'rgba(251, 191, 36, 0.15)'}
-                              fill="transparent"
-                              strokeWidth="8"
-                              r="45"
-                              cx="60"
-                              cy="60"
-                              strokeDasharray={`${2 * Math.PI * 45}`}
-                              strokeDashoffset={`${2 * Math.PI * 45 * (1 - advisorData.score / 100)}`}
-                              strokeLinecap="round"
-                              style={{ filter: 'blur(4px)', transition: 'stroke-dashoffset 0.8s ease' }}
-                            />
-                            {/* Main Colored Progress Circle */}
-                            <circle
-                              stroke={advisorData.action === 'BUY' ? 'var(--color-buy)' : advisorData.action === 'SELL' ? 'var(--color-sell)' : 'var(--color-hold)'}
-                              fill="transparent"
-                              strokeWidth="8"
-                              r="45"
-                              cx="60"
-                              cy="60"
-                              strokeDasharray={`${2 * Math.PI * 45}`}
-                              strokeDashoffset={`${2 * Math.PI * 45 * (1 - advisorData.score / 100)}`}
-                              strokeLinecap="round"
-                              style={{ transition: 'stroke-dashoffset 0.8s ease' }}
-                            />
-                          </svg>
-                          <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', inset: 0 }}>
-                            <span style={{ fontSize: '20px', fontWeight: '950', color: '#fff', textShadow: advisorData.action === 'BUY' ? '0 0 10px rgba(16,185,129,0.3)' : advisorData.action === 'SELL' ? '0 0 10px rgba(244,63,94,0.3)' : '0 0 10px rgba(251,191,36,0.3)' }}>
-                              {advisorData.score}%
-                            </span>
-                            <span style={{ fontSize: '7.5px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '900', marginTop: '-2px' }}>
-                              Score
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Title and stats */}
-                        <div style={{ flex: '1', minWidth: '150px' }}>
-                          <h4 style={{ margin: 0, fontSize: '15px', fontWeight: '900', color: '#fff' }}>
-                            {advisorData.score}% Confidence
-                          </h4>
-                          <p style={{ margin: '2px 0 0 0', fontSize: '10px', color: 'var(--text-secondary)' }}>
-                            ROI-optimized weightings
-                          </p>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '12px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '4px' }}>
-                              <span style={{ color: 'var(--text-muted)' }}>Indicator Strength:</span>
-                              <span style={{ color: advisorData.score >= 65 ? 'var(--color-buy)' : advisorData.score >= 35 ? 'var(--color-hold)' : 'var(--color-sell)', fontWeight: 'bold' }}>
-                                {advisorData.score >= 70 ? 'Strong' : advisorData.score >= 45 ? 'Moderate' : 'Soft'}
-                              </span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
-                              <span style={{ color: 'var(--text-muted)' }}>Horizon Action:</span>
-                              <span style={{ color: advisorData.action === 'BUY' ? 'var(--color-buy)' : advisorData.action === 'SELL' ? 'var(--color-sell)' : 'var(--color-hold)', fontWeight: 'bold' }}>{advisorData.action}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                      </div>
+                    <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
                       
+                      {/* Radial Gauge Visual */}
+                      <div className="radial-container" style={{ margin: '0 auto', position: 'relative', width: '130px', height: '130px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg height="130" width="130" style={{ transform: 'rotate(-90deg)', transformOrigin: 'center' }}>
+                          {/* Track Circle */}
+                          <circle
+                            stroke="rgba(255, 255, 255, 0.02)"
+                            fill="transparent"
+                            strokeWidth="9"
+                            r="50"
+                            cx="65"
+                            cy="65"
+                          />
+                          {/* Glowing Background Glow Circle */}
+                          <circle
+                            stroke={advisorData.action === 'BUY' ? 'rgba(16, 185, 129, 0.15)' : advisorData.action === 'SELL' ? 'rgba(244, 63, 94, 0.15)' : 'rgba(251, 191, 36, 0.15)'}
+                            fill="transparent"
+                            strokeWidth="9"
+                            r="50"
+                            cx="65"
+                            cy="65"
+                            strokeDasharray={`${2 * Math.PI * 50}`}
+                            strokeDashoffset={`${2 * Math.PI * 50 * (1 - advisorData.score / 100)}`}
+                            strokeLinecap="round"
+                            style={{ filter: 'blur(5px)', transition: 'stroke-dashoffset 0.8s ease' }}
+                          />
+                          {/* Main Colored Progress Circle */}
+                          <circle
+                            stroke={advisorData.action === 'BUY' ? 'var(--color-buy)' : advisorData.action === 'SELL' ? 'var(--color-sell)' : 'var(--color-hold)'}
+                            fill="transparent"
+                            strokeWidth="9"
+                            r="50"
+                            cx="65"
+                            cy="65"
+                            strokeDasharray={`${2 * Math.PI * 50}`}
+                            strokeDashoffset={`${2 * Math.PI * 50 * (1 - advisorData.score / 100)}`}
+                            strokeLinecap="round"
+                            style={{ transition: 'stroke-dashoffset 0.8s ease' }}
+                          />
+                        </svg>
+                        <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', inset: 0 }}>
+                          <span style={{ fontSize: '24px', fontWeight: '950', color: '#fff', textShadow: advisorData.action === 'BUY' ? '0 0 15px rgba(16,185,129,0.45)' : advisorData.action === 'SELL' ? '0 0 15px rgba(244,63,94,0.45)' : '0 0 15px rgba(251,191,36,0.45)' }}>
+                            {advisorData.score}%
+                          </span>
+                          <span style={{ fontSize: '8px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: '900', marginTop: '-3px' }}>
+                            Confidence
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Technical DNA stats deck (Grid or beautifully spaced rows) */}
+                      <div style={{ width: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div className="glass-card" style={{ padding: '12px 16px', background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center', textAlign: 'center' }}>
+                          <span style={{ fontSize: '8.5px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '800' }}>Strength</span>
+                          <span style={{ fontSize: '13px', fontWeight: '900', color: advisorData.score >= 65 ? 'var(--color-buy)' : advisorData.score >= 35 ? 'var(--color-hold)' : 'var(--color-sell)' }}>
+                            {advisorData.score >= 70 ? 'Strong' : advisorData.score >= 45 ? 'Moderate' : 'Soft'}
+                          </span>
+                        </div>
+                        <div className="glass-card" style={{ padding: '12px 16px', background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center', textAlign: 'center' }}>
+                          <span style={{ fontSize: '8.5px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '800' }}>Verdict</span>
+                          <span style={{ fontSize: '13px', fontWeight: '900', color: advisorData.action === 'BUY' ? 'var(--color-buy)' : advisorData.action === 'SELL' ? 'var(--color-sell)' : 'var(--color-hold)' }}>
+                            {advisorData.action}
+                          </span>
+                        </div>
+                      </div>
+
                       {isCoachMode && (
-                        <div className="coach-tip-bubble" style={{ marginTop: '16px' }}>
+                        <div className="coach-tip-bubble" style={{ width: '100%', margin: '0' }}>
                           <strong>🎓 Coach Tip:</strong> The Scoring Engine weights indicators dynamically. 
                           For <strong>{selectedTicker}</strong>, local parameters suggest a clear <strong>{advisorData.action}</strong> strategy based on compounding trade backtests.
                         </div>
@@ -2516,7 +2507,7 @@ export default function App() {
                       <button
                         onClick={() => setActiveTab("coach")}
                         className="btn-dial-chart"
-                        style={{ marginTop: '16px', width: '100%' }}
+                        style={{ width: '100%', margin: '0' }}
                       >
                         Open Interactive Chart
                         <MousePointerClick style={{ width: 14, height: 14 }} />
