@@ -27,10 +27,46 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from database import init_db, get_db_connection
 from advisor import calculate_rsi, calculate_macd, calculate_bollinger_bands, generate_recommendation, evolve_weights
 
+def verify_environment():
+    print("\n[STEP 0] Verifying local development runtime environment...")
+    import subprocess
+    import re
+    
+    # 1. Verify Node
+    try:
+        node_version = subprocess.check_output(["node", "-v"], text=True).strip()
+        major_ver = int(node_version.lstrip('v').split('.')[0])
+        print(f"  - Detected Node.js: {node_version} (Major: {major_ver})")
+        if major_ver < 22:
+            print(f"  [WARNING] Capacitor demands Node.js >= 22.0.0. Current version is {node_version}.")
+        else:
+            print("  => Node.js Runtime Check: PASS")
+    except Exception as e:
+        print(f"  - [WARNING] Node.js not detected on PATH: {e}")
+        
+    # 2. Verify Java
+    try:
+        java_out = subprocess.check_output(["java", "-version"], stderr=subprocess.STDOUT, text=True)
+        match = re.search(r'"(\d+)(?:\.\d+)*', java_out)
+        if match:
+            java_major = int(match.group(1))
+            print(f"  - Detected Java JDK: {java_major}")
+            if java_major < 21:
+                print(f"  [WARNING] Capacitor 6/7+ mandates Java 21+ for Android compilations. Current: {java_major}")
+            else:
+                print("  => Java SDK Check: PASS")
+        else:
+            print("  - Detected Java version, but could not parse major release number.")
+    except Exception as e:
+        print(f"  - [WARNING] Java JDK not detected on PATH: {e}")
+
 def run_tests():
     print("=" * 60)
     print("      PORTFOLIO SIDEKICK INTEGRITY AND VERIFICATION SPRINT")
     print("=" * 60)
+    
+    # 0. Environment Checks
+    verify_environment()
     
     # 1. Database Init Verification
     print("\n[STEP 1] Validating database structure and seed data...")

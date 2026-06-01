@@ -12,8 +12,29 @@ Write-Host "==========================================================" -Foregro
 
 # 1. Verify Prerequisites
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Error "Node.js is not found on your PATH. Please install Node.js (v18+) to compile the React frontend."
+    Write-Error "Node.js is not found on your PATH. Please install Node.js (v24+) to compile the React frontend."
     Exit 1
+}
+
+# Enforce Node version >= 22.0.0
+$nodeVersion = (node -v) -replace 'v', ''
+$nodeMajor = [int]($nodeVersion.Split('.')[0])
+Write-Host "Detected Node.js version $nodeVersion (Major: $nodeMajor)" -ForegroundColor Gray
+if ($nodeMajor -lt 22) {
+    Write-Error "Capacitor requires Node.js >= 22.0.0. Please upgrade to Node 22 or 24+."
+    Exit 1
+}
+
+# Verify Java JDK >= 21 (optional locally for Windows builds, but warns if target targets Android)
+if (Get-Command java -ErrorAction SilentlyContinue) {
+    $javaVersionStr = (java -version 2>&1 | Out-String)
+    if ($javaVersionStr -match '"(\d+)(?:\.\d+)*.*"') {
+        $javaMajor = [int]$Matches[1]
+        Write-Host "Detected Java version $javaMajor" -ForegroundColor Gray
+        if ($javaMajor -lt 21) {
+            Write-Warning "Capacitor mandates Java 21+ for Android compilations. Your local Java version is $javaMajor. Please upgrade before mobile packaging."
+        }
+    }
 }
 
 # Find Python executable
@@ -32,15 +53,17 @@ if (-not (Get-Command $pythonExe -ErrorAction SilentlyContinue)) {
 }
 
 # 2. Build Frontend Assets
-Write-Host "`n[STEP 1/3] Compiling React Frontend Assets..." -ForegroundColor Yellow
+Write-Host "`n[STEP 1/3] Compiling & Linting React Frontend Assets..." -ForegroundColor Yellow
 Push-Location frontend
 try {
     Write-Host "Running npm install..." -ForegroundColor Gray
     npm install
+    Write-Host "Running ESLint verification (smoke checks)..." -ForegroundColor Gray
+    npm run lint
     Write-Host "Running npm run build..." -ForegroundColor Gray
     npm run build
 } catch {
-    Write-Error "Frontend compilation failed."
+    Write-Error "Frontend compilation or linting failed."
     Pop-Location
     Exit 1
 }
