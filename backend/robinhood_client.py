@@ -196,8 +196,13 @@ class RobinhoodClient:
             }
 
         # ── Phase 2: Complete a pending MFA challenge ──
-        if mfa_code and self._pending_challenge:
-            logger.info(f"Phase 2: Completing MFA challenge for '{profile_name}' with code '{mfa_code[:2]}...'")
+        # Execute Phase 2 if either:
+        # a) an mfa_code is provided and a challenge is pending, OR
+        # b) a push challenge (prompt) is pending (since push doesn't use a verification code)
+        is_push_pending = self._pending_challenge and self._pending_challenge.get('challenge_type') == "prompt"
+        if (mfa_code or is_push_pending) and self._pending_challenge:
+            mfa_log_str = f"code '{mfa_code[:2]}...'" if mfa_code else "push confirmation"
+            logger.info(f"Phase 2: Completing MFA challenge for '{profile_name}' with {mfa_log_str}")
             return self._complete_challenge(mfa_code, profile_name, session_dir)
 
         # ── Phase 1: Initial login attempt ──
