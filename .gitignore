@@ -1,0 +1,36 @@
+# Environments & Secrets
+.venv/
+venv/
+ENV/
+env/
+.env
+backend/sessions/
+*.pickle
+
+
+# Cache & Compilation
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.eslintcache
+build/
+dist/
+stock_toolkit.log
+
+# Node & Frontend Build
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+frontend/dist/
+
+# SQLite Database
+*.db
+stock_toolkit.db
+
+# OS Files
+.DS_Store
+Thumbs.db
