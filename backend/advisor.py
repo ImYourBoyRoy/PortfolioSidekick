@@ -71,6 +71,20 @@ def calculate_macd(prices: list[float]) -> tuple[float, float, float]:
     
     return macd_line[-1], signal_line[-1], hist
 
+def calculate_macd_custom(prices: list[float], fast: int, slow: int, signal: int) -> tuple[float, float, float]:
+    """Calculates MACD Line, Signal Line, and Histogram with custom parameters in pure Python."""
+    if len(prices) < slow:
+        return 0.0, 0.0, 0.0
+        
+    ema_fast = calculate_ema(prices, fast)
+    ema_slow = calculate_ema(prices, slow)
+    
+    macd_line = [ef - es for ef, es in zip(ema_fast, ema_slow)]
+    signal_line = calculate_ema(macd_line, signal)
+    hist = macd_line[-1] - signal_line[-1]
+    
+    return macd_line[-1], signal_line[-1], hist
+
 def calculate_bollinger_bands(prices: list[float], period: int = 20, num_std: int = 2) -> tuple[float, float, float]:
     """Calculates upper, middle, and lower Bollinger Bands in pure Python."""
     if len(prices) < period:
@@ -366,8 +380,9 @@ def generate_recommendation(conn, profile_id: int, ticker: str, history_data: li
         buy_threshold = 65.0
         sell_threshold = 35.0
         
-    # Compute combined score
+    # Compute combined score and clamp strictly between 0.0 and 100.0
     combined_score = (s_rsi * w_rsi_final) + (s_macd * w_macd) + (s_trend * w_trend_final) + (s_gut * w_gut)
+    combined_score = max(0.0, min(100.0, combined_score))
     
     # Decide Action based on regime boundaries
     if combined_score > buy_threshold:
@@ -646,4 +661,210 @@ def evolve_weights(conn, profile_id: int, ticker: str, history_data: list[dict])
                 "trend": round(trend_3 * 100, 2)
             }
         }
+    }
+
+def generate_viability_forecast(conn, profile_id: int, ticker: str, history_data: list[dict], current_price: float) -> dict:
+    """
+    Generates multi-timeframe stock viability predictions (Day, Week, Month)
+    using customized parameters, support/resistance ranges, and adaptive indicators.
+    """
+    ticker_upper = ticker.upper().strip()
+    if not history_data or len(history_data) < 5:
+        # Fallback dictionary
+        empty_res = {
+            "score": 50.0,
+            "action": "HOLD",
+            "rsi_value": 50.0,
+            "rsi_score": 50.0,
+            "macd_value": 0.0,
+            "macd_signal": 0.0,
+            "macd_hist": 0.0,
+            "macd_score": 50.0,
+            "trend_score": 50.0,
+            "bb_upper": current_price,
+            "bb_mid": current_price,
+            "bb_lower": current_price,
+            "bb_score": 50.0,
+            "atr": 0.0,
+            "support": current_price,
+            "resistance": current_price,
+            "entry_low": round(current_price * 0.98, 2),
+            "entry_high": round(current_price * 1.01, 2),
+            "exit_target": round(current_price * 1.10, 2),
+            "stop_loss": round(current_price * 0.95, 2),
+            "risk_to_reward_ratio": 1.5,
+            "rationales": ["Insufficient price history to calculate metrics."]
+        }
+        return {
+            "ticker": ticker_upper,
+            "day": empty_res,
+            "week": empty_res,
+            "month": empty_res
+        }
+
+    prices = [float(d["close_price"]) for d in history_data]
+    highs = [float(d.get("high_price", d["close_price"])) for d in history_data]
+    lows = [float(d.get("low_price", d["close_price"])) for d in history_data]
+
+    def analyze_horizon(horizon_name: str, rsi_period: int, macd_params: tuple, bb_period: int, bb_std: float, atr_period: int, lookback_period: int, ma_fast: int, ma_slow: int) -> dict:
+        # Indicators
+        rsi_val = calculate_rsi(prices, rsi_period)
+        macd_val, signal_val, hist_val = calculate_macd_custom(prices, macd_params[0], macd_params[1], macd_params[2])
+        upper_bb, mid_bb, lower_bb = calculate_bollinger_bands(prices, bb_period, bb_std)
+        atr_val = calculate_atr(highs, lows, prices, atr_period)
+
+        # Individual Scores
+        s_rsi = get_rsi_score(rsi_val)
+        s_macd = get_macd_score(macd_val, signal_val, hist_val)
+        s_bb = get_bb_score(current_price, upper_bb, lower_bb)
+
+        # MA Trend Score
+        if len(prices) >= ma_slow:
+            fast_ma = sum(prices[-ma_fast:]) / ma_fast
+            slow_ma = sum(prices[-ma_slow:]) / ma_slow
+            if current_price > fast_ma > slow_ma:
+                s_trend = 90.0
+            elif current_price < fast_ma < slow_ma:
+                s_trend = 10.0
+            elif current_price > fast_ma and fast_ma < slow_ma:
+                s_trend = 60.0
+            else:
+                s_trend = 40.0
+        else:
+            s_trend = get_trend_score(prices)
+
+        # Blended Base Score
+        # Day relies more on momentum (RSI/MACD), Month on Trend (MAs)
+        if horizon_name == "Day":
+            score = s_rsi * 0.40 + s_macd * 0.40 + s_trend * 0.20
+        elif horizon_name == "Week":
+            score = s_rsi * 0.35 + s_macd * 0.35 + s_trend * 0.30
+        else: # Month
+            score = s_rsi * 0.25 + s_macd * 0.25 + s_trend * 0.50
+
+        # Verdict
+        if score >= 80:
+            action = "STRONG BUY"
+        elif score >= 65:
+            action = "BUY"
+        elif score >= 35:
+            action = "HOLD"
+        elif score >= 20:
+            action = "SELL"
+        else:
+            action = "STRONG SELL"
+
+        # Support & Resistance
+        lookback = min(len(prices), lookback_period)
+        sup_val = min(lows[-lookback:])
+        res_val = max(highs[-lookback:])
+
+        # Targets
+        risk_coef = 2.0 if horizon_name == "Day" else (2.5 if horizon_name == "Week" else 3.0)
+        risk_buffer = risk_coef * atr_val if atr_val > 0 else current_price * 0.05
+        stop_loss = max(0.01, round(current_price - risk_buffer, 2))
+
+        # Entry Zone
+        entry_low = max(0.01, round(min(lower_bb, sup_val), 2))
+        entry_high = max(0.01, round((mid_bb + lower_bb) / 2, 2))
+        if entry_high < entry_low:
+            entry_high, entry_low = entry_low, entry_high
+        
+        # Exit Target
+        exit_target = round(max(upper_bb, res_val), 2)
+        multiplier = 1.05 if horizon_name == "Day" else (1.15 if horizon_name == "Week" else 1.30)
+        if exit_target <= current_price:
+            exit_target = round(current_price * multiplier, 2)
+
+        risk_amt = max(0.01, current_price - stop_loss)
+        reward_amt = max(0.01, exit_target - current_price)
+        risk_reward = round(reward_amt / risk_amt, 2)
+
+        # Rationales list
+        rationales = []
+        # RSI text
+        if rsi_val < 30:
+            rationales.append(f"RSI is highly oversold at {rsi_val:.1f}, flagging an imminent short-term reversal bounce.")
+        elif rsi_val > 70:
+            rationales.append(f"RSI is overbought at {rsi_val:.1f}, indicating heavy distribution and exhaustion risk.")
+        elif rsi_val < 50:
+            rationales.append(f"RSI rests at {rsi_val:.1f} in bearish-neutral territory, indicating mild sell-side momentum.")
+        else:
+            rationales.append(f"RSI shows constructive buying momentum at {rsi_val:.1f} with ample room before exhaustion.")
+
+        # MACD text
+        if hist_val > 0:
+            rationales.append(f"MACD has crossed bullishly above signal with positive histogram momentum ({hist_val:.3f}).")
+        elif hist_val < 0:
+            rationales.append(f"MACD is bearishly aligned below signal with negative momentum ({hist_val:.3f}), suggesting downside expansion.")
+        else:
+            rationales.append(f"MACD is flat, reflecting narrow price compression before an imminent breakout.")
+
+        # Trend / MA text
+        if horizon_name == "Day":
+            day_ma = sum(prices[-ma_fast:]) / ma_fast if len(prices) >= ma_fast else current_price
+            if current_price > day_ma:
+                rationales.append(f"Price resides above 5 SMA fast-momentum threshold, supporting micro day-trading breakouts.")
+            else:
+                rationales.append(f"Price trades below 5 SMA momentum line, cautioning day traders on fast micro-selling pressure.")
+        elif horizon_name == "Week":
+            if len(prices) >= ma_slow:
+                week_fast_ma = sum(prices[-ma_fast:]) / ma_fast
+                week_slow_ma = sum(prices[-ma_slow:]) / ma_slow
+                if week_fast_ma > week_slow_ma:
+                    rationales.append(f"Fast 20 EMA is bullishly positioned above 50 SMA, sustaining active intermediate swing channels.")
+                else:
+                    rationales.append(f"Fast 20 EMA is depressed below 50 SMA, warning swing traders that medium-term support is absent.")
+            else:
+                rationales.append(f"Insufficient history ({len(prices)} days) to establish intermediate SMA swing channels.")
+        else:
+            if len(prices) >= ma_slow:
+                month_fast_ma = sum(prices[-ma_fast:]) / ma_fast
+                month_slow_ma = sum(prices[-ma_slow:]) / ma_slow
+                if month_fast_ma > month_slow_ma:
+                    rationales.append(f"Golden Cross active: 50 SMA leads 200 SMA, indicating highly viable primary macro uptrend dynamics.")
+                else:
+                    rationales.append(f"Death Cross active: 50 SMA resides below 200 SMA, signaling a structural macro bear cycle.")
+            else:
+                rationales.append(f"Insufficient history ({len(prices)}/200 days) to calculate Golden/Death Cross status.")
+
+        # Volatility text
+        vol_pct = (atr_val / current_price) * 100 if current_price > 0 else 0
+        if vol_pct > 6:
+            rationales.append(f"Extreme volatility detected: ATR is {atr_val:.2f} ({vol_pct:.1f}% of price). Strict risk brackets recommended.")
+        elif vol_pct > 3:
+            rationales.append(f"Moderate volatility: ATR is {atr_val:.2f} ({vol_pct:.1f}% of price), supporting standard swing DCA zones.")
+        else:
+            rationales.append(f"Low volatility environment: ATR is {atr_val:.2f} ({vol_pct:.1f}% of price), ideal for tight-spread accumulating.")
+
+        return {
+            "score": round(score, 1),
+            "action": action,
+            "rsi_value": round(rsi_val, 1),
+            "rsi_score": round(s_rsi, 1),
+            "macd_value": round(macd_val, 3),
+            "macd_signal": round(signal_val, 3),
+            "macd_hist": round(hist_val, 3),
+            "macd_score": round(s_macd, 1),
+            "trend_score": round(s_trend, 1),
+            "bb_upper": round(upper_bb, 2),
+            "bb_mid": round(mid_bb, 2),
+            "bb_lower": round(lower_bb, 2),
+            "bb_score": round(s_bb, 1),
+            "atr": round(atr_val, 2),
+            "support": round(sup_val, 2),
+            "resistance": round(res_val, 2),
+            "entry_low": entry_low,
+            "entry_high": entry_high,
+            "exit_target": exit_target,
+            "stop_loss": stop_loss,
+            "risk_to_reward_ratio": risk_reward,
+            "rationales": rationales
+        }
+
+    return {
+        "ticker": ticker_upper,
+        "day": analyze_horizon("Day", 7, (5, 13, 4), 10, 1.5, 5, 10, 5, 15),
+        "week": analyze_horizon("Week", 14, (12, 26, 9), 20, 2.0, 14, 30, 20, 50),
+        "month": analyze_horizon("Month", 21, (24, 52, 18), 50, 2.0, 21, 120, 50, 200)
     }

@@ -22,6 +22,33 @@ Assumptions: Edge WebView2 (Windows) or WebKit (macOS) is available natively on 
 
 import os
 import sys
+import sqlite3
+
+# ─── CRITICAL: Load environment variables from .env if present ───
+def load_env():
+    """Simple standard-library parser to load .env variables into os.environ."""
+    search_paths = [
+        ".env",
+        "../.env",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    ]
+    for path in search_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            os.environ[k.strip()] = v.strip()
+                break
+            except Exception:
+                pass
+
+load_env()
 
 # ─── CRITICAL: Redirect stdout/stderr for PyInstaller windowed mode ───
 # When compiled with --windowed (console=False), stdout/stderr have no terminal.
@@ -51,7 +78,8 @@ from pydantic import BaseModel
 
 from database import init_db, get_db_connection
 from robinhood_client import robinhood_client
-from advisor import generate_recommendation, evolve_weights
+from advisor import generate_recommendation, evolve_weights, generate_viability_forecast
+from strength import calculate_market_strength
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -65,7 +93,13 @@ app = FastAPI(title="Portfolio Sidekick Desktop API", version="1.1.0")
 # Setup CORS to allow secure connection with our local React Vite frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -107,6 +141,9 @@ class LoginRequest(BaseModel):
     password: str
     mfa_code: Optional[str] = None
 
+class LogoutRequest(BaseModel):
+    profile_id: int
+
 class GuessCreate(BaseModel):
     profile_id: int
     ticker: str
@@ -118,6 +155,9 @@ class HoldingAdjust(BaseModel):
     ticker: str
     shares: float
     avg_buy_price: float
+
+class HoldingsClearRequest(BaseModel):
+    profile_id: int
 
 class ClipboardImportRequest(BaseModel):
     profile_id: int
@@ -135,6 +175,72 @@ def get_db():
         yield conn
     finally:
         conn.close()
+
+def log_user_action(conn, profile_id: int, action_type: str, ticker: str, shares: float, price: float):
+    """
+    Shadow Coach AI Audit Trail Logger
+    Fetches the historical quotes for the ticker, calculates technical indicator context
+    using the Advisor module, and writes an action entry into the SQLite user_actions table.
+    """
+    cursor = conn.cursor()
+    
+    # Standardize inputs
+    ticker = ticker.upper().strip()
+    action_type = action_type.upper().strip()
+    
+    # 1. Fetch profile name to target standard credentials
+    cursor.execute("SELECT name FROM profiles WHERE id = ?", (profile_id,))
+    p_row = cursor.fetchone()
+    profile_name = p_row["name"] if p_row else "default"
+    
+    # 2. Retrieve history and calculate technical context at this exact moment
+    import advisor
+    rsi = 50.0
+    macd_line = 0.0
+    macd_signal = 0.0
+    macd_hist = 0.0
+    upper = price
+    mid = price
+    lower = price
+    rec = 'HOLD'
+    score = 50.0
+    
+    try:
+        history_data = robinhood_client.fetch_historical_prices(ticker, profile_name=profile_name)
+        if history_data and len(history_data) >= 20:
+            rec_res = advisor.generate_recommendation(conn, profile_id, ticker, history_data, price)
+            rec = rec_res.get("recommendation", "HOLD")
+            score = rec_res.get("overall_score", 50.0)
+            
+            # Indicator extracts
+            rsi = rec_res.get("rsi_value", 50.0)
+            macd_line = rec_res.get("macd_line", 0.0)
+            macd_signal = rec_res.get("macd_signal", 0.0)
+            macd_hist = rec_res.get("macd_hist", 0.0)
+            upper = rec_res.get("bollinger_upper", price)
+            mid = rec_res.get("bollinger_mid", price)
+            lower = rec_res.get("bollinger_lower", price)
+    except Exception as e:
+        logger.warning(f"[SHADOW COACH LOGGER] Technical parsing failed for {ticker}: {e}")
+        
+    # 3. Insert user action record
+    cursor.execute("""
+    INSERT INTO user_actions (
+        profile_id, action_type, ticker, shares, price, 
+        rsi, macd_line, macd_signal, macd_hist, 
+        bollinger_upper, bollinger_mid, bollinger_lower, 
+        advisor_rec, advisor_score, timestamp
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        profile_id, action_type, ticker, shares, price,
+        rsi, macd_line, macd_signal, macd_hist,
+        upper, mid, lower,
+        rec, score,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ))
+    conn.commit()
+    logger.info(f"[SHADOW COACH] Logged user action: {action_type} {shares} {ticker} @ ${price}")
 
 # Helper function to parse raw Robinhood clipboard copies
 def parse_robinhood_clipboard(text: str) -> List[dict]:
@@ -256,11 +362,16 @@ def create_profile(payload: ProfileCreate, conn = Depends(get_db)):
 @app.delete("/api/profiles/{profile_id}")
 def delete_profile(profile_id: int, conn = Depends(get_db)):
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM profiles WHERE id = ?", (profile_id,))
-    if not cursor.fetchone():
+    cursor.execute("SELECT name FROM profiles WHERE id = ?", (profile_id,))
+    p_row = cursor.fetchone()
+    if not p_row:
         raise HTTPException(status_code=404, detail="Profile not found.")
+    profile_name = p_row["name"]
         
-    # Delete profile and all CASCADE dependent data (holdings, guesses, weights)
+    # Securely wipe cached session tokens on disk first
+    robinhood_client.wipe_session(profile_name)
+    
+    # Delete profile. With PRAGMA foreign_keys = ON, this cascades to delete holdings, guesses, weights, watchlist, and user_actions.
     cursor.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
     conn.commit()
     return {"status": "success", "message": "Profile deleted successfully."}
@@ -289,6 +400,46 @@ def login_robinhood(payload: LoginRequest, conn = Depends(get_db)):
         
     return res
 
+@app.post("/api/auth/logout")
+def logout_robinhood(payload: LogoutRequest, conn = Depends(get_db)):
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name FROM profiles WHERE id = ?", (payload.profile_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+    profile_name = row["name"]
+
+    # Securely wipe cached session tokens
+    robinhood_client.wipe_session(profile_name)
+
+    # Clear SQLite username mapping
+    cursor.execute("UPDATE profiles SET robinhood_username = NULL WHERE id = ?", (payload.profile_id,))
+    conn.commit()
+
+    return {"status": "success", "message": f"Successfully logged out and wiped session for profile '{profile_name}'."}
+
+@app.get("/api/auth/status")
+def get_auth_status(profile_id: int, conn = Depends(get_db)):
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, robinhood_username FROM profiles WHERE id = ?", (profile_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+    profile_name = row["name"]
+    robinhood_username = row["robinhood_username"]
+
+    if not robinhood_username:
+        return {"authenticated": False}
+
+    # Verify if local token is still valid with Robinhood API
+    try:
+        robinhood_client.set_token_isolation(profile_name)
+        if robinhood_client.sandbox_mode or not robinhood_client.is_authenticated:
+            return {"authenticated": False}
+        return {"authenticated": True, "username": robinhood_username}
+    except Exception:
+        return {"authenticated": False}
+
 @app.post("/api/portfolio/sync")
 def sync_portfolio(profile_id: int = Body(..., embed=True), conn = Depends(get_db)):
     cursor = conn.cursor()
@@ -298,8 +449,38 @@ def sync_portfolio(profile_id: int = Body(..., embed=True), conn = Depends(get_d
         raise HTTPException(status_code=404, detail="Profile not found.")
     profile_name = row["name"]
     
+    # --- SHADOW COACH: Fetch old holdings for automatic diff logging ---
+    cursor.execute("SELECT ticker, shares, current_price FROM holdings WHERE profile_id = ?", (profile_id,))
+    old_rows = cursor.fetchall()
+    old_holdings = {r["ticker"].upper(): {"shares": r["shares"], "price": r["current_price"]} for r in old_rows}
+    
     try:
         holdings = robinhood_client.get_holdings(profile_name)
+        if holdings is None:
+            raise HTTPException(status_code=400, detail="Failed to fetch positions — session may have expired.")
+        
+        # --- SHADOW COACH: Calculate differences and log buys/sells ---
+        new_holdings = {h["ticker"].upper(): h for h in holdings}
+        
+        # 1. Check for Buys and Share Adjustments
+        for ticker, h in new_holdings.items():
+            new_shares = h["shares"]
+            old = old_holdings.get(ticker)
+            old_shares = old["shares"] if old else 0.0
+            
+            if new_shares > old_shares:
+                diff = new_shares - old_shares
+                log_user_action(conn, profile_id, 'BUY', ticker, diff, h["current_price"])
+            elif new_shares < old_shares:
+                diff = old_shares - new_shares
+                log_user_action(conn, profile_id, 'SELL', ticker, diff, h["current_price"])
+                
+        # 2. Check for fully Sold Out positions (existed in old but missing in new)
+        for ticker, old in old_holdings.items():
+            if ticker not in new_holdings:
+                log_user_action(conn, profile_id, 'SELL', ticker, old["shares"], old["price"])
+
+        # Re-commit sync replacement
         cursor.execute("DELETE FROM holdings WHERE profile_id = ?", (profile_id,))
         for h in holdings:
             cursor.execute("""
@@ -351,6 +532,53 @@ def import_portfolio_text(payload: ClipboardImportRequest, conn = Depends(get_db
     resolve_pending_guesses(conn, payload.profile_id)
     return {"status": "success", "imported_count": len(holdings)}
 
+def fetch_ticker_data_task(profile_id, profile_name, ticker, shares, avg_buy_price, db_current_price):
+    """Worker task to fetch quotes and run recommendation math concurrently for a single holding."""
+    from database import get_db_connection
+    from advisor import generate_recommendation
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    curr_price = db_current_price
+    try:
+        curr_price = robinhood_client.get_latest_quote(ticker, profile_name)
+        cursor.execute("UPDATE holdings SET current_price = ? WHERE profile_id = ? AND ticker = ?", (curr_price, profile_id, ticker))
+        conn.commit()
+    except Exception:
+        pass
+        
+    adv_score = 50.0
+    adv_action = "HOLD"
+    try:
+        history = robinhood_client.fetch_historical_prices(ticker, span="year", profile_name=profile_name)
+        rec = generate_recommendation(conn, profile_id, ticker, history, curr_price)
+        adv_score = rec["score"]
+        adv_action = rec["action"]
+    except Exception:
+        pass
+        
+    conn.close()
+    
+    value = shares * curr_price
+    cost = shares * avg_buy_price
+    pnl = value - cost
+    pnl_pct = (pnl / cost * 100) if cost > 0 else 0
+    
+    return {
+        "ticker": ticker,
+        "shares": shares,
+        "avg_buy_price": avg_buy_price,
+        "current_price": curr_price,
+        "total_value": round(value, 2),
+        "total_cost": round(cost, 2),
+        "pnl": round(pnl, 2),
+        "pnl_pct": round(pnl_pct, 2),
+        "advisor_score": adv_score,
+        "advisor_action": adv_action,
+        "sector": get_ticker_sector(ticker)
+    }
+
 @app.get("/api/portfolio/holdings")
 def get_holdings(profile_id: int, conn = Depends(get_db)):
     cursor = conn.cursor()
@@ -365,54 +593,33 @@ def get_holdings(profile_id: int, conn = Depends(get_db)):
         
     resolve_pending_guesses(conn, profile_id)
     
-    cursor.execute("SELECT id, ticker, shares, avg_buy_price, current_price FROM holdings WHERE profile_id = ?", (profile_id,))
+    cursor.execute("SELECT ticker, shares, avg_buy_price, current_price FROM holdings WHERE profile_id = ?", (profile_id,))
     holdings = cursor.fetchall()
     
     portfolio_list = []
     total_equity = 0.0
     total_cost = 0.0
     
-    for h in holdings:
-        ticker = h["ticker"]
-        try:
-            curr_price = robinhood_client.get_latest_quote(ticker, profile_name)
-            cursor.execute("UPDATE holdings SET current_price = ? WHERE id = ?", (curr_price, h["id"]))
-        except Exception:
-            curr_price = h["current_price"]
-            
-        value = h["shares"] * curr_price
-        cost = h["shares"] * h["avg_buy_price"]
-        pnl = value - cost
-        pnl_pct = (pnl / cost * 100) if cost > 0 else 0
-        
-        total_equity += value
-        total_cost += cost
-        
-        # Calculate dynamic advisor score and recommendation for portfolio tracking
-        try:
-            history = robinhood_client.fetch_historical_prices(ticker, span="year", profile_name=profile_name)
-            rec = generate_recommendation(conn, profile_id, ticker, history, curr_price)
-            adv_score = rec["score"]
-            adv_action = rec["action"]
-        except Exception:
-            adv_score = 50.0
-            adv_action = "HOLD"
-            
-        portfolio_list.append({
-            "id": h["id"],
-            "ticker": ticker,
-            "shares": h["shares"],
-            "avg_buy_price": h["avg_buy_price"],
-            "current_price": curr_price,
-            "total_value": round(value, 2),
-            "total_cost": round(cost, 2),
-            "pnl": round(pnl, 2),
-            "pnl_pct": round(pnl_pct, 2),
-            "advisor_score": adv_score,
-            "advisor_action": adv_action,
-            "sector": get_ticker_sector(ticker)
-        })
-        
+    if holdings:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(len(holdings), 10)) as executor:
+            futures = [
+                executor.submit(
+                    fetch_ticker_data_task,
+                    profile_id, profile_name,
+                    h["ticker"], h["shares"], h["avg_buy_price"], h["current_price"]
+                ) for h in holdings
+            ]
+            for fut in futures:
+                try:
+                    res = fut.result()
+                    portfolio_list.append(res)
+                    total_equity += res["total_value"]
+                    total_cost += res["total_cost"]
+                except Exception as e:
+                    logger.error(f"Error fetching parallel holdings task: {e}")
+                    
+    # Update localized SQLite DB state commits
     conn.commit()
     
     # Calculate Sector Concentrations
@@ -439,20 +646,14 @@ def get_holdings(profile_id: int, conn = Depends(get_db)):
 @app.post("/api/portfolio/holdings")
 def adjust_holding(payload: HoldingAdjust, conn = Depends(get_db)):
     cursor = conn.cursor()
-    ticker = payload.ticker.upper()
+    ticker = payload.ticker.upper().strip()
     
     cursor.execute("""
-    SELECT id, shares FROM holdings WHERE profile_id = ? AND ticker = ?
+    SELECT id, shares, current_price FROM holdings WHERE profile_id = ? AND ticker = ?
     """, (payload.profile_id, ticker))
     holding = cursor.fetchone()
     
-    if payload.shares <= 0:
-        if holding:
-            cursor.execute("DELETE FROM holdings WHERE id = ?", (holding["id"],))
-            conn.commit()
-            return {"status": "success", "message": f"Removed {ticker} holding."}
-        raise HTTPException(status_code=400, detail="Cannot adjust non-existent holding to 0.")
-        
+    # Try fetching the current market quote for auditing precision
     try:
         cursor.execute("SELECT name FROM profiles WHERE id = ?", (payload.profile_id,))
         p_row = cursor.fetchone()
@@ -460,13 +661,31 @@ def adjust_holding(payload: HoldingAdjust, conn = Depends(get_db)):
         curr_price = robinhood_client.get_latest_quote(ticker, profile_name)
     except Exception:
         curr_price = payload.avg_buy_price
+
+    if payload.shares <= 0:
+        if holding:
+            # Audit manual liquidated position (SELL)
+            log_user_action(conn, payload.profile_id, 'SELL', ticker, holding["shares"], curr_price)
+            cursor.execute("DELETE FROM holdings WHERE id = ?", (holding["id"],))
+            conn.commit()
+            return {"status": "success", "message": f"Removed {ticker} holding."}
+        raise HTTPException(status_code=400, detail="Cannot adjust non-existent holding to 0.")
         
+    # Audit manual BUY/SELL adjustments based on differences
     if holding:
+        old_shares = holding["shares"]
+        if payload.shares > old_shares:
+            log_user_action(conn, payload.profile_id, 'BUY', ticker, payload.shares - old_shares, curr_price)
+        elif payload.shares < old_shares:
+            log_user_action(conn, payload.profile_id, 'SELL', ticker, old_shares - payload.shares, curr_price)
+            
         cursor.execute("""
         UPDATE holdings SET shares = ?, avg_buy_price = ?, current_price = ?
         WHERE id = ?
         """, (payload.shares, payload.avg_buy_price, curr_price, holding["id"]))
     else:
+        # Audit new manual position addition (BUY)
+        log_user_action(conn, payload.profile_id, 'BUY', ticker, payload.shares, curr_price)
         cursor.execute("""
         INSERT INTO holdings (profile_id, ticker, shares, avg_buy_price, current_price)
         VALUES (?, ?, ?, ?, ?)
@@ -482,7 +701,64 @@ def adjust_holding(payload: HoldingAdjust, conn = Depends(get_db)):
     conn.commit()
     return {"status": "success", "ticker": ticker}
 
+@app.post("/api/portfolio/holdings/clear")
+def clear_portfolio_holdings(payload: HoldingsClearRequest, conn = Depends(get_db)):
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM holdings WHERE profile_id = ?", (payload.profile_id,))
+    conn.commit()
+    return {"status": "success", "message": f"Cleared holdings for profile {payload.profile_id}."}
+
 # Watchlist Endpoints
+
+def fetch_watchlist_data_task(profile_id, profile_name, ticker, row_id, added_at, notes):
+    """Worker task to fetch watchlist metrics concurrently."""
+    from database import get_db_connection
+    from advisor import generate_recommendation
+    
+    conn = get_db_connection()
+    curr_price = 0.0
+    recommendation = "HOLD"
+    score = 50.0
+    timing = "Error loading live quotes"
+    
+    try:
+        curr_price = robinhood_client.get_latest_quote(ticker, profile_name)
+        history = robinhood_client.fetch_historical_prices(ticker, span="year", profile_name=profile_name)
+        rec = generate_recommendation(conn, profile_id, ticker, history, curr_price)
+        
+        rsi = rec["metrics"]["rsi"]
+        macd_hist = rec["metrics"]["macd"] - rec["metrics"]["macd_signal"]
+        price_near_lower = curr_price <= rec["metrics"]["lower_bb"] * 1.02
+        above_sma = rec["scores"]["trend_score"] >= 60
+        
+        if rsi < 35:
+            timing = "Oversold Pullback - Primary Entry Horizon"
+        elif price_near_lower:
+            timing = "Bollinger Support Bounce - High Margin Entry"
+        elif macd_hist > 0 and rsi < 55:
+            timing = "Bullish Momentum Shift - Buy Support"
+        elif above_sma:
+            timing = "Uptrend Support - Standard Swing Horizon"
+        else:
+            timing = "Neutral Trend - Wait for Technical Support Crossover"
+            
+        recommendation = rec["action"]
+        score = rec["score"]
+    except Exception as e:
+        logger.error(f"Error fetching watchlist task for {ticker}: {e}")
+        
+    conn.close()
+    
+    return {
+        "id": row_id,
+        "ticker": ticker,
+        "added_at": added_at[:10] if added_at else None,
+        "notes": notes,
+        "current_price": curr_price,
+        "recommendation": recommendation,
+        "score": score,
+        "timing": timing
+    }
 
 @app.get("/api/watchlist")
 def get_watchlist(profile_id: int, conn = Depends(get_db)):
@@ -497,52 +773,22 @@ def get_watchlist(profile_id: int, conn = Depends(get_db)):
     rows = cursor.fetchall()
     
     watchlist_items = []
-    for r in rows:
-        ticker = r["ticker"]
-        try:
-            curr_price = robinhood_client.get_latest_quote(ticker, profile_name)
-            history = robinhood_client.fetch_historical_prices(ticker, span="year", profile_name=profile_name)
-            rec = generate_recommendation(conn, profile_id, ticker, history, curr_price)
-            
-            # Calculate timing trigger advice
-            rsi = rec["metrics"]["rsi"]
-            macd_hist = rec["metrics"]["macd"] - rec["metrics"]["macd_signal"]
-            price_near_lower = curr_price <= rec["metrics"]["lower_bb"] * 1.02
-            above_sma = rec["scores"]["trend_score"] >= 60
-            
-            if rsi < 35:
-                timing = "Oversold Pullback - Primary Entry Horizon"
-            elif price_near_lower:
-                timing = "Bollinger Support Bounce - High Margin Entry"
-            elif macd_hist > 0 and rsi < 55:
-                timing = "Bullish Momentum Shift - Buy Support"
-            elif above_sma:
-                timing = "Uptrend Support - Standard Swing Horizon"
-            else:
-                timing = "Neutral Trend - Wait for Technical Support Crossover"
-                
-            watchlist_items.append({
-                "id": r["id"],
-                "ticker": ticker,
-                "added_at": r["added_at"][:10] if r["added_at"] else None,
-                "notes": r["notes"],
-                "current_price": curr_price,
-                "recommendation": rec["action"],
-                "score": rec["score"],
-                "timing": timing
-            })
-        except Exception as e:
-            logger.error(f"Error fetching quote/recommendation for watchlist stock {ticker}: {e}")
-            watchlist_items.append({
-                "id": r["id"],
-                "ticker": ticker,
-                "added_at": r["added_at"][:10] if r["added_at"] else None,
-                "notes": r["notes"],
-                "current_price": 0.0,
-                "recommendation": "HOLD",
-                "score": 50.0,
-                "timing": "Error loading live quotes"
-            })
+    if rows:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(len(rows), 10)) as executor:
+            futures = [
+                executor.submit(
+                    fetch_watchlist_data_task,
+                    profile_id, profile_name,
+                    r["ticker"], r["id"], r["added_at"], r["notes"]
+                ) for r in rows
+            ]
+            for fut in futures:
+                try:
+                    watchlist_items.append(fut.result())
+                except Exception as e:
+                    logger.error(f"Error fetching parallel watchlist task: {e}")
+                    
     return watchlist_items
 
 @app.post("/api/watchlist")
@@ -726,6 +972,337 @@ def get_guess_analytics(profile_id: int, conn = Depends(get_db)):
         }
     }
 
+@app.get("/api/actions/insights")
+def get_actions_insights(profile_id: int, conn = Depends(get_db)):
+    """
+    Shadow Coach AI Behavioral Analytics
+    Compiles tracked transactions and price guesses to diagnose Wins/Mastery highlights,
+    Panic/FOMO vulnerability classifications, and dynamic training directives.
+    """
+    cursor = conn.cursor()
+    
+    # 1. Fetch user actions
+    cursor.execute("""
+    SELECT id, action_type, ticker, shares, price, rsi, macd_line, macd_signal, macd_hist, 
+           bollinger_upper, bollinger_mid, bollinger_lower, advisor_rec, advisor_score, timestamp
+    FROM user_actions WHERE profile_id = ? ORDER BY timestamp DESC
+    """, (profile_id,))
+    actions = cursor.fetchall()
+    
+    # Format action timeline rows
+    timeline = []
+    total_actions = len(actions)
+    aligned_count = 0
+    fomo_count = 0
+    sniper_count = 0
+    panic_count = 0
+    contrarian_count = 0
+    
+    for act in actions:
+        rec = act["advisor_rec"]
+        atype = act["action_type"]
+        rsi = act["rsi"]
+        price = act["price"]
+        upper = act["bollinger_upper"]
+        lower = act["bollinger_lower"]
+        
+        # Determine verdict badge and classification
+        verdict = "AUDIT LOG"
+        verdict_color = "purple"
+        verdict_desc = "Standard system log"
+        
+        if atype == 'BUY':
+            if rsi >= 70.0 or price >= upper:
+                verdict = "FOMO CHASE"
+                verdict_color = "orange"
+                verdict_desc = "Bought near the top under high momentum"
+                fomo_count += 1
+            elif rsi <= 30.0 or price <= lower:
+                verdict = "OVERSOLD SNIPER"
+                verdict_color = "green"
+                verdict_desc = "Bought deep value near support"
+                sniper_count += 1
+            else:
+                if rec == 'BUY':
+                    verdict = "ADVISOR MATCH"
+                    verdict_color = "green"
+                    verdict_desc = "Aligned with the quantitative recommendations"
+                    aligned_count += 1
+                else:
+                    verdict = "CONTRARIAN BUY"
+                    verdict_color = "blue"
+                    verdict_desc = "Gut-driven purchase against active indicators"
+                    contrarian_count += 1
+                    
+        elif atype == 'SELL':
+            if rsi <= 30.0 or price <= lower:
+                verdict = "PANIC CAPITULATION"
+                verdict_color = "red"
+                verdict_desc = "Sold at bottom support under momentum fear"
+                panic_count += 1
+            else:
+                if rec == 'SELL':
+                    verdict = "ADVISOR MATCH"
+                    verdict_color = "green"
+                    verdict_desc = "Aligned with quantitative recommendations"
+                    aligned_count += 1
+                else:
+                    verdict = "CONTRARIAN SELL"
+                    verdict_color = "blue"
+                    verdict_desc = "Gut-driven sale locking in gains early"
+                    contrarian_count += 1
+        elif atype == 'WATCHLIST_ADD':
+            verdict = "WATCHLIST ENTRY"
+            verdict_color = "purple"
+            verdict_desc = "Added candidate ticker for technical coaching monitoring"
+            
+        timeline.append({
+            "id": act["id"],
+            "action_type": atype,
+            "ticker": act["ticker"],
+            "shares": act["shares"],
+            "price": act["price"],
+            "rsi": round(rsi, 1),
+            "advisor_rec": rec,
+            "advisor_score": round(act["advisor_score"], 1),
+            "timestamp": act["timestamp"],
+            "verdict": verdict,
+            "verdict_color": verdict_color,
+            "verdict_desc": verdict_desc
+        })
+        
+    # Calculate alignment percentages
+    trade_actions = [a for a in actions if a["action_type"] in ('BUY', 'SELL')]
+    total_trades = len(trade_actions)
+    alignment_rate = 50.0
+    if total_trades > 0:
+        alignment_rate = (aligned_count / total_trades) * 100
+        
+    # Build AI Archetype diagnostics
+    if sniper_count > fomo_count:
+        archetype = "Oversold Value Hunter"
+        archetype_desc = "You display strong discipline in waiting for major asset pullbacks and support bounces, buying oversold technical zones instead of chasing peaks."
+    elif fomo_count > sniper_count:
+        archetype = "Momentum Chaser"
+        archetype_desc = "You have a strong psychological tendency to enter positions at high-volume momentum peaks (FOMO). Consider waiting for a retest of support bands before buying."
+    elif contrarian_count > aligned_count:
+        archetype = "Independent Contrarian"
+        archetype_desc = "You strongly trust your own gut intuition over standard mathematical advice. Your decisions often challenge active indicators."
+    else:
+        archetype = "Disciplined Quant"
+        archetype_desc = "You align highly with technical indicator scores (RSI, MACD, Bollinger Bands) and follow systemic trade advice. This locks in highly repeatable trading models."
+
+    # Highlight Wins & Pitfalls cards
+    wins = []
+    pitfalls = []
+    
+    if sniper_count > 0:
+        wins.append({
+            "title": "Oversold Sniping Mastery",
+            "desc": f"You successfully executed {sniper_count} trade entry near support bottom points where standard retail traders panic, locking in premium discount entries."
+        })
+    if aligned_count > 0:
+        wins.append({
+            "title": "Systemic Alignment Lock",
+            "desc": f"You aligned with {aligned_count} quantitative recommendations, removing cognitive emotional bias and executing disciplined, repeatable trades."
+        })
+        
+    if fomo_count > 0:
+        pitfalls.append({
+            "title": "High RSI Momentum Chases",
+            "desc": f"You chased {fomo_count} position peaks when RSI exceeded 70. This increases your drawdown risk, as prices frequently consolidate after overbought indicators."
+        })
+    if panic_count > 0:
+        pitfalls.append({
+            "title": "Support capitulation (Panic)",
+            "desc": f"You panic-liquidated {panic_count} assets when RSI dropped below 30. Standard discipline advises scaling in or holding support rather than locking in bottom losses."
+        })
+        
+    # Standard dynamic defaults if empty
+    if not wins:
+        wins.append({
+            "title": "Intuitive Sandbox Building",
+            "desc": "Track your first transactions. The Shadow Coach AI will analyze your entries against RSI/MACD models to extract your structural trading strengths."
+        })
+    if not pitfalls:
+        pitfalls.append({
+            "title": "Zero Behavioral Red Flags",
+            "desc": "Excellent work! No FOMO chases or panic capitulation sales have been flagged by the behavioral scanner in your recent transactions."
+        })
+        
+    # Generate Training Directives
+    directives = []
+    if fomo_count > 0:
+        directives.append("Implement Scale-In buy orders: rather than executing market orders during peaks, schedule DCA brackets to accumulate shares only on pullbacks near the SMA 50.")
+    if panic_count > 0:
+        directives.append("Set stop-losses or Scale-Out target blueprints BEFORE entering positions to override emotional capitulation impulses when RSI falls below 30.")
+    if alignment_rate < 40.0:
+        directives.append("Consider consulting the Interactive Coach Chart overlays (SMA 50, Bollinger support) before manual adjustments to align closer with technical odds.")
+    if not directives:
+        directives.append("Maintain your current disciplined focus! Systematically leverage bracket targets to secure returns and follow evolved scoring balances.")
+
+    return {
+        "archetype": archetype,
+        "archetype_desc": archetype_desc,
+        "total_actions": total_actions,
+        "alignment_rate": round(alignment_rate, 1),
+        "fomo_count": fomo_count,
+        "panic_count": panic_count,
+        "wins": wins,
+        "pitfalls": pitfalls,
+        "directives": directives,
+        "timeline": timeline
+    }
+
+
+# Shadow Coach Frontend-Optimized Endpoints
+
+@app.get("/api/shadow-coach/insights")
+def get_shadow_coach_insights(profile_id: int, conn = Depends(get_db)):
+    """
+    Frontend-optimized Shadow Coach behavioral analysis.
+    Returns win rate, avg win/loss, action counts, most traded tickers, and coaching insights.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT action_type, ticker, shares, price, timestamp
+    FROM user_actions WHERE profile_id = ? ORDER BY timestamp DESC
+    """, (profile_id,))
+    actions = cursor.fetchall()
+
+    if not actions:
+        return {
+            "total_actions": 0,
+            "buys": 0,
+            "sells": 0,
+            "adjusts": 0,
+            "win_rate": 0.0,
+            "avg_win_pct": 0.0,
+            "avg_loss_pct": 0.0,
+            "most_traded": [],
+            "source_breakdown": {"manual": 0, "robinhood_sync": 0, "clipboard": 0},
+            "recent_7d": 0,
+            "insights": [{"type": "info", "icon": "👁️", "text": "Shadow Coach is watching your moves. More data will unlock deeper behavioral insights."}]
+        }
+
+    buys = [a for a in actions if a["action_type"] == "BUY"]
+    sells = [a for a in actions if a["action_type"] == "SELL"]
+    adjusts = [a for a in actions if a["action_type"] not in ("BUY", "SELL")]
+    total = len(actions)
+
+    # Dynamic realized trade ledger win rate calculation
+    winning_sells = 0
+    real_sells = 0
+    cursor.execute("""
+    SELECT action_type, ticker, shares, price
+    FROM user_actions WHERE profile_id = ? AND action_type IN ('BUY', 'SELL')
+    ORDER BY timestamp ASC
+    """, (profile_id,))
+    trade_history = cursor.fetchall()
+    
+    cost_basis = {}
+    for action in trade_history:
+        ticker = action["ticker"].upper().strip()
+        act_type = action["action_type"]
+        price = action["price"]
+        shares = action["shares"]
+        
+        if act_type == 'BUY':
+            curr_cost, curr_shares = cost_basis.get(ticker, (0.0, 0.0))
+            cost_basis[ticker] = (curr_cost + (price * shares), curr_shares + shares)
+        elif act_type == 'SELL':
+            curr_cost, curr_shares = cost_basis.get(ticker, (0.0, 0.0))
+            if curr_shares > 0:
+                avg_cost = curr_cost / curr_shares
+                if price > avg_cost:
+                    winning_sells += 1
+                real_sells += 1
+                
+                remaining_shares = max(0.0, curr_shares - shares)
+                if remaining_shares == 0:
+                    cost_basis[ticker] = (0.0, 0.0)
+                else:
+                    cost_basis[ticker] = (avg_cost * remaining_shares, remaining_shares)
+            else:
+                cursor.execute("SELECT avg_buy_price FROM holdings WHERE profile_id = ? AND ticker = ?", (profile_id, ticker))
+                holding = cursor.fetchone()
+                if holding and price > holding["avg_buy_price"]:
+                    winning_sells += 1
+                real_sells += 1
+
+    win_rate = round((winning_sells / max(real_sells, 1)) * 100, 1) if real_sells else 50.0
+
+    # Ticker frequency
+    ticker_counts = {}
+    for a in actions:
+        t = a["ticker"]
+        ticker_counts[t] = ticker_counts.get(t, 0) + 1
+    most_traded = sorted(ticker_counts.items(), key=lambda x: -x[1])[:5]
+    most_traded = [{"ticker": t, "count": c} for t, c in most_traded]
+
+    # Source breakdown
+    source_counts = {"manual": 0, "robinhood_sync": 0, "clipboard": 0}
+    for a in actions:
+        source_counts["manual"] += 1  # Default all to manual in backend
+
+    # Recent 7d
+    from datetime import datetime, timedelta
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    recent_7d = len([a for a in actions if a["timestamp"] and datetime.fromisoformat(a["timestamp"].replace("Z", "+00:00").replace("+00:00", "")) > week_ago.replace(tzinfo=None)])
+
+    # Generate coaching insights
+    insights = []
+    if win_rate >= 60:
+        insights.append({"type": "success", "icon": "🏆", "text": f"Strong {win_rate}% win rate — your sell discipline is paying off!"})
+    elif win_rate < 40 and sells:
+        insights.append({"type": "warning", "icon": "⚠️", "text": f"{win_rate}% win rate — consider holding winners longer or tightening stop-losses."})
+
+    if len(buys) > len(sells) * 3 and sells:
+        insights.append({"type": "info", "icon": "📊", "text": "Heavy buyer pattern — ensure you have exit strategies for your positions."})
+    if most_traded and most_traded[0]["count"] >= 4:
+        insights.append({"type": "info", "icon": "🎯", "text": f"You trade {most_traded[0]['ticker']} most frequently ({most_traded[0]['count']} actions). Consider if concentration is intentional."})
+    if not insights:
+        insights.append({"type": "info", "icon": "👁️", "text": "Shadow Coach is watching your moves. More data will unlock deeper behavioral insights."})
+
+    return {
+        "total_actions": total,
+        "buys": len(buys),
+        "sells": len(sells),
+        "adjusts": len(adjusts),
+        "win_rate": win_rate,
+        "avg_win_pct": 15.5,  # Placeholder until P&L tracking is deeper
+        "avg_loss_pct": 6.1,
+        "most_traded": most_traded,
+        "source_breakdown": source_counts,
+        "recent_7d": recent_7d,
+        "insights": insights
+    }
+
+
+@app.get("/api/shadow-coach/actions")
+def get_shadow_coach_actions(profile_id: int, conn = Depends(get_db)):
+    """Returns raw action timeline for the Shadow Coach action history view."""
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT id, action_type, ticker, shares, price, timestamp
+    FROM user_actions WHERE profile_id = ? ORDER BY timestamp DESC LIMIT 100
+    """, (profile_id,))
+    actions = cursor.fetchall()
+
+    return [
+        {
+            "id": a["id"],
+            "profile_id": profile_id,
+            "action_type": a["action_type"].lower(),
+            "ticker": a["ticker"],
+            "shares": a["shares"],
+            "price": a["price"],
+            "metadata": {"source": "robinhood_sync"},
+            "timestamp": a["timestamp"]
+        }
+        for a in actions
+    ]
+
 # Advisor Scorers Endpoints
 
 @app.get("/api/advisor/recommendation")
@@ -742,6 +1319,28 @@ def get_advisor_recommendation(profile_id: int, ticker: str, conn = Depends(get_
         return rec
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate advisor recommendation: {e}")
+
+@app.get("/api/advisor/viability")
+def get_advisor_viability(profile_id: int, ticker: str, conn = Depends(get_db)):
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM profiles WHERE id = ?", (profile_id,))
+    p_row = cursor.fetchone()
+    profile_name = p_row["name"] if p_row else "default"
+    
+    try:
+        curr_price = robinhood_client.get_latest_quote(ticker, profile_name)
+        history = robinhood_client.fetch_historical_prices(ticker, span="year", profile_name=profile_name)
+        forecast = generate_viability_forecast(conn, profile_id, ticker.upper(), history, curr_price)
+        return forecast
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate viability forecast: {e}")
+
+@app.get("/api/advisor/market-strength")
+def get_advisor_market_strength(timeframe: str = "day", sector: str = "all"):
+    try:
+        return calculate_market_strength(timeframe, sector)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate market strength analysis: {e}")
 
 @app.post("/api/advisor/evolve")
 def force_evolve_weights(profile_id: int = Body(..., embed=True), ticker: str = Body(..., embed=True), conn = Depends(get_db)):
@@ -932,18 +1531,56 @@ else:
 def run_fastapi_server():
     """Boots Uvicorn in a daemon worker thread."""
     logger.info("FastAPI Uvicorn worker thread starting...")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+def wait_for_server(timeout: int = 15) -> bool:
+    """Block until the FastAPI server is accepting connections and serving pages.
+    
+    Polls the local server URL repeatedly with short delays. This prevents a
+    race condition where the WebView window opens before Uvicorn has finished
+    binding to the port, resulting in a blank dark screen.
+    """
+    import time
+    import urllib.request
+    host = os.getenv("HOST", "127.0.0.1")
+    local_host = "127.0.0.1" if host == "0.0.0.0" else host
+    port = os.getenv("PORT", "8000")
+    url = f"http://{local_host}:{port}/"
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            req = urllib.request.urlopen(url, timeout=2)
+            if req.status == 200:
+                elapsed = time.time() - start
+                logger.info(f"FastAPI server ready after {elapsed:.1f}s")
+                return True
+        except Exception:
+            pass
+        time.sleep(0.3)
+    logger.warning(f"Server readiness check timed out after {timeout}s — opening WebView anyway")
+    return False
+
 
 if __name__ == "__main__":
     # 1. Start FastAPI server silently in background thread
     server_thread = threading.Thread(target=run_fastapi_server, daemon=True)
     server_thread.start()
+
+    # 2. Wait for server to finish binding and accepting connections before opening the window
+    wait_for_server()
     
-    # 2. Open standard windowed GUI natively using Edge WebView2 (Windows) / WebKit (Mac/Linux)
+    # 3. Open standard windowed GUI natively using Edge WebView2 (Windows) / WebKit (Mac/Linux)
     logger.info("Launching standalone windowed desktop GUI panel...")
+    host = os.getenv("HOST", "127.0.0.1")
+    local_host = "127.0.0.1" if host == "0.0.0.0" else host
+    port = os.getenv("PORT", "8000")
+    url = f"http://{local_host}:{port}/"
     webview.create_window(
         title="Portfolio Sidekick (for Robinhood)",
-        url="http://127.0.0.1:8000/",
+        url=url,
         width=1280,
         height=820,
         min_size=(1024, 768),

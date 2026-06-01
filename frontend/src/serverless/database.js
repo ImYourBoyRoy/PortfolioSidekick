@@ -13,7 +13,20 @@ const KEYS = {
   HOLDINGS: "st_holdings",
   GUESSES: "st_guesses",
   WATCHLIST: "st_watchlist",
-  WEIGHTS: "st_weights"
+  WEIGHTS: "st_weights",
+  ACTIONS: "st_actions",
+  SETTINGS: "st_settings"
+};
+
+const safeParse = (key, fallback = []) => {
+  try {
+    const val = localStorage.getItem(key);
+    if (!val) return fallback;
+    return JSON.parse(val) || fallback;
+  } catch (e) {
+    console.error(`Error parsing localStorage key "${key}":`, e);
+    return fallback;
+  }
 };
 
 // Seed authentic 'Example' profile and realistic mock assets matching real app visuals
@@ -30,20 +43,16 @@ const seedInitialData = () => {
 
   // 2. Seed Holdings matching exact screenshot assets
   const holdings = [
-    { id: 1, profile_id: 1, ticker: "QBTS", shares: 61.29, avg_buy_price: 29.87, current_price: 30.16, updated_at: new Date().toISOString() },
-    { id: 2, profile_id: 1, ticker: "RGTI", shares: 45.56, avg_buy_price: 25.41, current_price: 23.86, updated_at: new Date().toISOString() },
-    { id: 3, profile_id: 1, ticker: "ZYNE", shares: 1.00, avg_buy_price: 10.00, current_price: 100.31, updated_at: new Date().toISOString() },
-    { id: 4, profile_id: 1, ticker: "SLRC", shares: 50.84, avg_buy_price: 13.08, current_price: 12.98, updated_at: new Date().toISOString() },
-    { id: 5, profile_id: 1, ticker: "ARKK", shares: 19.00, avg_buy_price: 81.83, current_price: 82.28, updated_at: new Date().toISOString() },
-    { id: 6, profile_id: 1, ticker: "NVDA", shares: 41.35, avg_buy_price: 212.49, current_price: 210.85, updated_at: new Date().toISOString() },
-    { id: 7, profile_id: 1, ticker: "AMD", shares: 15.97, avg_buy_price: 515.13, current_price: 511.16, updated_at: new Date().toISOString() },
-    { id: 8, profile_id: 1, ticker: "IONQ", shares: 55.83, avg_buy_price: 71.05, current_price: 71.76, updated_at: new Date().toISOString() },
-    { id: 9, profile_id: 1, ticker: "AVGO", shares: 4.64, avg_buy_price: 446.07, current_price: 465.16, updated_at: new Date().toISOString() },
-    { id: 10, profile_id: 1, ticker: "PLTR", shares: 8.13, avg_buy_price: 156.38, current_price: 171.18, updated_at: new Date().toISOString() },
-    { id: 11, profile_id: 1, ticker: "TSM", shares: 4.62, avg_buy_price: 419.23, current_price: 413.86, updated_at: new Date().toISOString() },
-    { id: 12, profile_id: 1, ticker: "INTC", shares: 112.91, avg_buy_price: 115.33, current_price: 109.65, updated_at: new Date().toISOString() },
-    { id: 13, profile_id: 1, ticker: "NUKZ", shares: 7.98, avg_buy_price: 2.39, current_price: 2.40, updated_at: new Date().toISOString() },
-    { id: 14, profile_id: 1, ticker: "NLR", shares: 3.46, avg_buy_price: 133.18, current_price: 132.47, updated_at: new Date().toISOString() }
+    { id: 1, profile_id: 1, ticker: "NVDA", shares: 120, avg_buy_price: 110.50, current_price: 122.45, updated_at: new Date().toISOString() },
+    { id: 2, profile_id: 1, ticker: "AMD", shares: 60, avg_buy_price: 145.00, current_price: 150.20, updated_at: new Date().toISOString() },
+    { id: 3, profile_id: 1, ticker: "PLTR", shares: 250, avg_buy_price: 21.00, current_price: 34.50, updated_at: new Date().toISOString() },
+    { id: 4, profile_id: 1, ticker: "MSFT", shares: 35, avg_buy_price: 380.00, current_price: 415.00, updated_at: new Date().toISOString() },
+    { id: 5, profile_id: 1, ticker: "AAPL", shares: 45, avg_buy_price: 170.00, current_price: 190.00, updated_at: new Date().toISOString() },
+    { id: 6, profile_id: 1, ticker: "AMZN", shares: 80, avg_buy_price: 150.00, current_price: 180.00, updated_at: new Date().toISOString() },
+    { id: 7, profile_id: 1, ticker: "TSLA", shares: 50, avg_buy_price: 190.00, current_price: 175.00, updated_at: new Date().toISOString() },
+    { id: 8, profile_id: 1, ticker: "QBTS", shares: 100, avg_buy_price: 12.00, current_price: 15.50, updated_at: new Date().toISOString() },
+    { id: 9, profile_id: 1, ticker: "RGTI", shares: 80, avg_buy_price: 14.00, current_price: 16.80, updated_at: new Date().toISOString() },
+    { id: 10, profile_id: 1, ticker: "NUKZ", shares: 200, avg_buy_price: 2.50, current_price: 2.80, updated_at: new Date().toISOString() }
   ];
   localStorage.setItem(KEYS.HOLDINGS, JSON.stringify(holdings));
 
@@ -89,6 +98,19 @@ const seedInitialData = () => {
     }
   };
   localStorage.setItem(KEYS.WEIGHTS, JSON.stringify(weights));
+
+  // 5. Seed mock user actions for Shadow Coach demonstration
+  const actions = [
+    { id: 1, profile_id: 1, action_type: "buy", ticker: "AAPL", shares: 15, price: 172.50, metadata: { source: "manual", reason: "Earnings beat expected" }, timestamp: new Date(Date.now() - 45 * 86400000).toISOString() },
+    { id: 2, profile_id: 1, action_type: "buy", ticker: "NVDA", shares: 10, price: 875.00, metadata: { source: "robinhood_sync", reason: "AI momentum play" }, timestamp: new Date(Date.now() - 38 * 86400000).toISOString() },
+    { id: 3, profile_id: 1, action_type: "sell", ticker: "TSLA", shares: 5, price: 248.30, metadata: { source: "manual", reason: "Taking profit on rally", pnl_pct: 12.4 }, timestamp: new Date(Date.now() - 30 * 86400000).toISOString() },
+    { id: 4, profile_id: 1, action_type: "buy", ticker: "MSFT", shares: 8, price: 415.00, metadata: { source: "robinhood_sync", reason: "Cloud growth thesis" }, timestamp: new Date(Date.now() - 22 * 86400000).toISOString() },
+    { id: 5, profile_id: 1, action_type: "sell", ticker: "AMD", shares: 12, price: 155.20, metadata: { source: "manual", reason: "Stop-loss triggered", pnl_pct: -6.2 }, timestamp: new Date(Date.now() - 15 * 86400000).toISOString() },
+    { id: 6, profile_id: 1, action_type: "adjust", ticker: "AAPL", shares: 20, price: 189.50, metadata: { source: "manual", reason: "Averaging up on dip", prev_shares: 15 }, timestamp: new Date(Date.now() - 10 * 86400000).toISOString() },
+    { id: 7, profile_id: 1, action_type: "buy", ticker: "GOOGL", shares: 6, price: 175.80, metadata: { source: "robinhood_sync", reason: "AI search dominance" }, timestamp: new Date(Date.now() - 5 * 86400000).toISOString() },
+    { id: 8, profile_id: 1, action_type: "sell", ticker: "NVDA", shares: 3, price: 1125.00, metadata: { source: "manual", reason: "Partial profit on 28% run", pnl_pct: 28.6 }, timestamp: new Date(Date.now() - 2 * 86400000).toISOString() }
+  ];
+  localStorage.setItem(KEYS.ACTIONS, JSON.stringify(actions));
 };
 
 // Initialize seed only if the screenshot/seed_visuals flag is set in localStorage
@@ -99,7 +121,7 @@ if (typeof localStorage !== "undefined" && localStorage.getItem("portfolio_sidek
 export const localDb = {
   // Profiles
   getProfiles: () => {
-    return JSON.parse(localStorage.getItem(KEYS.PROFILES) || "[]");
+    return safeParse(KEYS.PROFILES, []);
   },
 
   createProfile: (name) => {
@@ -117,27 +139,27 @@ export const localDb = {
     localStorage.setItem(KEYS.PROFILES, JSON.stringify(profiles));
 
     // Clear cascaded dependencies
-    let holdings = JSON.parse(localStorage.getItem(KEYS.HOLDINGS) || "[]");
+    let holdings = safeParse(KEYS.HOLDINGS, []);
     holdings = holdings.filter(h => h.profile_id !== id);
     localStorage.setItem(KEYS.HOLDINGS, JSON.stringify(holdings));
 
-    let guesses = JSON.parse(localStorage.getItem(KEYS.GUESSES) || "[]");
+    let guesses = safeParse(KEYS.GUESSES, []);
     guesses = guesses.filter(g => g.profile_id !== id);
     localStorage.setItem(KEYS.GUESSES, JSON.stringify(guesses));
 
-    let watchlist = JSON.parse(localStorage.getItem(KEYS.WATCHLIST) || "[]");
+    let watchlist = safeParse(KEYS.WATCHLIST, []);
     watchlist = watchlist.filter(w => w.profile_id !== id);
     localStorage.setItem(KEYS.WATCHLIST, JSON.stringify(watchlist));
   },
 
   // Holdings
   getHoldings: (profileId) => {
-    const holdings = JSON.parse(localStorage.getItem(KEYS.HOLDINGS) || "[]");
+    const holdings = safeParse(KEYS.HOLDINGS, []);
     return holdings.filter(h => h.profile_id === profileId);
   },
 
   updateHolding: (profileId, ticker, shares, avgBuyPrice, currentPrice = null) => {
-    const holdings = JSON.parse(localStorage.getItem(KEYS.HOLDINGS) || "[]");
+    const holdings = safeParse(KEYS.HOLDINGS, []);
     const formattedTicker = ticker.toUpperCase().trim();
     const existing = holdings.find(h => h.profile_id === profileId && h.ticker === formattedTicker);
 
@@ -171,7 +193,7 @@ export const localDb = {
 
   // Guesses
   getGuesses: (profileId) => {
-    const guesses = JSON.parse(localStorage.getItem(KEYS.GUESSES) || "[]");
+    const guesses = safeParse(KEYS.GUESSES, []);
     const profileGuesses = guesses.filter(g => g.profile_id === profileId);
     return {
       pending: profileGuesses.filter(g => g.status === "pending"),
@@ -180,7 +202,7 @@ export const localDb = {
   },
 
   createGuess: (profileId, ticker, targetPrice, initialPrice, timeframeDays) => {
-    const guesses = JSON.parse(localStorage.getItem(KEYS.GUESSES) || "[]");
+    const guesses = safeParse(KEYS.GUESSES, []);
     const newId = guesses.length > 0 ? Math.max(...guesses.map(g => g.id)) + 1 : 1;
     const newGuess = {
       id: newId,
@@ -199,7 +221,7 @@ export const localDb = {
   },
 
   resolveGuesses: (profileId, ticker, currentPrice) => {
-    const guesses = JSON.parse(localStorage.getItem(KEYS.GUESSES) || "[]");
+    const guesses = safeParse(KEYS.GUESSES, []);
     const formattedTicker = ticker.toUpperCase().trim();
     let updated = false;
 
@@ -233,12 +255,12 @@ export const localDb = {
 
   // Watchlist
   getWatchlist: (profileId) => {
-    const watchlist = JSON.parse(localStorage.getItem(KEYS.WATCHLIST) || "[]");
+    const watchlist = safeParse(KEYS.WATCHLIST, []);
     return watchlist.filter(w => w.profile_id === profileId);
   },
 
   addToWatchlist: (profileId, ticker, notes) => {
-    const watchlist = JSON.parse(localStorage.getItem(KEYS.WATCHLIST) || "[]");
+    const watchlist = safeParse(KEYS.WATCHLIST, []);
     const formattedTicker = ticker.toUpperCase().trim();
     const exists = watchlist.find(w => w.profile_id === profileId && w.ticker === formattedTicker);
 
@@ -262,7 +284,7 @@ export const localDb = {
   },
 
   removeFromWatchlist: (profileId, ticker) => {
-    const watchlist = JSON.parse(localStorage.getItem(KEYS.WATCHLIST) || "[]");
+    const watchlist = safeParse(KEYS.WATCHLIST, []);
     const formattedTicker = ticker.toUpperCase().trim();
     const filtered = watchlist.filter(w => !(w.profile_id === profileId && w.ticker === formattedTicker));
     localStorage.setItem(KEYS.WATCHLIST, JSON.stringify(filtered));
@@ -270,7 +292,7 @@ export const localDb = {
 
   // Weights
   getWeights: (profileId, ticker) => {
-    const allWeights = JSON.parse(localStorage.getItem(KEYS.WEIGHTS) || "{}");
+    const allWeights = safeParse(KEYS.WEIGHTS, {});
     const formattedTicker = ticker.toUpperCase().trim();
     
     if (allWeights[profileId] && allWeights[profileId][formattedTicker]) {
@@ -282,7 +304,7 @@ export const localDb = {
   },
 
   saveWeights: (profileId, ticker, rsi, macd, trend, gut) => {
-    const allWeights = JSON.parse(localStorage.getItem(KEYS.WEIGHTS) || "{}");
+    const allWeights = safeParse(KEYS.WEIGHTS, {});
     const formattedTicker = ticker.toUpperCase().trim();
 
     if (!allWeights[profileId]) allWeights[profileId] = {};
@@ -295,5 +317,145 @@ export const localDb = {
     };
     
     localStorage.setItem(KEYS.WEIGHTS, JSON.stringify(allWeights));
+  },
+
+  // Shadow Coach — Action Logging & Behavioral Analysis
+  getActions: (profileId) => {
+    const actions = safeParse(KEYS.ACTIONS, []);
+    return actions
+      .filter(a => a.profile_id === profileId)
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  },
+
+  logAction: (profileId, actionType, ticker, shares, price, metadata = {}) => {
+    const actions = safeParse(KEYS.ACTIONS, []);
+    const newId = actions.length > 0 ? Math.max(...actions.map(a => a.id)) + 1 : 1;
+    const newAction = {
+      id: newId,
+      profile_id: profileId,
+      action_type: actionType,
+      ticker: ticker.toUpperCase().trim(),
+      shares: parseFloat(shares),
+      price: parseFloat(price),
+      metadata: { ...metadata, source: metadata.source || "manual" },
+      timestamp: new Date().toISOString()
+    };
+    actions.push(newAction);
+    localStorage.setItem(KEYS.ACTIONS, JSON.stringify(actions));
+    return newAction;
+  },
+
+  analyzeActions: (profileId) => {
+    const actions = safeParse(KEYS.ACTIONS, []);
+    const profileActions = actions.filter(a => a.profile_id === profileId);
+    if (profileActions.length === 0) {
+      return {
+        total_actions: 0,
+        buys: 0,
+        sells: 0,
+        adjusts: 0,
+        win_rate: 0.0,
+        avg_win_pct: 0.0,
+        avg_loss_pct: 0.0,
+        most_traded: [],
+        source_breakdown: { manual: 0, robinhood_sync: 0, clipboard: 0 },
+        recent_7d: 0,
+        insights: [{ type: "info", icon: "👁️", text: "Shadow Coach is watching your moves. More data will unlock deeper behavioral insights." }]
+      };
+    }
+
+    const buys = profileActions.filter(a => a.action_type === "buy");
+    const sells = profileActions.filter(a => a.action_type === "sell");
+    const adjusts = profileActions.filter(a => a.action_type === "adjust");
+
+    const winningSells = sells.filter(s => s.metadata && s.metadata.pnl_pct > 0);
+    const losingSells = sells.filter(s => s.metadata && s.metadata.pnl_pct < 0);
+    const winRate = sells.length > 0 ? (winningSells.length / sells.length * 100).toFixed(1) : 0;
+
+    const avgWin = winningSells.length > 0
+      ? (winningSells.reduce((sum, s) => sum + (s.metadata.pnl_pct || 0), 0) / winningSells.length).toFixed(2)
+      : 0;
+    const avgLoss = losingSells.length > 0
+      ? (losingSells.reduce((sum, s) => sum + Math.abs(s.metadata.pnl_pct || 0), 0) / losingSells.length).toFixed(2)
+      : 0;
+
+    // Ticker frequency analysis
+    const tickerCounts = {};
+    profileActions.forEach(a => {
+      tickerCounts[a.ticker] = (tickerCounts[a.ticker] || 0) + 1;
+    });
+    const mostTraded = Object.entries(tickerCounts)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([ticker, count]) => ({ ticker, count }));
+
+    // Source breakdown
+    const sourceCounts = { manual: 0, robinhood_sync: 0, clipboard: 0 };
+    profileActions.forEach(a => {
+      const src = a.metadata?.source || "manual";
+      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+    });
+
+    // Recent trend (last 7 days)
+    const weekAgo = Date.now() - 7 * 86400000;
+    const recentActions = profileActions.filter(a => new Date(a.timestamp).getTime() > weekAgo);
+
+    // Generate coaching insights
+    const insights = [];
+    if (parseFloat(winRate) >= 60) {
+      insights.push({ type: "success", icon: "🏆", text: `Strong ${winRate}% win rate — your sell discipline is paying off!` });
+    } else if (sells.length > 0 && parseFloat(winRate) < 40) {
+      insights.push({ type: "warning", icon: "⚠️", text: `${winRate}% win rate — consider holding winners longer or tightening stop-losses.` });
+    }
+    if (parseFloat(avgWin) > 0 && parseFloat(avgLoss) > 0) {
+      const profitFactor = (parseFloat(avgWin) / parseFloat(avgLoss)).toFixed(2);
+      if (profitFactor >= 2) {
+        insights.push({ type: "success", icon: "💎", text: `Profit factor of ${profitFactor}x — your winners significantly outpace your losses.` });
+      } else if (profitFactor < 1) {
+        insights.push({ type: "danger", icon: "🔴", text: `Profit factor ${profitFactor}x — losses exceed wins. Consider sizing down losing trades.` });
+      }
+    }
+    if (buys.length > sells.length * 3 && sells.length > 0) {
+      insights.push({ type: "info", icon: "📊", text: "Heavy buyer pattern — ensure you have exit strategies for your positions." });
+    }
+    if (adjusts.length > buys.length * 0.5) {
+      insights.push({ type: "info", icon: "🔄", text: "Frequent adjustments — you're actively managing positions, which shows good engagement." });
+    }
+    if (recentActions.length === 0 && profileActions.length > 3) {
+      insights.push({ type: "info", icon: "⏸️", text: "No actions in 7 days — sometimes patience is the best strategy." });
+    }
+    if (mostTraded.length > 0 && mostTraded[0].count >= 4) {
+      insights.push({ type: "info", icon: "🎯", text: `You trade ${mostTraded[0].ticker} most frequently (${mostTraded[0].count} actions). Consider if concentration is intentional.` });
+    }
+    // Fallback insight
+    if (insights.length === 0) {
+      insights.push({ type: "info", icon: "👁️", text: "Shadow Coach is watching your moves. More data will unlock deeper behavioral insights." });
+    }
+
+    return {
+      total_actions: profileActions.length,
+      buys: buys.length,
+      sells: sells.length,
+      adjusts: adjusts.length,
+      win_rate: parseFloat(winRate),
+      avg_win_pct: parseFloat(avgWin),
+      avg_loss_pct: parseFloat(avgLoss),
+      most_traded: mostTraded,
+      source_breakdown: sourceCounts,
+      recent_7d: recentActions.length,
+      insights
+    };
+  },
+
+  // User Settings (font size, accessibility)
+  getSettings: () => {
+    return safeParse(KEYS.SETTINGS, { fontSize: 0, highContrast: false });
+  },
+
+  saveSettings: (settings) => {
+    const current = safeParse(KEYS.SETTINGS, {});
+    const merged = { ...current, ...settings };
+    localStorage.setItem(KEYS.SETTINGS, JSON.stringify(merged));
+    return merged;
   }
 };

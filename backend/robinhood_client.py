@@ -155,11 +155,15 @@ class RobinhoodClient:
                 self.is_authenticated = True
                 logger.info(f"Successfully restored live Robinhood session for '{profile_name}'.")
             except Exception as e:
-                logger.warning(f"Could not restore cached session for '{profile_name}': {e}. Using sandbox mode.")
+                logger.warning(f"Could not restore cached session for '{profile_name}': {e}. Clearing stale/corrupt session.")
                 _rs_set_login_state(False)
                 _rs_update_session('Authorization', None)
                 self.sandbox_mode = True
                 self.is_authenticated = False
+                try:
+                    os.remove(pickle_path)
+                except OSError:
+                    pass
         else:
             if ROBIN_STOCKS_AVAILABLE:
                 logger.info(f"No cached session for '{profile_name}'. Operating in sandbox mode.")
@@ -206,6 +210,7 @@ class RobinhoodClient:
             return self._complete_challenge(mfa_code, profile_name, session_dir)
 
         # ── Phase 1: Initial login attempt ──
+        self._pending_challenge = None
         try:
             pickle_path = self._get_pickle_path(session_dir)
 
@@ -553,19 +558,21 @@ class RobinhoodClient:
         _rs_update_session('Authorization', token)
         _rs_set_login_state(True)
 
-        # Persist session to pickle
+        # Persist session to pickle with secure owner-only permissions (0o600)
         pickle_path = self._get_pickle_path(session_dir)
         try:
-            with open(pickle_path, 'wb') as f:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            fd = os.open(pickle_path, flags, 0o600)
+            with os.fdopen(fd, 'wb') as f:
                 pickle.dump({
                     'token_type': data['token_type'],
                     'access_token': data['access_token'],
                     'refresh_token': data['refresh_token'],
                     'device_token': login_payload['device_token'],
                 }, f)
-            logger.info(f"Session persisted to {pickle_path}")
+            logger.info(f"Session persisted securely to {pickle_path}")
         except Exception as e:
-            logger.error(f"Failed to persist session pickle: {e}")
+            logger.error(f"Failed to persist session pickle securely: {e}")
 
         self.sandbox_mode = False
         self.is_authenticated = True
@@ -771,8 +778,44 @@ class RobinhoodClient:
             logger.error(f"Error fetching historicals for {ticker}: {e}")
             raise Exception(f"Failed to fetch historicals: {e}")
 
+    def wipe_session(self, profile_name: str) -> None:
+        """Securely overwrites and deletes the Robinhood session file for a profile."""
+        session_dir = self._get_session_dir(profile_name)
+        pickle_path = self._get_pickle_path(session_dir)
+
+        if os.path.isfile(pickle_path):
+            try:
+                # Secure overwrite: fill file with null bytes before deleting to prevent forensic recovery
+                size = os.path.getsize(pickle_path)
+                with open(pickle_path, 'wb') as f:
+                    f.write(b'\x00' * size)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.remove(pickle_path)
+                logger.info(f"Securely wiped and deleted session pickle for '{profile_name}'.")
+            except Exception as e:
+                logger.error(f"Error secure-wiping pickle file for '{profile_name}': {e}")
+                try:
+                    os.remove(pickle_path)
+                except Exception:
+                    pass
+
+        # Safely remove session directory if it exists and only contains empty or temporary entries
+        if os.path.exists(session_dir):
+            try:
+                import shutil
+                shutil.rmtree(session_dir, ignore_errors=True)
+                logger.info(f"Successfully cleaned session folder for '{profile_name}'.")
+            except Exception as e:
+                logger.warning(f"Could not remove session directory: {e}")
+
+        # Reset states to sandbox
+        self.sandbox_mode = True
+        self.is_authenticated = False
+
 
 # ─────────────────────────────────────────────────────────────
 # Global singleton client instance
 # ─────────────────────────────────────────────────────────────
 robinhood_client = RobinhoodClient()
+

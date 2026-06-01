@@ -182,25 +182,16 @@ export const robinhoodClient = {
       console.log("Hybrid: Login endpoint returned:", data);
       return data;
     } catch (err) {
-      console.warn(`Hybrid Fallback: Live connection failed (${err.message}). Falling back to safe offline mock.`);
-      
-      // Offline/Serverless mock fallback
-      if (mfaCode) {
-        return {
-          status: "success",
-          mode: "live",
-          message: "Securely connected to Robinhood Live Session! (Offline Fallback Mode)"
-        };
+      console.error("Robinhood login connection failed:", err.message);
+      // If it's a network error/connection refused, throw a clean, helpful message
+      if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError") || err.message.includes("network")) {
+        throw new Error("Portfolio Sidekick backend server is offline or unreachable. Please launch the backend service (main.py) or executable first!");
       }
-      return {
-        status: "mfa_required",
-        challenge_type: "sms",
-        message: "A verification code has been sent via SMS. Enter it below. (Offline Fallback Mode)"
-      };
+      throw err;
     }
   },
 
-  syncHoldings: async (profileId) => {
+  syncHoldings: async (profileId, isSandbox = false) => {
     const apiBase = getApiBaseUrl();
     try {
       console.log(`Hybrid: Syncing positions via backend at ${apiBase}...`);
@@ -212,15 +203,32 @@ export const robinhoodClient = {
         body: JSON.stringify({ profile_id: parseInt(profileId) })
       });
 
-      if (!res.ok) throw new Error("Sync server returned error status.");
+      if (!res.ok) {
+        const errText = await res.text();
+        let errMsg = "Sync server returned error status.";
+        try {
+          const errObj = JSON.parse(errText);
+          errMsg = errObj.detail || errMsg;
+        } catch (_) {}
+        throw new Error(errMsg);
+      }
       
       const data = await res.json();
       console.log("Hybrid: Portfolio sync succeeded, count:", data.synced_count);
       return data;
     } catch (err) {
-      console.warn(`Hybrid Fallback: Sync failed (${err.message}). Falling back to offline client-side quote update.`);
+      console.warn(`Hybrid Fallback: Sync failed (${err.message}).`);
       
-      // Offline/Serverless mock fallback sync using local storage + public quotes
+      // If it's a real live profile, do NOT silently mock a success
+      if (!isSandbox) {
+        if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+          throw new Error("Portfolio Sidekick backend server is offline or unreachable. Sync aborted.");
+        }
+        throw err;
+      }
+
+      // Offline/Serverless mock fallback sync for sandbox using local storage + public quotes
+      console.log("Performing serverless sandbox quote update...");
       const current = localDb.getHoldings(profileId);
       let count = 0;
       for (let h of current) {
@@ -232,6 +240,36 @@ export const robinhoodClient = {
         status: "success",
         synced_count: count
       };
+    }
+  },
+
+  logout: async (profileId, isSandbox = false) => {
+    if (isSandbox) {
+      return {
+        status: "success",
+        message: "Successfully logged out of Sandbox Profile locally."
+      };
+    }
+
+    const apiBase = getApiBaseUrl();
+    try {
+      console.log(`Hybrid: Requesting secure session wipe from backend at ${apiBase}...`);
+      const res = await fetch(`${apiBase}/auth/logout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ profile_id: parseInt(profileId) })
+      });
+
+      if (!res.ok) throw new Error("Logout server returned error status.");
+      return await res.json();
+    } catch (err) {
+      console.error("Logout request failed:", err.message);
+      if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+        throw new Error("Backend server is offline. Session could not be verified/wiped from disk securely.");
+      }
+      throw err;
     }
   }
 };

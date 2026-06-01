@@ -5,6 +5,8 @@ ENV/
 env/
 .env
 backend/sessions/
+sessions/
+**/sessions/
 *.pickle
 
 
@@ -18,6 +20,11 @@ __pycache__/
 build/
 dist/
 stock_toolkit.log
+portfolio_sidekick.log
+*.log
+*.exe
+PortfolioSidekick-Windows.exe
+
 
 # Node & Frontend Build
 node_modules/
@@ -27,10 +34,16 @@ yarn-error.log*
 .pnpm-debug.log*
 frontend/dist/
 
+
 # SQLite Database
 *.db
 stock_toolkit.db
+portfolio_sidekick.db
 
-# OS Files
+
+# OS & Agent Files
 .DS_Store
 Thumbs.db
+MEMORY.md
+scratch/
+

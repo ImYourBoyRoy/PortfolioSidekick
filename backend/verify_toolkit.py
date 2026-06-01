@@ -60,8 +60,9 @@ def run_tests():
         # Seed sandbox holdings for testing if empty
         cursor.execute("SELECT id FROM holdings WHERE profile_id = ?", (roy_id,))
         if not cursor.fetchone():
-            from database import seed_sandbox_data
+            from database import seed_sandbox_data, seed_sandbox_actions
             seed_sandbox_data(conn, roy_id)
+            seed_sandbox_actions(conn, roy_id)
         
         cursor.execute("SELECT id, ticker, shares, avg_buy_price FROM holdings WHERE profile_id = ?", (roy_id,))
         holdings = cursor.fetchall()

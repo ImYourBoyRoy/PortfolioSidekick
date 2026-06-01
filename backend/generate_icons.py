@@ -25,6 +25,32 @@ def ensure_pillow():
             print(f"Failed to install Pillow: {e}")
             return False
 
+def apply_squircle_mask(img, radius_pct=0.22):
+    """
+    Applies a premium, highly-smooth anti-aliased squircle mask to the image.
+    Uses 4x super-sampling to eliminate any jagged or aliased corner pixels.
+    """
+    from PIL import Image, ImageDraw
+    img = img.convert("RGBA")
+    w, h = img.size
+    
+    # 4x super-sampling for anti-aliasing
+    scale = 4
+    mask = Image.new("L", (w * scale, h * scale), 0)
+    draw = ImageDraw.Draw(mask)
+    
+    # Draw rounded rectangle at scale
+    radius = int(w * radius_pct * scale)
+    draw.rounded_rectangle((0, 0, w * scale, h * scale), radius=radius, fill=255)
+    
+    # Downsample back to original dimensions for flawless smooth edges
+    mask = mask.resize((w, h), Image.Resampling.LANCZOS)
+    
+    # Create final transparent base and paste image using anti-aliased mask
+    rounded_img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    rounded_img.paste(img, (0, 0), mask=mask)
+    return rounded_img
+
 def generate_assets():
     if not ensure_pillow():
         print("Cannot generate icons without Pillow.")
@@ -40,7 +66,8 @@ def generate_assets():
         print(f"Error: High-res logo not found at {logo_path}")
         return
         
-    img = Image.open(logo_path)
+    raw_img = Image.open(logo_path)
+    img = apply_squircle_mask(raw_img, radius_pct=0.22)
     
     # 1. Windows ICO generation (multi-resolution embedded)
     ico_path = os.path.join(base_dir, "assets", "icon.ico")
