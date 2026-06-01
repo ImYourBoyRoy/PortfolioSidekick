@@ -171,7 +171,18 @@ export default function App() {
   const fetchProfiles = async (selectNewId = null) => {
     try {
       setConnectionError(false);
-      const data = localDb.getProfiles();
+      let data;
+      try {
+        const res = await fetch(`${apiBaseUrl}/profiles`);
+        if (!res.ok) throw new Error("API profiles endpoint non-OK");
+        data = await res.json();
+        setIsSandbox(false); // Live backend connected
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend profiles fetch failed, reading localDb:", backendErr.message);
+        data = localDb.getProfiles();
+        setIsSandbox(true); // Sandbox local mode
+      }
+
       setProfiles(data);
       if (data.length > 0) {
         if (selectNewId) {
@@ -200,18 +211,65 @@ export default function App() {
     if (!name.trim()) return;
     setLoading(true);
     try {
-      const newP = localDb.createProfile(name);
-      const profileId = newP.id;
-      
-      if (seedDemo) {
-        localDb.updateHolding(profileId, "QBTS", 61.29, 29.87, 30.16);
-        localDb.updateHolding(profileId, "RGTI", 45.56, 25.41, 23.86);
-        localDb.updateHolding(profileId, "NVDA", 41.35, 212.49, 210.85);
-        localDb.addToWatchlist(profileId, "SPY", "Broad market standard index");
-        localDb.addToWatchlist(profileId, "QQQ", "Tech heavy momentum index");
-        alert(`Demo profile "${name}" successfully created with realistic pre-populated sandbox assets!`);
-      } else {
-        alert(`Profile "${name}" successfully created! You can now adjust holdings manually.`);
+      let profileId;
+      try {
+        const res = await fetch(`${apiBaseUrl}/profiles`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim() })
+        });
+        if (!res.ok) throw new Error("API profile create non-OK");
+        const newP = await res.json();
+        profileId = newP.id;
+        
+        if (seedDemo) {
+          const defaults = [
+            { ticker: "QBTS", shares: 61.29, avg: 29.87 },
+            { ticker: "RGTI", shares: 45.56, avg: 25.41 },
+            { ticker: "NVDA", shares: 41.35, avg: 212.49 }
+          ];
+          for (let h of defaults) {
+            await fetch(`${apiBaseUrl}/portfolio/holdings`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                profile_id: profileId,
+                ticker: h.ticker,
+                shares: h.shares,
+                avg_buy_price: h.avg,
+                current_price: h.avg
+              })
+            });
+          }
+          await fetch(`${apiBaseUrl}/watchlist`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ profile_id: profileId, ticker: "SPY", notes: "Broad market standard index" })
+          });
+          await fetch(`${apiBaseUrl}/watchlist`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ profile_id: profileId, ticker: "QQQ", notes: "Tech heavy momentum index" })
+          });
+          alert(`Demo profile "${name}" successfully created in live database!`);
+        } else {
+          alert(`Profile "${name}" successfully created! You can now adjust holdings manually.`);
+        }
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend profile creation failed, using localDb:", backendErr.message);
+        const newP = localDb.createProfile(name);
+        profileId = newP.id;
+        
+        if (seedDemo) {
+          localDb.updateHolding(profileId, "QBTS", 61.29, 29.87, 30.16);
+          localDb.updateHolding(profileId, "RGTI", 45.56, 25.41, 23.86);
+          localDb.updateHolding(profileId, "NVDA", 41.35, 212.49, 210.85);
+          localDb.addToWatchlist(profileId, "SPY", "Broad market standard index");
+          localDb.addToWatchlist(profileId, "QQQ", "Tech heavy momentum index");
+          alert(`Demo profile "${name}" successfully created with realistic pre-populated sandbox assets!`);
+        } else {
+          alert(`Profile "${name}" successfully created! You can now adjust holdings manually.`);
+        }
       }
       
       setNewProfileName("");
@@ -234,8 +292,15 @@ export default function App() {
     
     setLoading(true);
     try {
-      localDb.deleteProfile(profileId);
-      alert(`Profile "${name}" was successfully removed.`);
+      try {
+        const res = await fetch(`${apiBaseUrl}/profiles/${profileId}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("API delete profile non-OK");
+        alert(`Profile "${name}" was successfully removed.`);
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend profile deletion failed, using localDb:", backendErr.message);
+        localDb.deleteProfile(profileId);
+        alert(`Profile "${name}" was successfully removed.`);
+      }
       await fetchProfiles();
     } catch (err) {
       alert("Failed to delete profile.");
@@ -248,7 +313,17 @@ export default function App() {
   const fetchPortfolio = async () => {
     if (!activeProfile) return;
     try {
-      const dbHoldings = localDb.getHoldings(activeProfile.id);
+      let dbHoldings;
+      try {
+        const res = await fetch(`${apiBaseUrl}/portfolio/holdings?profile_id=${activeProfile.id}`);
+        if (!res.ok) throw new Error("API holdings endpoint non-OK");
+        dbHoldings = await res.json();
+        setIsSandbox(false); // Live backend connected
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend holdings fetch failed, reading localDb:", backendErr.message);
+        dbHoldings = localDb.getHoldings(activeProfile.id);
+        setIsSandbox(true); // Falling back to offline local mode
+      }
       
       let totalEquity = 0;
       let totalCost = 0;
@@ -292,7 +367,6 @@ export default function App() {
         overall_pnl_pct: overallPnlPct
       });
       setSectorConcentrations(formattedConcentrations);
-      setIsSandbox(true); // Defaults to sandbox local safety in serverless mode
     } catch (err) {
       console.error("Error fetching holdings:", err);
     }
@@ -302,7 +376,19 @@ export default function App() {
   const fetchGuesses = async () => {
     if (!activeProfile) return;
     try {
-      const data = localDb.getGuesses(activeProfile.id);
+      let data;
+      try {
+        const res = await fetch(`${apiBaseUrl}/guesses?profile_id=${activeProfile.id}`);
+        if (!res.ok) throw new Error("API guesses endpoint non-OK");
+        const list = await res.json();
+        data = {
+          pending: list.filter(g => g.status === "pending"),
+          completed: list.filter(g => g.status !== "pending")
+        };
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend guesses fetch failed, reading localDb:", backendErr.message);
+        data = localDb.getGuesses(activeProfile.id);
+      }
       
       const defaults = {
         "QBTS": 30.16, "RGTI": 23.86, "ZYNE": 100.31, "SLRC": 12.98,
@@ -329,11 +415,12 @@ export default function App() {
 
       // Process completed guesses
       const completed = data.completed.map(g => {
-        const resolvedAt = g.resolved_date ? new Date(g.resolved_date).toISOString().slice(0, 10) : g.guess_date.slice(0, 10);
+        const resolvedAt = g.resolved_date || g.resolved_at || g.guess_date;
+        const resolvedAtStr = new Date(resolvedAt).toISOString().slice(0, 10);
         return {
           ...g,
-          actual_end_price: g.status === "hit" ? g.target_price : g.initial_price * 0.95,
-          resolved_at: resolvedAt
+          actual_end_price: g.actual_end_price || (g.status === "hit" ? g.target_price : g.initial_price * 0.95),
+          resolved_at: resolvedAtStr
         };
       });
 
@@ -346,7 +433,18 @@ export default function App() {
   const fetchAnalytics = async () => {
     if (!activeProfile) return;
     try {
-      const data = localDb.getGuesses(activeProfile.id);
+      let data;
+      try {
+        const res = await fetch(`${apiBaseUrl}/guesses/analytics?profile_id=${activeProfile.id}`);
+        if (!res.ok) throw new Error("API analytics endpoint non-OK");
+        const analyticsData = await res.json();
+        setAnalytics(analyticsData);
+        return;
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend analytics fetch failed, calculating locally:", backendErr.message);
+        data = localDb.getGuesses(activeProfile.id);
+      }
+      
       const completed = data.completed;
       const total = completed.length;
       const hits = completed.filter(g => g.status === "hit").length;
@@ -409,13 +507,33 @@ export default function App() {
   // Fetch historical data and advisor recommendations for selected stock
   const fetchStockHistoryAndAdvisor = async () => {
     try {
-      const dataHist = await fetchPublicHistoricalPrices(selectedTicker, "year");
+      let dataHist;
+      try {
+        const res = await fetch(`${apiBaseUrl}/stocks/history?ticker=${selectedTicker}&span=year`);
+        if (!res.ok) throw new Error("API stock history non-OK");
+        dataHist = await res.json();
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend stock history failed, reading public Quote:", backendErr.message);
+        dataHist = await fetchPublicHistoricalPrices(selectedTicker, "year");
+      }
+      
       setChartData(dataHist || []);
-      
       const livePrice = dataHist.length > 0 ? dataHist[dataHist.length - 1].close_price : 100.0;
-      localDb.resolveGuesses(activeProfile.id, selectedTicker, livePrice);
       
-      const dataAdv = generateRecommendation(activeProfile.id, selectedTicker, dataHist, livePrice);
+      try {
+        localDb.resolveGuesses(activeProfile.id, selectedTicker, livePrice);
+      } catch (_) {}
+      
+      let dataAdv;
+      try {
+        const res = await fetch(`${apiBaseUrl}/advisor/recommendation?profile_id=${activeProfile.id}&ticker=${selectedTicker}`);
+        if (!res.ok) throw new Error("API recommendation non-OK");
+        dataAdv = await res.json();
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend recommendation failed, generating locally:", backendErr.message);
+        dataAdv = generateRecommendation(activeProfile.id, selectedTicker, dataHist, livePrice);
+      }
+      
       setAdvisorData(dataAdv);
       
       const match = holdings.find(h => h.ticker.toUpperCase() === selectedTicker.toUpperCase());
@@ -435,13 +553,35 @@ export default function App() {
   const fetchWatchlist = async () => {
     if (!activeProfile) return;
     try {
-      const data = localDb.getWatchlist(activeProfile.id);
-      const liveWatch = [];
+      let data;
+      try {
+        const res = await fetch(`${apiBaseUrl}/watchlist?profile_id=${activeProfile.id}`);
+        if (!res.ok) throw new Error("API watchlist fetch non-OK");
+        data = await res.json();
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend watchlist fetch failed, reading localDb:", backendErr.message);
+        data = localDb.getWatchlist(activeProfile.id);
+      }
       
+      const liveWatch = [];
       for (let item of data) {
-        const livePrice = await fetchPublicQuote(item.ticker);
-        const hist = await fetchPublicHistoricalPrices(item.ticker, "year");
-        const rec = generateRecommendation(activeProfile.id, item.ticker, hist, livePrice);
+        let livePrice;
+        let hist;
+        let rec;
+        
+        try {
+          livePrice = await fetchPublicQuote(item.ticker);
+          const resHist = await fetch(`${apiBaseUrl}/stocks/history?ticker=${item.ticker}&span=year`);
+          if (!resHist.ok) throw new Error("History non-OK");
+          hist = await resHist.json();
+          const resRec = await fetch(`${apiBaseUrl}/advisor/recommendation?profile_id=${activeProfile.id}&ticker=${item.ticker}`);
+          if (!resRec.ok) throw new Error("Rec non-OK");
+          rec = await resRec.json();
+        } catch (backendErr) {
+          livePrice = await fetchPublicQuote(item.ticker);
+          hist = await fetchPublicHistoricalPrices(item.ticker, "year");
+          rec = generateRecommendation(activeProfile.id, item.ticker, hist, livePrice);
+        }
         
         let timing = "Neutral Consolidation";
         if (rec.metrics.rsi <= 30) {
@@ -476,13 +616,30 @@ export default function App() {
     if (!watchlistForm.ticker || !activeProfile) return;
     setLoading(true);
     try {
-      const res = localDb.addToWatchlist(activeProfile.id, watchlistForm.ticker, watchlistForm.notes);
-      if (res.status === "success") {
+      try {
+        const res = await fetch(`${apiBaseUrl}/watchlist`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile_id: activeProfile.id,
+            ticker: watchlistForm.ticker.toUpperCase().trim(),
+            notes: watchlistForm.notes
+          })
+        });
+        if (!res.ok) throw new Error("API add watchlist non-OK");
         setWatchlistForm({ ticker: "", notes: "" });
         fetchWatchlist();
-        alert(`${res.ticker} added to watchlist!`);
-      } else {
-        alert(res.message);
+        alert(`${watchlistForm.ticker.toUpperCase()} added to watchlist in live DB!`);
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend add to watchlist failed, using localDb:", backendErr.message);
+        const res = localDb.addToWatchlist(activeProfile.id, watchlistForm.ticker, watchlistForm.notes);
+        if (res.status === "success" || res.status === "already_exists") {
+          setWatchlistForm({ ticker: "", notes: "" });
+          fetchWatchlist();
+          alert(`${watchlistForm.ticker.toUpperCase()} added to watchlist!`);
+        } else {
+          alert(res.message);
+        }
       }
     } catch (err) {
       alert("Failed to add to watchlist.");
@@ -497,8 +654,17 @@ export default function App() {
     if (!confirmRemove) return;
     
     try {
-      localDb.removeFromWatchlist(activeProfile.id, ticker);
-      fetchWatchlist();
+      try {
+        const res = await fetch(`${apiBaseUrl}/watchlist/${activeProfile.id}/${ticker}`, {
+          method: "DELETE"
+        });
+        if (!res.ok) throw new Error("API delete watchlist non-OK");
+        fetchWatchlist();
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend remove watchlist failed, using localDb:", backendErr.message);
+        localDb.removeFromWatchlist(activeProfile.id, ticker);
+        fetchWatchlist();
+      }
     } catch (err) {
       console.error("Failed to remove watchlist ticker:", err);
     }
@@ -508,39 +674,47 @@ export default function App() {
     if (!activeProfile || !selectedTicker || chartData.length < 5) return;
     setStrategyLoading(true);
     try {
-      const livePrice = chartData[chartData.length - 1].close_price;
-      const closes = chartData.map(d => d.close_price);
-      
-      const sma50 = closes.slice(-50).reduce((a, b) => a + b, 0) / 50.0;
-      
-      const subset = closes.slice(-20);
-      const mid = subset.reduce((a, b) => a + b, 0) / 20.0;
-      const variance = subset.reduce((sum, x) => sum + Math.pow(x - mid, 2), 0) / 20.0;
-      const std = Math.sqrt(variance);
-      const lowerBB = mid - std * 2;
-      const upperBB = mid + std * 2;
-      
-      const atrVal = calculateAtr(
-        chartData.map(d => d.high_price || d.close_price),
-        chartData.map(d => d.low_price || d.close_price),
-        closes,
-        14
-      );
-      
-      setStrategyBrackets({
-        ticker: selectedTicker,
-        current_price: livePrice,
-        brackets: {
-          scale_out: [
-            { label: "Bollinger Resistance Limit", price: Math.round(upperBB * 100) / 100, shares: 10, yield: Math.round((upperBB - livePrice) * 10 * 100) / 100 },
-            { label: "Target Profit Threshold", price: Math.round(livePrice * 1.15 * 100) / 100, shares: 5, yield: Math.round((livePrice * 0.15) * 5 * 100) / 100 }
-          ],
-          scale_in: [
-            { label: "ATR Dynamic Pullback Level", price: Math.max(0.01, Math.round((livePrice - 1.5 * atrVal) * 100) / 100), shares: 10, dca_cost: Math.round((livePrice - 1.5 * atrVal) * 10 * 100) / 100 },
-            { label: "Bollinger Support floor", price: Math.round(lowerBB * 100) / 100, shares: 20, dca_cost: Math.round(lowerBB * 20 * 100) / 100 }
-          ]
-        }
-      });
+      try {
+        const res = await fetch(`${apiBaseUrl}/strategy/brackets?profile_id=${activeProfile.id}&ticker=${selectedTicker}`);
+        if (!res.ok) throw new Error("API strategy brackets non-OK");
+        const data = await res.json();
+        setStrategyBrackets(data);
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend strategy brackets failed, calculating locally:", backendErr.message);
+        const livePrice = chartData[chartData.length - 1].close_price;
+        const closes = chartData.map(d => d.close_price);
+        
+        const sma50 = closes.slice(-50).reduce((a, b) => a + b, 0) / 50.0;
+        
+        const subset = closes.slice(-20);
+        const mid = subset.reduce((a, b) => a + b, 0) / 20.0;
+        const variance = subset.reduce((sum, x) => sum + Math.pow(x - mid, 2), 0) / 20.0;
+        const std = Math.sqrt(variance);
+        const lowerBB = mid - std * 2;
+        const upperBB = mid + std * 2;
+        
+        const atrVal = calculateAtr(
+          chartData.map(d => d.high_price || d.close_price),
+          chartData.map(d => d.low_price || d.close_price),
+          closes,
+          14
+        );
+        
+        setStrategyBrackets({
+          ticker: selectedTicker,
+          current_price: livePrice,
+          brackets: {
+            scale_out: [
+              { label: "Bollinger Resistance Limit", price: Math.round(upperBB * 100) / 100, shares: 10, yield: Math.round((upperBB - livePrice) * 10 * 100) / 100 },
+              { label: "Target Profit Threshold", price: Math.round(livePrice * 1.15 * 100) / 100, shares: 5, yield: Math.round((livePrice * 0.15) * 5 * 100) / 100 }
+            ],
+            scale_in: [
+              { label: "ATR Dynamic Pullback Level", price: Math.max(0.01, Math.round((livePrice - 1.5 * atrVal) * 100) / 100), shares: 10, dca_cost: Math.round((livePrice - 1.5 * atrVal) * 10 * 100) / 100 },
+              { label: "Bollinger Support floor", price: Math.round(lowerBB * 100) / 100, shares: 20, dca_cost: Math.round(lowerBB * 20 * 100) / 100 }
+            ]
+          }
+        });
+      }
     } catch (err) {
       console.error("Error fetching strategy brackets:", err);
     } finally {
@@ -583,24 +757,53 @@ export default function App() {
         const avgCost = parseFloat(match[3].replace(/,/g, ""));
         
         const livePrice = await fetchPublicQuote(ticker);
-        localDb.updateHolding(activeProfile.id, ticker, shares, avgCost, livePrice);
+        try {
+          const res = await fetch(`${apiBaseUrl}/portfolio/holdings`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              profile_id: activeProfile.id,
+              ticker: ticker,
+              shares: shares,
+              avg_buy_price: avgCost,
+              current_price: livePrice
+            })
+          });
+          if (!res.ok) throw new Error("API holding import non-OK");
+        } catch (_) {
+          localDb.updateHolding(activeProfile.id, ticker, shares, avgCost, livePrice);
+        }
         count++;
       }
       
       if (count === 0) {
         const lines = clipboardText.split("\n");
-        lines.forEach(line => {
+        for (let line of lines) {
           const tokens = line.split(/\s+/);
           if (tokens.length >= 3) {
             const ticker = tokens[0].toUpperCase();
             const shares = parseFloat(tokens[1]);
             const avgCost = parseFloat(tokens[2]);
             if (ticker && !isNaN(shares) && !isNaN(avgCost) && ticker.match(/^[A-Z]{1,5}$/)) {
-              localDb.updateHolding(activeProfile.id, ticker, shares, avgCost);
+              try {
+                await fetch(`${apiBaseUrl}/portfolio/holdings`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    profile_id: activeProfile.id,
+                    ticker: ticker,
+                    shares: shares,
+                    avg_buy_price: avgCost,
+                    current_price: avgCost
+                  })
+                });
+              } catch (_) {
+                localDb.updateHolding(activeProfile.id, ticker, shares, avgCost);
+              }
               count++;
             }
           }
-        });
+        }
       }
       
       if (count > 0) {
@@ -610,7 +813,7 @@ export default function App() {
         if (selectedTicker) fetchStockHistoryAndAdvisor();
         setIsImportOpen(false);
         setClipboardText("");
-        alert(`Direct Import successful! Parsed and loaded ${count} holdings from clipboard.`);
+        alert(`Direct Import successful! Parsed and loaded ${count} holdings.`);
       } else {
         alert("Parse failed. Expected format: NVDA 41.35 shares $212.49 average cost");
       }
@@ -657,13 +860,29 @@ export default function App() {
     if (!guessForm.target_price || !selectedTicker) return;
     try {
       const livePrice = chartData.length > 0 ? chartData[chartData.length - 1].close_price : 100.0;
-      localDb.createGuess(activeProfile.id, selectedTicker, guessForm.target_price, livePrice, guessForm.timeframe_days);
+      try {
+        const res = await fetch(`${apiBaseUrl}/guesses`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile_id: activeProfile.id,
+            ticker: selectedTicker.toUpperCase().trim(),
+            target_price: parseFloat(guessForm.target_price),
+            timeframe_days: parseInt(guessForm.timeframe_days)
+          })
+        });
+        if (!res.ok) throw new Error("API guesses non-OK");
+        alert("Gut Guess submitted to The Oracle! Live Tracking active.");
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend create guess failed, using localDb:", backendErr.message);
+        localDb.createGuess(activeProfile.id, selectedTicker, guessForm.target_price, livePrice, guessForm.timeframe_days);
+        alert("Gut Guess submitted to The Oracle! Tracking active.");
+      }
       
       setGuessForm({ target_price: "", timeframe_days: 30 });
       fetchGuesses();
       fetchAnalytics();
-      fetchStockHistoryAndAdvisor();
-      alert("Gut Guess submitted to The Oracle! Tracking is now active.");
+      if (selectedTicker) fetchStockHistoryAndAdvisor();
     } catch (err) {
       alert("Failed to submit guess.");
     }
@@ -678,11 +897,28 @@ export default function App() {
       const avgPrice = parseFloat(holdingForm.avg_buy_price || 0);
       const livePrice = chartData.length > 0 ? chartData[chartData.length - 1].close_price : avgPrice;
       
-      localDb.updateHolding(activeProfile.id, selectedTicker, shares, avgPrice, livePrice);
+      try {
+        const res = await fetch(`${apiBaseUrl}/portfolio/holdings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile_id: activeProfile.id,
+            ticker: selectedTicker.toUpperCase().trim(),
+            shares: shares,
+            avg_buy_price: avgPrice,
+            current_price: livePrice
+          })
+        });
+        if (!res.ok) throw new Error("API adjust holding non-OK");
+        alert("Holding updated successfully in live database!");
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend adjust holding failed, using localDb:", backendErr.message);
+        localDb.updateHolding(activeProfile.id, selectedTicker, shares, avgPrice, livePrice);
+        alert("Holding updated successfully in local DB!");
+      }
       
       fetchPortfolio();
       if (selectedTicker) fetchStockHistoryAndAdvisor();
-      alert("Holding updated successfully in local DB!");
     } catch (err) {
       alert("Failed to adjust holding.");
     }
@@ -693,15 +929,35 @@ export default function App() {
     if (!selectedTicker || !activeProfile || chartData.length < 35) return;
     setLoading(true);
     try {
-      const data = evolveWeights(activeProfile.id, selectedTicker, chartData);
-      if (data.status === "success") {
+      try {
+        const res = await fetch(`${apiBaseUrl}/advisor/evolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile_id: activeProfile.id,
+            ticker: selectedTicker.toUpperCase().trim()
+          })
+        });
+        if (!res.ok) throw new Error("API evolve weights non-OK");
+        const data = await res.json();
+        
         fetchStockHistoryAndAdvisor();
         if (data.epochs) {
           setEvolutionMetrics(data.epochs);
         }
         alert(`Advisor brain evolved! Weights calibrated historically: RSI=${data.weights.rsi_weight}, MACD=${data.weights.macd_weight}, Trend=${data.weights.trend_weight}, Gut=${data.weights.gut_weight}`);
-      } else {
-        alert("Insufficient historical data to evolve weights.");
+      } catch (backendErr) {
+        console.warn("Hybrid Fallback: Backend weights evolve failed, using local evolution:", backendErr.message);
+        const data = evolveWeights(activeProfile.id, selectedTicker, chartData);
+        if (data.status === "success") {
+          fetchStockHistoryAndAdvisor();
+          if (data.epochs) {
+            setEvolutionMetrics(data.epochs);
+          }
+          alert(`Advisor brain evolved! Weights calibrated historically: RSI=${data.weights.rsi_weight}, MACD=${data.weights.macd_weight}, Trend=${data.weights.trend_weight}, Gut=${data.weights.gut_weight}`);
+        } else {
+          alert("Insufficient historical data to evolve weights.");
+        }
       }
     } catch (err) {
       alert("Evolution failed.");
@@ -1018,39 +1274,52 @@ export default function App() {
             />
           </div>
 
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button 
-              className="btn-base btn-secondary" 
-              style={{ flex: 1, justifyContent: 'center' }}
-              onClick={() => {
-                const def = "http://127.0.0.1:8000/api";
-                setCustomIp(def);
-                setApiBaseUrl(def);
-                API_BASE = def;
-                localStorage.setItem("portfolio_sidekick_api_base", def);
-                fetchProfiles();
-              }}
-            >
-              Reset Default
-            </button>
-            <button 
-              className="btn-base btn-primary" 
-              style={{ flex: 2, justifyContent: 'center' }}
-              onClick={() => {
-                let formatted = customIp.trim();
-                if (formatted && !formatted.endsWith("/api")) {
-                  if (formatted.endsWith("/")) formatted = formatted + "api";
-                  else formatted = formatted + "/api";
-                }
-                setCustomIp(formatted);
-                setApiBaseUrl(formatted);
-                API_BASE = formatted;
-                localStorage.setItem("portfolio_sidekick_api_base", formatted);
-                fetchProfiles();
-              }}
-            >
-              Save & Reconnect
-            </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button 
+                className="btn-base btn-secondary" 
+                style={{ flex: 1, justifyContent: 'center' }}
+                onClick={() => {
+                  const def = "http://127.0.0.1:8000/api";
+                  setCustomIp(def);
+                  setApiBaseUrl(def);
+                  API_BASE = def;
+                  localStorage.setItem("portfolio_sidekick_api_base", def);
+                  fetchProfiles();
+                }}
+              >
+                Reset Default
+              </button>
+              <button 
+                className="btn-base btn-primary" 
+                style={{ flex: 2, justifyContent: 'center' }}
+                onClick={() => {
+                  let formatted = customIp.trim();
+                  if (formatted && !formatted.endsWith("/api")) {
+                    if (formatted.endsWith("/")) formatted = formatted + "api";
+                    else formatted = formatted + "/api";
+                  }
+                  setCustomIp(formatted);
+                  setApiBaseUrl(formatted);
+                  API_BASE = formatted;
+                  localStorage.setItem("portfolio_sidekick_api_base", formatted);
+                  fetchProfiles();
+                }}
+              >
+                Save & Reconnect
+              </button>
+            </div>
+            {profiles.length > 0 && (
+              <button 
+                className="btn-base btn-secondary" 
+                style={{ width: '100%', justifyContent: 'center', borderColor: 'rgba(255,255,255,0.08)' }}
+                onClick={() => {
+                  setConnectionError(false);
+                }}
+              >
+                Cancel & Run Offline
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1158,6 +1427,18 @@ export default function App() {
           )}
 
           <div style={{ width: 1, height: 24, backgroundColor: 'var(--border-light)', margin: '0 4px' }}></div>
+
+          <button
+            onClick={() => {
+              setCustomIp(apiBaseUrl);
+              setConnectionError(true);
+            }}
+            className="btn-base btn-secondary"
+            style={{ padding: '8px 10px' }}
+            title="Network Settings"
+          >
+            <Sliders className="w-3.5 h-3.5" style={{ color: 'var(--color-oracle)' }} />
+          </button>
 
           <button
             onClick={() => setIsImportOpen(true)}

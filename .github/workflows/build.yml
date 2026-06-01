@@ -126,30 +126,59 @@ jobs:
 
       - name: Inject Custom Android Launcher Icons
         run: |
-          # Copy custom generated mipmap icons to native Android project res folders
+          # Create and configure all target res folders in native Android
           mkdir -p frontend/android/app/src/main/res/mipmap-mdpi
           mkdir -p frontend/android/app/src/main/res/mipmap-hdpi
           mkdir -p frontend/android/app/src/main/res/mipmap-xhdpi
           mkdir -p frontend/android/app/src/main/res/mipmap-xxhdpi
           mkdir -p frontend/android/app/src/main/res/mipmap-xxxhdpi
           
+          # 1. Standard/legacy PNG launcher icons
           cp assets/android/icon-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
           cp assets/android/icon-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
-          
           cp assets/android/icon-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
           cp assets/android/icon-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
-          
           cp assets/android/icon-xhdpi.png frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
           cp assets/android/icon-xhdpi.png frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
-          
           cp assets/android/icon-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
           cp assets/android/icon-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
-          
           cp assets/android/icon-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
           cp assets/android/icon-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
           
-          # Delete any adaptive mipmaps that override standard PNG launcher icons
-          rm -rf frontend/android/app/src/main/res/mipmap-anydpi-v26
+          # 2. Premium adaptive foreground launcher icons
+          cp assets/android/icon-foreground-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png
+          cp assets/android/icon-foreground-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
+          cp assets/android/icon-foreground-xhdpi.png frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png
+          cp assets/android/icon-foreground-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png
+          cp assets/android/icon-foreground-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+          
+          # 3. Create/overwrite adaptive XML files for proper circle/square shape resolution on SDK 26+
+          mkdir -p frontend/android/app/src/main/res/mipmap-anydpi-v26
+          
+          cat << 'EOF' > frontend/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+          
+          cat << 'EOF' > frontend/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+          
+          # 4. Inject color hex matching our gorgeous premium brand color (#070c12)
+          mkdir -p frontend/android/app/src/main/res/values
+          cat << 'EOF' > frontend/android/app/src/main/res/values/colors.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_launcher_background">#070c12</color>
+          </resources>
+          EOF
 
       - name: Compile Android APK via Gradle
         run: |

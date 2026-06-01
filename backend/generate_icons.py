@@ -77,7 +77,32 @@ def generate_assets():
         size_path = os.path.join(android_dir, name)
         img.resize(size, Image.Resampling.LANCZOS).save(size_path, format="PNG")
         
-    print(f"[SUCCESS] Generated Android responsive density icon deck at: {android_dir}")
+    print(f"[SUCCESS] Generated Android standard legacy icons at: {android_dir}")
+
+    # 4. Android adaptive foreground icons
+    android_foreground_sizes = {
+        "icon-foreground-mdpi.png": (108, 108),
+        "icon-foreground-hdpi.png": (162, 162),
+        "icon-foreground-xhdpi.png": (216, 216),
+        "icon-foreground-xxhdpi.png": (324, 324),
+        "icon-foreground-xxxhdpi.png": (432, 432)
+    }
+    
+    for name, size in android_foreground_sizes.items():
+        size_path = os.path.join(android_dir, name)
+        # Create a transparent canvas of the full size
+        canvas = Image.new("RGBA", size, (0, 0, 0, 0))
+        # Active logo size should be ~66% of the canvas to fit within safe-zone
+        logo_w = int(size[0] * 0.66)
+        logo_h = int(size[1] * 0.66)
+        resized_logo = img.resize((logo_w, logo_h), Image.Resampling.LANCZOS)
+        # Center the logo on the canvas
+        offset_x = (size[0] - logo_w) // 2
+        offset_y = (size[1] - logo_h) // 2
+        canvas.paste(resized_logo, (offset_x, offset_y))
+        canvas.save(size_path, format="PNG")
+        
+    print(f"[SUCCESS] Generated Android adaptive foreground icons at: {android_dir}")
 
 if __name__ == "__main__":
     generate_assets()
