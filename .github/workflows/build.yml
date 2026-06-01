@@ -124,6 +124,33 @@ jobs:
           npx cap add android || echo "Android platform already added"
           npx cap sync android
 
+      - name: Inject Custom Android Launcher Icons
+        run: |
+          # Copy custom generated mipmap icons to native Android project res folders
+          mkdir -p frontend/android/app/src/main/res/mipmap-mdpi
+          mkdir -p frontend/android/app/src/main/res/mipmap-hdpi
+          mkdir -p frontend/android/app/src/main/res/mipmap-xhdpi
+          mkdir -p frontend/android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p frontend/android/app/src/main/res/mipmap-xxxhdpi
+          
+          cp assets/android/icon-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cp assets/android/icon-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+          
+          cp assets/android/icon-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cp assets/android/icon-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+          
+          cp assets/android/icon-xhdpi.png frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          cp assets/android/icon-xhdpi.png frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+          
+          cp assets/android/icon-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp assets/android/icon-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+          
+          cp assets/android/icon-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          cp assets/android/icon-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+          
+          # Delete any adaptive mipmaps that override standard PNG launcher icons
+          rm -rf frontend/android/app/src/main/res/mipmap-anydpi-v26
+
       - name: Compile Android APK via Gradle
         run: |
           cd frontend/android

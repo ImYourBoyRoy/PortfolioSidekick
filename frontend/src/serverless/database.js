@@ -91,8 +91,10 @@ const seedInitialData = () => {
   localStorage.setItem(KEYS.WEIGHTS, JSON.stringify(weights));
 };
 
-// Initialize seed
-seedInitialData();
+// Initialize seed only if the screenshot/seed_visuals flag is set in localStorage
+if (typeof localStorage !== "undefined" && localStorage.getItem("portfolio_sidekick_seed_visuals") === "true") {
+  seedInitialData();
+}
 
 export const localDb = {
   // Profiles
