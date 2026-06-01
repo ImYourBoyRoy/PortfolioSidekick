@@ -1068,7 +1068,7 @@ export default function App() {
           
           <h2 style={{ fontSize: '1.75rem', fontWeight: '950', color: '#fff', marginBottom: '8px' }}>Welcome to Portfolio Sidekick</h2>
           <p style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6', marginBottom: '32px' }}>
-            Create your local, private profile to begin tracking portfolios, predicting stock movements, and evolving indicator weights. All data is kept strictly secure and offline on this machine.
+            Create your local, private profile to begin tracking portfolios, predicting stock movements, and evolving indicator weights. <strong>Connecting a live Robinhood account is 100% optional!</strong> You can use this app purely as an offline tracker and simulator. All data remains strictly secure and isolated on this machine.
           </p>
 
           <form onSubmit={(e) => {
@@ -2668,7 +2668,12 @@ export default function App() {
                 <Sliders className="w-5 h-5" style={{ color: 'var(--color-buy)' }} />
               </div>
               <h3 className="modal-title">Robinhood Local Sync</h3>
-              <p className="modal-subtitle">Your account credentials remain isolated locally inside your profile sessions folder.</p>
+              <p className="modal-subtitle" style={{ color: 'var(--color-buy)', fontWeight: '700', marginBottom: '8px' }}>
+                🔒 100% Optional & Local Isolation
+              </p>
+              <p className="modal-subtitle" style={{ fontSize: '10.5px', lineHeight: '1.5', margin: '0 8px' }}>
+                Connecting your account is entirely optional! All planning, predicting, and rebalancing tools are fully operational offline. If you choose to sync, your credentials are encrypted and stored only locally on your machine—never sent to any third-party cloud.
+              </p>
             </div>
 
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

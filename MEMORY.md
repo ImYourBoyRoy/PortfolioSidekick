@@ -86,6 +86,7 @@
 - **BaseException Not Needed**: Originally planned to use `BaseException` subclass to escape `except Exception` blocks, but direct API control proved simpler and more reliable.
 - **Zero Hardcoded Names**: All personal references (Roy, Father) stripped from UI, backend, and docstrings. Only developer credit in footer.
 - **Android Home Launcher Naming ("Sidekick")**: Handled launcher naming explicitly in `capacitor.config.json` via the `"appName": "Sidekick"` parameter to fit Android home screen grids cleanly without text truncation.
+- **Novice-Friendly Security & Privacy First**: Implemented clear, reassuring copy inside the sync dialog, onboarding card, and README emphasizing that syncing a live Robinhood account is 100% optional, the tool functions perfectly offline as a simulator, and all data remains isolated locally.
 
 ---
 

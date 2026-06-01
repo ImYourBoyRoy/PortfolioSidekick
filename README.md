@@ -17,6 +17,16 @@ Created by: **Roy Dawson IV**
 
 ---
 
+## 🔒 Security & Privacy (100% Optional Sync!)
+
+Your peace of mind and data security are the highest priority. **Portfolio Sidekick** is engineered with a strict **Local-First, Privacy-First Architecture**:
+
+* **Sync is 100% Optional:** You are **never** forced to connect a real Robinhood account. The app is fully functional as an offline sandbox simulator! You can click **"Paste List"** or enter holdings manually to track, plan, and analyze portfolios with complete comfort.
+* **True Local Isolation (Zero Cloud):** We have **no cloud databases, no telemetry, no tracking, and no external servers**. If you choose to sync your Robinhood account, your credentials and sessions are encrypted and stored **strictly locally on your device**—never sent to any third party.
+* **Official Encrypted Connections Only:** The optional sync interfaces directly with the official, encrypted Robinhood APIs via the audited open-source `robin_stocks` library. All transactions and details are processed natively from your machine.
+
+---
+
 ## 1. Use Case Synopsis
 
 **Portfolio Sidekick** delivers a high-aesthetic, production-grade local suite to track and analyze equity holdings securely:
