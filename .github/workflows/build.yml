@@ -171,9 +171,13 @@ jobs:
           </adaptive-icon>
           EOF
           
-          # 4. Inject color hex matching our gorgeous premium brand color (#070c12)
+          # 4. Inject color hex matching our gorgeous premium brand color (#070c12) to override white background
           mkdir -p frontend/android/app/src/main/res/values
-          cat << 'EOF' > frontend/android/app/src/main/res/values/colors.xml
+          # Delete any previous colors.xml or background duplicates to prevent Gradle merger conflict
+          rm -f frontend/android/app/src/main/res/values/colors.xml
+          rm -f frontend/android/app/src/main/res/values/ic_launcher_background.xml
+          
+          cat << 'EOF' > frontend/android/app/src/main/res/values/ic_launcher_background.xml
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <color name="ic_launcher_background">#070c12</color>
