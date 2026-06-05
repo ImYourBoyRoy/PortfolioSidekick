@@ -41,6 +41,7 @@ jobs:
         run: |
           cd frontend
           npm install
+          npm run lint
           npm run build
 
       - name: Install Backend & PyInstaller
@@ -119,6 +120,7 @@ jobs:
         run: |
           cd frontend
           npm install
+          npm run lint
           npm run build
 
       - name: Initialize Capacitor Android Platform

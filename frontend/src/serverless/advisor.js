@@ -565,7 +565,7 @@ export const generateViabilityForecast = (profileId, ticker, historyData, curren
     const sBb = getBbScore(currentPrice, bbData.upper, bbData.lower);
 
     // MA Trend Score
-    let sTrend = 50.0;
+    let sTrend;
     let fastMaVal = 0.0;
     let slowMaVal = 0.0;
     if (prices.length >= maSlow) {
@@ -585,7 +585,7 @@ export const generateViabilityForecast = (profileId, ticker, historyData, curren
     }
 
     // Blended Base Score
-    let score = 50.0;
+    let score;
     if (horizonName === "Day") {
       score = sRsi * 0.40 + sMacd * 0.40 + sTrend * 0.20;
     } else if (horizonName === "Week") {
@@ -595,7 +595,7 @@ export const generateViabilityForecast = (profileId, ticker, historyData, curren
     }
 
     // Verdict
-    let action = "HOLD";
+    let action;
     if (score >= 80) action = "STRONG BUY";
     else if (score >= 65) action = "BUY";
     else if (score >= 35) action = "HOLD";

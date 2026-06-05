@@ -46,7 +46,9 @@ async function ensureDevSession() {
       _devSessionToken = data.token;
       return _devSessionToken;
     }
-  } catch (_) {}
+  } catch {
+    // Dev session endpoint is optional outside local backend mode.
+  }
   return null;
 }
 
@@ -174,7 +176,9 @@ async function androidNativeFetch(path, options = {}) {
       try {
         price = await fetchPublicQuote(h.ticker);
         localDb.updateHolding(profileId, h.ticker, h.shares, h.avg_buy_price, price);
-      } catch (_) {}
+      } catch {
+        // Keep last known price when live quote fetch fails.
+      }
       const value = h.shares * price;
       const cost = h.shares * h.avg_buy_price;
       totalEquity += value;
