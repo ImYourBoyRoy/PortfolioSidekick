@@ -15,7 +15,8 @@ const KEYS = {
   WATCHLIST: "st_watchlist",
   WEIGHTS: "st_weights",
   ACTIONS: "st_actions",
-  SETTINGS: "st_settings"
+  SETTINGS: "st_settings",
+  INDICATORS: "st_indicators"
 };
 
 const safeParse = (key, fallback = []) => {
@@ -457,5 +458,21 @@ export const localDb = {
     const merged = { ...current, ...settings };
     localStorage.setItem(KEYS.SETTINGS, JSON.stringify(merged));
     return merged;
+  },
+
+  // Per-profile indicator/risk configuration so each profile can carry its own
+  // risk posture and goals. Stored as { [profileId]: { indicators, riskProfile } }.
+  getIndicatorSettings: (profileId) => {
+    if (profileId == null) return null;
+    const all = safeParse(KEYS.INDICATORS, {});
+    return all[profileId] || null;
+  },
+
+  saveIndicatorSettings: (profileId, payload) => {
+    if (profileId == null) return null;
+    const all = safeParse(KEYS.INDICATORS, {});
+    all[profileId] = { ...(all[profileId] || {}), ...payload };
+    localStorage.setItem(KEYS.INDICATORS, JSON.stringify(all));
+    return all[profileId];
   }
 };

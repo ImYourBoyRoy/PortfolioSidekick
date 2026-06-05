@@ -10,6 +10,126 @@
 
 import { localDb } from './database';
 
+// ─── Configurable Indicator Engine ───
+// Default tuning for every technical indicator the advisor uses. Users can edit
+// these in Settings, or apply a Risk Profile preset. All scoring functions read
+// the live config via getIndicatorConfig() so edits take effect immediately.
+export const DEFAULT_INDICATORS = {
+  rsiPeriod: 14,
+  rsiOversold: 30,
+  rsiOverbought: 70,
+  macdFast: 12,
+  macdSlow: 26,
+  macdSignal: 9,
+  bbPeriod: 20,
+  bbStdDev: 2,
+  smaFast: 50,
+  smaSlow: 200,
+  atrPeriod: 14,
+  atrStopMultiplier: 2.5,
+  buyThreshold: 65,
+  sellThreshold: 35,
+};
+
+// Risk/goal presets. Each only overrides the fields that define its posture;
+// the rest fall back to DEFAULT_INDICATORS.
+export const RISK_PROFILES = {
+  conservative: {
+    label: 'Conservative',
+    tagline: 'Capital preservation • fewer, higher-conviction signals',
+    description:
+      'Slower, smoother indicators and wider bands. Waits for stretched, well-confirmed extremes before flagging Buy/Sell, which reduces false signals and whipsaw at the cost of acting later.',
+    settings: {
+      rsiPeriod: 21,
+      rsiOversold: 25,
+      rsiOverbought: 75,
+      macdFast: 19,
+      macdSlow: 39,
+      macdSignal: 9,
+      bbPeriod: 25,
+      bbStdDev: 2.5,
+      atrStopMultiplier: 3.0,
+      buyThreshold: 72,
+      sellThreshold: 28,
+    },
+  },
+  balanced: {
+    label: 'Balanced',
+    tagline: 'Standard textbook settings • the default',
+    description:
+      'The classic, widely-used indicator periods (RSI 14, MACD 12/26/9, Bollinger 20/2). A neutral middle ground between responsiveness and stability suitable for most swing-trading goals.',
+    settings: { ...DEFAULT_INDICATORS },
+  },
+  aggressive: {
+    label: 'Aggressive',
+    tagline: 'Momentum capture • earlier, more frequent signals',
+    description:
+      'Faster, more reactive indicators and tighter bands. Surfaces entries and exits sooner to chase momentum, at the cost of more noise and false positives. Best for active, higher-risk-tolerance goals.',
+    settings: {
+      rsiPeriod: 9,
+      rsiOversold: 35,
+      rsiOverbought: 65,
+      macdFast: 8,
+      macdSlow: 21,
+      macdSignal: 5,
+      bbPeriod: 14,
+      bbStdDev: 1.5,
+      atrStopMultiplier: 2.0,
+      buyThreshold: 58,
+      sellThreshold: 42,
+    },
+  },
+};
+
+// User-facing metadata for the Settings editor: label, plain-English help,
+// safe bounds, and which logical group each field belongs to.
+export const INDICATOR_META = {
+  rsiPeriod: { label: 'RSI Period', group: 'Momentum (RSI)', min: 2, max: 50, step: 1,
+    help: 'Look-back days for Relative Strength Index. Lower = more reactive/noisier; higher = smoother/slower.' },
+  rsiOversold: { label: 'RSI Oversold', group: 'Momentum (RSI)', min: 5, max: 45, step: 1,
+    help: 'Below this RSI level a stock is considered oversold (a potential buy signal).' },
+  rsiOverbought: { label: 'RSI Overbought', group: 'Momentum (RSI)', min: 55, max: 95, step: 1,
+    help: 'Above this RSI level a stock is considered overbought (a potential sell/exit signal).' },
+  macdFast: { label: 'MACD Fast EMA', group: 'Trend (MACD)', min: 2, max: 30, step: 1,
+    help: 'Fast moving-average span. Smaller reacts quicker to recent price changes.' },
+  macdSlow: { label: 'MACD Slow EMA', group: 'Trend (MACD)', min: 10, max: 60, step: 1,
+    help: 'Slow moving-average span. The MACD line is Fast EMA minus Slow EMA.' },
+  macdSignal: { label: 'MACD Signal', group: 'Trend (MACD)', min: 2, max: 20, step: 1,
+    help: 'Smoothing of the MACD line. Crosses of MACD vs Signal generate momentum cues.' },
+  bbPeriod: { label: 'Bollinger Period', group: 'Volatility (Bollinger Bands)', min: 5, max: 60, step: 1,
+    help: 'Days used for the Bollinger moving average and standard deviation.' },
+  bbStdDev: { label: 'Bollinger Std-Dev', group: 'Volatility (Bollinger Bands)', min: 1, max: 4, step: 0.1,
+    help: 'How wide the bands sit from the average. 2 is standard; wider = fewer band touches.' },
+  smaFast: { label: 'Fast SMA', group: 'Trend (Moving Averages)', min: 5, max: 100, step: 1,
+    help: 'Short-term trend average (e.g. 50-day). Price above it is short-term bullish.' },
+  smaSlow: { label: 'Slow SMA', group: 'Trend (Moving Averages)', min: 50, max: 300, step: 5,
+    help: 'Long-term trend average (e.g. 200-day). Fast-above-slow is a Golden Cross.' },
+  atrPeriod: { label: 'ATR Period', group: 'Risk (ATR Stops)', min: 2, max: 50, step: 1,
+    help: 'Average True Range look-back. Measures recent volatility for stop placement.' },
+  atrStopMultiplier: { label: 'ATR Stop Multiple', group: 'Risk (ATR Stops)', min: 0.5, max: 6, step: 0.1,
+    help: 'Stop-loss distance = this many ATRs below price. Larger = looser stops.' },
+  buyThreshold: { label: 'Buy Score Threshold', group: 'Decision Thresholds', min: 50, max: 95, step: 1,
+    help: 'Overall blended score above which the advisor recommends BUY.' },
+  sellThreshold: { label: 'Sell Score Threshold', group: 'Decision Thresholds', min: 5, max: 50, step: 1,
+    help: 'Overall blended score below which the advisor recommends SELL.' },
+};
+
+// Resolve the active indicator configuration. Prefers the given profile's saved
+// settings, then falls back to the legacy global settings (for migration), then
+// to DEFAULT_INDICATORS.
+export const getIndicatorConfig = (profileId) => {
+  let indicators = null;
+  if (profileId != null) {
+    const perProfile = localDb.getIndicatorSettings(profileId);
+    if (perProfile && perProfile.indicators) indicators = perProfile.indicators;
+  }
+  if (!indicators) {
+    const global = localDb.getSettings();
+    if (global.indicators) indicators = global.indicators;
+  }
+  return { ...DEFAULT_INDICATORS, ...(indicators || {}) };
+};
+
 // ─── Mathematical Core Indicators ───
 
 export const calculateRsi = (prices, period = 14) => {
@@ -129,10 +249,11 @@ export const calculateAtr = (highs, lows, closes, period = 14) => {
 
 // ─── Score Translators ───
 
-export const getRsiScore = (rsi) => {
-  if (rsi <= 30) return 90.0;
-  if (rsi >= 70) return 10.0;
-  return 90.0 - ((rsi - 30) / 40.0) * 80.0;
+export const getRsiScore = (rsi, oversold = 30, overbought = 70) => {
+  if (rsi <= oversold) return 90.0;
+  if (rsi >= overbought) return 10.0;
+  const span = overbought - oversold || 40.0;
+  return 90.0 - ((rsi - oversold) / span) * 80.0;
 };
 
 export const getMacdScore = (macd, signal, hist) => {
@@ -143,19 +264,19 @@ export const getMacdScore = (macd, signal, hist) => {
   }
 };
 
-export const getTrendScore = (prices) => {
-  if (prices.length < 50) return 50.0;
+export const getTrendScore = (prices, fastSpan = 50, slowSpan = 200) => {
+  if (prices.length < fastSpan) return 50.0;
 
-  const sma50 = prices.slice(-50).reduce((a, b) => a + b, 0) / 50.0;
+  const smaFast = prices.slice(-fastSpan).reduce((a, b) => a + b, 0) / fastSpan;
   const currPrice = prices[prices.length - 1];
 
-  if (prices.length >= 200) {
-    const sma200 = prices.slice(-200).reduce((a, b) => a + b, 0) / 200.0;
-    if (currPrice > sma50 && sma50 > sma200) return 85.0;
-    if (currPrice < sma50 && sma50 < sma200) return 15.0;
+  if (prices.length >= slowSpan) {
+    const smaSlow = prices.slice(-slowSpan).reduce((a, b) => a + b, 0) / slowSpan;
+    if (currPrice > smaFast && smaFast > smaSlow) return 85.0;
+    if (currPrice < smaFast && smaFast < smaSlow) return 15.0;
   }
 
-  if (currPrice > sma50) return 70.0;
+  if (currPrice > smaFast) return 70.0;
   return 30.0;
 };
 
@@ -227,16 +348,19 @@ export const generateRecommendation = (profileId, ticker, historyData, currentPr
   const highs = historyData.map(d => parseFloat(d.high_price || d.close_price));
   const lows = historyData.map(d => parseFloat(d.low_price || d.close_price));
 
+  // Live, user-tunable indicator configuration (Settings → Risk Profiles)
+  const cfg = getIndicatorConfig(profileId);
+
   // Compute Core Metrics
-  const rsi = calculateRsi(prices);
-  const macdData = calculateMacd(prices);
-  const bbData = calculateBollingerBands(prices);
-  const atr = calculateAtr(highs, lows, prices, 14);
+  const rsi = calculateRsi(prices, cfg.rsiPeriod);
+  const macdData = calculateMacdCustom(prices, cfg.macdFast, cfg.macdSlow, cfg.macdSignal);
+  const bbData = calculateBollingerBands(prices, cfg.bbPeriod, cfg.bbStdDev);
+  const atr = calculateAtr(highs, lows, prices, cfg.atrPeriod);
 
   // Individual Scores
-  const sRsi = getRsiScore(rsi);
+  const sRsi = getRsiScore(rsi, cfg.rsiOversold, cfg.rsiOverbought);
   const sMacd = getMacdScore(macdData.macd, macdData.signal, macdData.hist);
-  const sTrend = getTrendScore(prices);
+  const sTrend = getTrendScore(prices, cfg.smaFast, cfg.smaSlow);
   const sBb = getBbScore(currentPrice, bbData.upper, bbData.lower);
   const sGut = getGutScore(profileId, formattedTicker, currentPrice);
 
@@ -264,8 +388,8 @@ export const generateRecommendation = (profileId, ticker, historyData, currentPr
 
   let finalRsi = wRsi;
   let finalTrend = wTrend;
-  let buyThreshold = 65.0;
-  let sellThreshold = 35.0;
+  let buyThreshold = cfg.buyThreshold;
+  let sellThreshold = cfg.sellThreshold;
 
   if (isBearish) {
     const shift = wTrend * 0.40;
@@ -282,7 +406,7 @@ export const generateRecommendation = (profileId, ticker, historyData, currentPr
   else if (score < sellThreshold) action = "SELL";
 
   // Volatility stop-loss
-  const risk = atr > 0 ? 2.5 * atr : currentPrice * 0.10;
+  const risk = atr > 0 ? cfg.atrStopMultiplier * atr : currentPrice * 0.10;
   const stopLoss = Math.max(0.01, Math.round((currentPrice - risk) * 100) / 100);
 
   // Profit target
@@ -552,6 +676,9 @@ export const generateViabilityForecast = (profileId, ticker, historyData, curren
   const highs = historyData.map(d => parseFloat(d.high_price || d.close_price));
   const lows = historyData.map(d => parseFloat(d.low_price || d.close_price));
 
+  // User RSI thresholds apply across every horizon so risk posture is consistent.
+  const cfg = getIndicatorConfig(profileId);
+
   const analyzeHorizon = (horizonName, rsiPeriod, macdParams, bbPeriod, bbStd, atrPeriod, lookbackPeriod, maFast, maSlow) => {
     // Indicators
     const rsiVal = calculateRsi(prices, rsiPeriod);
@@ -560,7 +687,7 @@ export const generateViabilityForecast = (profileId, ticker, historyData, curren
     const atrVal = calculateAtr(highs, lows, prices, atrPeriod);
 
     // Individual Scores
-    const sRsi = getRsiScore(rsiVal);
+    const sRsi = getRsiScore(rsiVal, cfg.rsiOversold, cfg.rsiOverbought);
     const sMacd = getMacdScore(macdData.macd, macdData.signal, macdData.hist);
     const sBb = getBbScore(currentPrice, bbData.upper, bbData.lower);
 

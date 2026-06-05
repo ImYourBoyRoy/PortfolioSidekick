@@ -233,6 +233,26 @@ class RobinhoodAuthClient {
         return data.has("results")
     }
 
+    // Exchange the stored refresh_token for a fresh access_token so sessions don't
+    // force a daily re-login. Mirrors robin_stocks' refresh grant. Returns a new
+    // session payload (with the rotated refresh_token) or null if refresh fails.
+    fun refreshSession(session: JSONObject): JSONObject? {
+        val refreshToken = session.optString("refresh_token", "")
+        val deviceToken = session.optString("device_token", "")
+        if (refreshToken.isEmpty()) return null
+        val params = linkedMapOf(
+            "grant_type" to "refresh_token",
+            "refresh_token" to refreshToken,
+            "scope" to "internal",
+            "client_id" to CLIENT_ID,
+            "expires_in" to "86400",
+            "device_token" to deviceToken
+        )
+        val data = postForm(LOGIN_URL, params) ?: return null
+        if (!data.has("access_token")) return null
+        return sessionPayload(data, deviceToken)
+    }
+
     fun authHeader(session: JSONObject): String {
         val tokenType = session.optString("token_type", "Bearer")
         val access = session.getString("access_token")

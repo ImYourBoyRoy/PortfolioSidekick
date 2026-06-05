@@ -11,3 +11,4 @@ export { localDb } from './database';
 export * from './advisor';
 export * from './robinhood';
 export * from './strength';
+export * from './news';
