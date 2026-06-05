@@ -59,24 +59,7 @@ import {
   calculateMarketStrength,
   calculateAtr
 } from './serverless';
-
-// Dynamic API Base URL resolver supporting local networking and Android viewports
-const getDefaultApiBase = () => {
-  const saved = localStorage.getItem("portfolio_sidekick_api_base") || localStorage.getItem("stock_toolkit_api_base");
-  if (saved) return saved;
-  
-  // Dynamic Android Capacitor/mobile detection
-  if (typeof window !== "undefined" && 
-      (navigator.userAgent.includes("Android") || 
-       window.location.href.includes("android") || 
-       window.location.origin.includes("capacitor") ||
-       window.location.hostname === "localhost" && navigator.maxTouchPoints > 0)) {
-    return "http://10.0.2.2:8000/api";
-  }
-  return "http://127.0.0.1:8000/api";
-};
-
-let API_BASE = getDefaultApiBase();
+import { sidekickFetch } from './sidekickClient';
 
 const formatCurrency = (val) => {
   if (val === undefined || val === null || isNaN(val)) return "$0.00";
@@ -89,11 +72,6 @@ const getCoachActionCutoff = (coachTimeFilter, referenceTimeMs) => {
 };
 
 export default function App() {
-  // API connection config states
-  const [apiBaseUrl, setApiBaseUrl] = useState(API_BASE);
-  const [connectionError, setConnectionError] = useState(false);
-  const [customIp, setCustomIp] = useState(API_BASE);
-
   // Navigation Tabs state
   const [activeTab, setActiveTab] = useState("dashboard"); // 'dashboard', 'coach', 'oracle'
 
@@ -119,7 +97,7 @@ export default function App() {
     try {
       let data;
       try {
-        const res = await fetch(`${apiBaseUrl}/advisor/market-strength?timeframe=${strengthTimeframe}&sector=${strengthSector}`);
+        const res = await sidekickFetch(`/advisor/market-strength?timeframe=${strengthTimeframe}&sector=${strengthSector}`);
         if (!res.ok) throw new Error("API non-OK");
         data = await res.json();
       } catch (err) {
@@ -132,7 +110,7 @@ export default function App() {
     } finally {
       setStrengthLoading(false);
     }
-  }, [apiBaseUrl, strengthTimeframe, strengthSector]);
+  }, [strengthTimeframe, strengthSector]);
 
   useEffect(() => {
     if (activeTab === "strength") {
@@ -567,7 +545,7 @@ export default function App() {
           }
         } else {
           // Clear holdings on backend database
-          await fetch(`${apiBaseUrl}/portfolio/holdings/clear`, {
+          await sidekickFetch(`/portfolio/holdings/clear`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ profile_id: activeProfile.id })
@@ -576,13 +554,13 @@ export default function App() {
           });
           
           for (let pos of mockPositions) {
-            await fetch(`${apiBaseUrl}/portfolio/holdings`, {
+            await sidekickFetch(`/portfolio/holdings`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ profile_id: activeProfile.id, ...pos })
             });
             if (["NVDA", "AMD", "PLTR", "MSFT", "TSLA"].includes(pos.ticker)) {
-              await fetch(`${apiBaseUrl}/shadow-coach/actions`, {
+              await sidekickFetch(`/shadow-coach/actions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -626,10 +604,9 @@ export default function App() {
   // Fetch Profiles
   const fetchProfiles = async (selectNewId = null) => {
     try {
-      setConnectionError(false);
       let data;
       try {
-        const res = await fetch(`${apiBaseUrl}/profiles`);
+        const res = await sidekickFetch(`/profiles`);
         if (!res.ok) throw new Error("API profiles endpoint non-OK");
         data = await res.json();
         
@@ -641,7 +618,7 @@ export default function App() {
           if (!existsOnBackend) {
             console.log(`Syncing local profile "${lp.name}" to backend SQLite...`);
             try {
-              await fetch(`${apiBaseUrl}/profiles`, {
+              await sidekickFetch(`/profiles`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: lp.name })
@@ -653,7 +630,7 @@ export default function App() {
           }
         }
         if (needsRefetch) {
-          const freshRes = await fetch(`${apiBaseUrl}/profiles`);
+          const freshRes = await sidekickFetch(`/profiles`);
           if (freshRes.ok) data = await freshRes.json();
         }
         // -------------------------------------
@@ -695,7 +672,7 @@ export default function App() {
     try {
       let profileId;
       try {
-        const res = await fetch(`${apiBaseUrl}/profiles`, {
+        const res = await sidekickFetch(`/profiles`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: name.trim() })
@@ -711,7 +688,7 @@ export default function App() {
             { ticker: "NVDA", shares: 41.35, avg: 212.49 }
           ];
           for (let h of defaults) {
-            await fetch(`${apiBaseUrl}/portfolio/holdings`, {
+            await sidekickFetch(`/portfolio/holdings`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -723,12 +700,12 @@ export default function App() {
               })
             });
           }
-          await fetch(`${apiBaseUrl}/watchlist`, {
+          await sidekickFetch(`/watchlist`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ profile_id: profileId, ticker: "SPY", notes: "Broad market standard index" })
           });
-          await fetch(`${apiBaseUrl}/watchlist`, {
+          await sidekickFetch(`/watchlist`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ profile_id: profileId, ticker: "QQQ", notes: "Tech heavy momentum index" })
@@ -775,7 +752,7 @@ export default function App() {
     setLoading(true);
     try {
       try {
-        const res = await fetch(`${apiBaseUrl}/profiles/${profileId}`, { method: "DELETE" });
+        const res = await sidekickFetch(`/profiles/${profileId}`, { method: "DELETE" });
         if (!res.ok) throw new Error("API delete profile non-OK");
         alert(`Profile "${name}" was successfully removed.`);
       } catch (backendErr) {
@@ -800,7 +777,7 @@ export default function App() {
         // Dynamic session check: verify active profile's authentication status first
         let isAuthenticated = false;
         try {
-          const statusRes = await fetch(`${apiBaseUrl}/auth/status?profile_id=${activeProfile.id}`);
+          const statusRes = await sidekickFetch(`/auth/status?profile_id=${activeProfile.id}`);
           if (statusRes.ok) {
             const statusData = await statusRes.json();
             isAuthenticated = statusData.authenticated;
@@ -818,7 +795,7 @@ export default function App() {
           }
         }
 
-        const res = await fetch(`${apiBaseUrl}/portfolio/holdings?profile_id=${activeProfile.id}`);
+        const res = await sidekickFetch(`/portfolio/holdings?profile_id=${activeProfile.id}`);
         if (!res.ok) throw new Error("API holdings endpoint non-OK");
         const resData = await res.json();
         dbHoldings = resData.holdings || [];
@@ -901,7 +878,7 @@ export default function App() {
     try {
       let data;
       try {
-        const res = await fetch(`${apiBaseUrl}/guesses?profile_id=${activeProfile.id}`);
+        const res = await sidekickFetch(`/guesses?profile_id=${activeProfile.id}`);
         if (!res.ok) throw new Error("API guesses endpoint non-OK");
         const list = await res.json();
         data = {
@@ -958,7 +935,7 @@ export default function App() {
     try {
       let data;
       try {
-        const res = await fetch(`${apiBaseUrl}/guesses/analytics?profile_id=${activeProfile.id}`);
+        const res = await sidekickFetch(`/guesses/analytics?profile_id=${activeProfile.id}`);
         if (!res.ok) throw new Error("API analytics endpoint non-OK");
         const analyticsData = await res.json();
         setAnalytics(analyticsData);
@@ -1032,7 +1009,7 @@ export default function App() {
     try {
       let dataHist;
       try {
-        const res = await fetch(`${apiBaseUrl}/stocks/history?ticker=${selectedTicker}&span=year`);
+        const res = await sidekickFetch(`/stocks/history?ticker=${selectedTicker}&span=year`);
         if (!res.ok) throw new Error("API stock history non-OK");
         dataHist = await res.json();
       } catch (backendErr) {
@@ -1051,7 +1028,7 @@ export default function App() {
       
       let dataAdv;
       try {
-        const res = await fetch(`${apiBaseUrl}/advisor/recommendation?profile_id=${activeProfile.id}&ticker=${selectedTicker}`);
+        const res = await sidekickFetch(`/advisor/recommendation?profile_id=${activeProfile.id}&ticker=${selectedTicker}`);
         if (!res.ok) throw new Error("API recommendation non-OK");
         dataAdv = await res.json();
       } catch (backendErr) {
@@ -1064,7 +1041,7 @@ export default function App() {
       // Fetch Multi-Timeframe Viability Forecast
       let dataViability;
       try {
-        const res = await fetch(`${apiBaseUrl}/advisor/viability?profile_id=${activeProfile.id}&ticker=${selectedTicker}`);
+        const res = await sidekickFetch(`/advisor/viability?profile_id=${activeProfile.id}&ticker=${selectedTicker}`);
         if (!res.ok) throw new Error("API viability forecast non-OK");
         dataViability = await res.json();
       } catch (backendErr) {
@@ -1092,7 +1069,7 @@ export default function App() {
     try {
       let data;
       try {
-        const res = await fetch(`${apiBaseUrl}/watchlist?profile_id=${activeProfile.id}`);
+        const res = await sidekickFetch(`/watchlist?profile_id=${activeProfile.id}`);
         if (!res.ok) throw new Error("API watchlist fetch non-OK");
         data = await res.json();
       } catch (backendErr) {
@@ -1108,10 +1085,10 @@ export default function App() {
         
         try {
           livePrice = await fetchPublicQuote(item.ticker);
-          const resHist = await fetch(`${apiBaseUrl}/stocks/history?ticker=${item.ticker}&span=year`);
+          const resHist = await sidekickFetch(`/stocks/history?ticker=${item.ticker}&span=year`);
           if (!resHist.ok) throw new Error("History non-OK");
           hist = await resHist.json();
-          const resRec = await fetch(`${apiBaseUrl}/advisor/recommendation?profile_id=${activeProfile.id}&ticker=${item.ticker}`);
+          const resRec = await sidekickFetch(`/advisor/recommendation?profile_id=${activeProfile.id}&ticker=${item.ticker}`);
           if (!resRec.ok) throw new Error("Rec non-OK");
           rec = await resRec.json();
         } catch {
@@ -1156,10 +1133,10 @@ export default function App() {
       let analysisData;
       let actionsData;
       try {
-        const res = await fetch(`${apiBaseUrl}/shadow-coach/insights?profile_id=${activeProfile.id}`);
+        const res = await sidekickFetch(`/shadow-coach/insights?profile_id=${activeProfile.id}`);
         if (!res.ok) throw new Error("Shadow Coach API non-OK");
         analysisData = await res.json();
-        const actRes = await fetch(`${apiBaseUrl}/shadow-coach/actions?profile_id=${activeProfile.id}`);
+        const actRes = await sidekickFetch(`/shadow-coach/actions?profile_id=${activeProfile.id}`);
         if (!actRes.ok) throw new Error("Actions API non-OK");
         actionsData = await actRes.json();
       } catch (backendErr) {
@@ -1203,7 +1180,7 @@ export default function App() {
     setLoading(true);
     try {
       try {
-        const res = await fetch(`${apiBaseUrl}/watchlist`, {
+        const res = await sidekickFetch(`/watchlist`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1241,7 +1218,7 @@ export default function App() {
     
     try {
       try {
-        const res = await fetch(`${apiBaseUrl}/watchlist/${activeProfile.id}/${ticker}`, {
+        const res = await sidekickFetch(`/watchlist/${activeProfile.id}/${ticker}`, {
           method: "DELETE"
         });
         if (!res.ok) throw new Error("API delete watchlist non-OK");
@@ -1261,7 +1238,7 @@ export default function App() {
     setStrategyLoading(true);
     try {
       try {
-        const res = await fetch(`${apiBaseUrl}/strategy/brackets?profile_id=${activeProfile.id}&ticker=${selectedTicker}`);
+        const res = await sidekickFetch(`/strategy/brackets?profile_id=${activeProfile.id}&ticker=${selectedTicker}`);
         if (!res.ok) throw new Error("API strategy brackets non-OK");
         const data = await res.json();
         setStrategyBrackets(data);
@@ -1372,7 +1349,7 @@ export default function App() {
       if (interval) clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- interval refresh uses latest fetch closures by design
-  }, [activeProfile, apiBaseUrl, selectedTicker, strengthTimeframe, strengthSector]);
+  }, [activeProfile, selectedTicker, strengthTimeframe, strengthSector]);
 
   // Sync with Robinhood
   const triggerSync = async (overrideSandbox = null) => {
@@ -1430,7 +1407,7 @@ export default function App() {
         
         const livePrice = await fetchPublicQuote(ticker);
         try {
-          const res = await fetch(`${apiBaseUrl}/portfolio/holdings`, {
+          const res = await sidekickFetch(`/portfolio/holdings`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1497,8 +1474,8 @@ export default function App() {
         setLoginStatus({ status: "error", message: data.message || "Authentication failed." });
         setLoading(false);
       }
-    } catch {
-      setLoginStatus({ status: "error", message: "Error linking to Robinhood client." });
+    } catch (err) {
+      setLoginStatus({ status: "error", message: err.message || "Error linking to Robinhood client." });
       setLoading(false);
     }
   };
@@ -1578,7 +1555,7 @@ export default function App() {
     try {
       const livePrice = chartData.length > 0 ? chartData[chartData.length - 1].close_price : 100.0;
       try {
-        const res = await fetch(`${apiBaseUrl}/guesses`, {
+        const res = await sidekickFetch(`/guesses`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1615,7 +1592,7 @@ export default function App() {
       const livePrice = chartData.length > 0 ? chartData[chartData.length - 1].close_price : avgPrice;
       
       try {
-        const res = await fetch(`${apiBaseUrl}/portfolio/holdings`, {
+        const res = await sidekickFetch(`/portfolio/holdings`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1647,7 +1624,7 @@ export default function App() {
     setLoading(true);
     try {
       try {
-        const res = await fetch(`${apiBaseUrl}/advisor/evolve`, {
+        const res = await sidekickFetch(`/advisor/evolve`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1854,96 +1831,6 @@ export default function App() {
     );
   };
 
-  // CONNECTION ERROR SCREEN: If API backend connection fails (extremely critical for mobile/local networking configuration)
-  if (connectionError) {
-    return (
-      <div className="app-container" style={{ display: 'flex', minHeight: '90vh', alignItems: 'center', justifyContent: 'center' }}>
-        <div className="glass-card animate-fade-in" style={{ padding: '40px', maxWidth: '520px', width: '100%', border: '1px solid var(--color-sell)' }}>
-          <div style={{ width: '60px', height: '60px', borderRadius: '18px', background: 'rgba(244, 63, 94, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
-            <ShieldAlert className="w-8 h-8" style={{ color: 'var(--color-sell)' }} />
-          </div>
-          
-          <h2 style={{ fontSize: '1.5rem', fontWeight: '950', color: '#fff', textAlign: 'center', marginBottom: '12px' }}>Connection to Local Server Failed</h2>
-          
-          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6', textAlign: 'center', marginBottom: '24px' }}>
-            Unable to connect to the backend server at <code style={{ color: '#f43f5e', background: 'rgba(244, 63, 94, 0.08)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace' }}>{apiBaseUrl}</code>. 
-            Ensure the FastAPI backend application is running on your computer.
-          </p>
-
-          <div className="glass-card" style={{ background: '#0a0d16', border: '1px solid var(--border-light)', padding: '20px', borderRadius: '12px', marginBottom: '24px' }}>
-            <h3 style={{ fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#fff', marginBottom: '12px' }}>Mobile Network Helper</h3>
-            <p style={{ fontSize: '10px', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '12px' }}>
-              If running on a mobile phone, you must connect to your computer's local network IP address rather than <code style={{ color: 'var(--color-oracle)' }}>127.0.0.1</code>.
-            </p>
-            <ul style={{ fontSize: '10px', color: 'var(--text-secondary)', paddingLeft: '16px', lineHeight: '1.6' }}>
-              <li><strong>Android Emulator</strong>: Use <code style={{ cursor: 'pointer', color: '#a78bfa' }} onClick={() => setCustomIp("http://10.0.2.2:8000/api")}>http://10.0.2.2:8000/api</code></li>
-              <li><strong>Physical Phone (Wi-Fi)</strong>: Enter your computer's local private IP address, for example <code style={{ color: 'var(--color-buy)' }}>http://192.168.1.100:8000/api</code> (make sure phone and PC are on the same Wi-Fi).</li>
-            </ul>
-          </div>
-
-          <div className="input-group" style={{ marginBottom: '20px' }}>
-            <label className="input-label">Configure Server URL</label>
-            <input
-              type="text"
-              value={customIp}
-              onChange={(e) => setCustomIp(e.target.value)}
-              className="form-input-text"
-              placeholder="e.g. http://192.168.1.100:8000/api"
-            />
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button 
-                className="btn-base btn-secondary" 
-                style={{ flex: 1, justifyContent: 'center' }}
-                onClick={() => {
-                  const def = "http://127.0.0.1:8000/api";
-                  setCustomIp(def);
-                  setApiBaseUrl(def);
-                  API_BASE = def;
-                  localStorage.setItem("portfolio_sidekick_api_base", def);
-                  fetchProfiles();
-                }}
-              >
-                Reset Default
-              </button>
-              <button 
-                className="btn-base btn-primary" 
-                style={{ flex: 2, justifyContent: 'center' }}
-                onClick={() => {
-                  let formatted = customIp.trim();
-                  if (formatted && !formatted.endsWith("/api")) {
-                    if (formatted.endsWith("/")) formatted = formatted + "api";
-                    else formatted = formatted + "/api";
-                  }
-                  setCustomIp(formatted);
-                  setApiBaseUrl(formatted);
-                  API_BASE = formatted;
-                  localStorage.setItem("portfolio_sidekick_api_base", formatted);
-                  fetchProfiles();
-                }}
-              >
-                Save & Reconnect
-              </button>
-            </div>
-            {profiles.length > 0 && (
-              <button 
-                className="btn-base btn-secondary" 
-                style={{ width: '100%', justifyContent: 'center', borderColor: 'rgba(255,255,255,0.08)' }}
-                onClick={() => {
-                  setConnectionError(false);
-                }}
-              >
-                Cancel & Run Offline
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // ONBOARDING SCREEN: If no profiles exist in local SQLite database on boot
   if (profiles.length === 0 && !loading) {
     return (
@@ -2069,25 +1956,6 @@ export default function App() {
           )}
 
           <div style={{ width: 1, height: 24, backgroundColor: 'var(--border-light)', margin: '0 4px' }}></div>
-
-          <button
-            onClick={() => {
-              if (!syncing && !loading) {
-                setCustomIp(apiBaseUrl);
-                setConnectionError(true);
-              }
-            }}
-            disabled={syncing || loading}
-            className="btn-base btn-secondary"
-            style={{ 
-              padding: '8px 10px',
-              opacity: (syncing || loading) ? 0.65 : 1,
-              cursor: (syncing || loading) ? 'not-allowed' : 'pointer'
-            }}
-            title="Network Settings"
-          >
-            <Sliders className="w-3.5 h-3.5" style={{ color: 'var(--color-oracle)' }} />
-          </button>
 
           <button
             onClick={() => {
@@ -4453,7 +4321,7 @@ export default function App() {
                       try {
                         let price = 100.0;
                         try {
-                          const res = await fetch(`${apiBaseUrl}/stocks/history?ticker=${newSandboxTicker}&span=day`);
+                          const res = await sidekickFetch(`/stocks/history?ticker=${newSandboxTicker}&span=day`);
                           if (res.ok) {
                             const quotes = await res.json();
                             if (quotes.length > 0) price = quotes[quotes.length - 1].close_price;
@@ -4902,7 +4770,7 @@ export default function App() {
                       localDb.createGuess(activeProfile.id, selectedTicker, targetVal, chartData.length > 0 ? chartData[chartData.length - 1].close_price : 100.0, timeframeDays);
                       alert(`Successfully committed ${selectedTicker} horizon prediction. Target Exit $${targetVal} logged locally!`);
                     } else {
-                      const res = await fetch(`${apiBaseUrl}/guesses`, {
+                      const res = await sidekickFetch(`/guesses`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -4916,9 +4784,9 @@ export default function App() {
                       alert(`Successfully committed ${selectedTicker} horizon prediction. Target Exit $${targetVal} logged in SQLite!`);
                     }
                     // Refresh guesses
-                    const updatedG = isSandbox ? localDb.getGuesses(activeProfile.id) : await (await fetch(`${apiBaseUrl}/guesses?profile_id=${activeProfile.id}`)).json();
+                    const updatedG = isSandbox ? localDb.getGuesses(activeProfile.id) : await (await sidekickFetch(`/guesses?profile_id=${activeProfile.id}`)).json();
                     setGuesses(updatedG);
-                    const updatedA = isSandbox ? localDb.getAnalytics(activeProfile.id) : await (await fetch(`${apiBaseUrl}/guesses/analytics?profile_id=${activeProfile.id}`)).json();
+                    const updatedA = isSandbox ? localDb.getAnalytics(activeProfile.id) : await (await sidekickFetch(`/guesses/analytics?profile_id=${activeProfile.id}`)).json();
                     setAnalytics(updatedA);
                   } catch (err) {
                     console.error("Failed to commit prediction:", err);
@@ -5431,7 +5299,7 @@ export default function App() {
             </p>
 
             <p style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: '1.6', margin: '8px 0 0 0', maxWidth: '380px' }}>
-              🔒 100% private direct local connection. All authenticated credentials and session tokens remain strictly isolated on your device. Please do not refresh or close the application.
+              🔒 Your Robinhood session is stored only on this device. Credentials are never synced to other platforms or cloud servers. Please do not refresh or close the application during sync.
             </p>
           </div>
         </div>

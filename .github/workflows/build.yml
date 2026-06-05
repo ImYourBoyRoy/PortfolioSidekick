@@ -41,6 +41,7 @@ jobs:
         run: |
           cd frontend
           npm install
+          npm run lint
           npm run build
 
       - name: Install Backend & PyInstaller
@@ -119,6 +120,7 @@ jobs:
         run: |
           cd frontend
           npm install
+          npm run lint
           npm run build
 
       - name: Initialize Capacitor Android Platform
@@ -187,6 +189,66 @@ jobs:
               <color name="ic_launcher_background">#070c12</color>
           </resources>
           EOF
+
+      - name: Inject Native Robinhood Plugin & Security Hardening
+        run: |
+          set -e
+          PKG_DIR="frontend/android/app/src/main/java/com/imyourboyroy/portfoliosidekick"
+          mkdir -p "$PKG_DIR"
+          mkdir -p frontend/android/app/src/main/res/xml
+          cp frontend/native/android/*.kt "$PKG_DIR/"
+          cp frontend/native/android/network_security_config.xml frontend/android/app/src/main/res/xml/network_security_config.xml
+
+          # Enable Kotlin in the app module (Capacitor's template is Java-only by default,
+          # so the .kt native plugin would not compile without this).
+          PROJECT_GRADLE="frontend/android/build.gradle"
+          if ! grep -q "kotlin-gradle-plugin" "$PROJECT_GRADLE"; then
+            sed -i "/classpath 'com.android.tools.build:gradle/a\        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.25'" "$PROJECT_GRADLE"
+          fi
+
+          APP_GRADLE="frontend/android/app/build.gradle"
+          if ! grep -q "kotlin-android" "$APP_GRADLE"; then
+            sed -i "1a apply plugin: 'kotlin-android'" "$APP_GRADLE"
+          fi
+
+          # Gradle dependencies for OkHttp + EncryptedSharedPreferences + Kotlin stdlib
+          if ! grep -q "security-crypto" "$APP_GRADLE"; then
+            sed -i '/dependencies {/a\    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.25"\n    implementation "com.squareup.okhttp3:okhttp:4.12.0"\n    implementation "androidx.security:security-crypto:1.1.0-alpha06"' "$APP_GRADLE"
+          fi
+
+          # Register the native plugin in MainActivity (Capacitor does not auto-register
+          # plugins defined inside the app module — they must be registered explicitly).
+          cat > "$PKG_DIR/MainActivity.java" <<'JAVA'
+          package com.imyourboyroy.portfoliosidekick;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(RobinhoodSessionPlugin.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          JAVA
+
+          # AndroidManifest: disable backup + network allowlist.
+          # Set the existing allowBackup attribute (avoid duplicating it) and add the
+          # network security config + fullBackupContent only if not already present.
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("frontend/android/app/src/main/AndroidManifest.xml")
+          text = p.read_text()
+          text = text.replace('android:allowBackup="true"', 'android:allowBackup="false"')
+          if 'networkSecurityConfig' not in text:
+              text = text.replace(
+                  "<application",
+                  '<application android:networkSecurityConfig="@xml/network_security_config" android:fullBackupContent="false"',
+                  1,
+              )
+          p.write_text(text)
+          PY
 
       - name: Compile Android APK via Gradle
         run: |
