@@ -1,6 +1,6 @@
 # Portfolio Sidekick (for Robinhood)
 
-An advanced, premium, and locally-running stock analysis, prediction, and tracking tool designed specifically to help users plan, strategize, and execute trades while managing risks. It integrates secure local authentication with **Robinhood** via **embedded in-project auth** (ported from open-source `robin_stocks` semantics — no PyPI runtime dependency), while utilizing on-device `localStorage` persistence to record custom price predictions ("Gut Predictions") and automatically evolve indicator weights based on historical accuracy.
+An advanced, premium, and locally-running stock analysis, prediction, and tracking tool designed specifically to help users plan, strategize, and execute trades while managing risks. It integrates secure local authentication with **Robinhood** via **embedded in-project auth** (ported from open-source `robin_stocks` semantics — no PyPI runtime dependency), while utilizing on-device **SQLite** persistence to record custom price predictions ("Gut Predictions") and automatically evolve indicator weights based on historical accuracy.
 
 Created by: **Roy Dawson IV**  
 * GitHub: [https://github.com/imyourboyroy](https://github.com/imyourboyroy)  
@@ -171,9 +171,9 @@ Exposes real-time rebalancing simulator calculators, single-sector concentration
 
 We stand on the shoulders of giants. This toolkit would not be possible without the incredible work of the open-source community:
 
-* **Robinhood Integration**: A massive thank you to **Josh Smith** and all contributors of [robin-stocks](https://github.com/jmrosz/robin-stocks). Their fantastic Python library serves as the secure backbone of our connection interface, allowing safe, robust, and programmatic interactions with Robinhood.
-* **Window Management**: Special thanks to the developers of [pywebview](https://pywebview.flowrl.com) for providing a lightweight, cross-platform Edge WebView2/WebKit wrapper to containerize our React UI into a desktop executable.
-* **FastAPI Server**: Grateful to **Sebastián Ramírez** and the [FastAPI](https://fastapi.tiangolo.com) community for their blazing-fast, typed web gateway router.
+* **Robinhood HTTP semantics**: Auth primitives ported from the open-source [robin-stocks](https://github.com/jmfernandes/robin_stocks) project (MIT) — embedded in-project, no PyPI runtime dependency.
+* **Desktop shell**: [Tauri 2](https://tauri.app) (Rust) for secure, cross-platform native desktop builds.
+* **Mobile shell**: [Capacitor](https://capacitorjs.com) with Kotlin encrypted session vault on Android.
 * **React / Vite / Lucide**: Kudos to the core developers of [React](https://react.dev), [Vite](https://vite.dev), and [Lucide Icons](https://lucide.dev) for providing high-fidelity visual and micro-animation foundations that make this application premium and glassmorphic.
 
 ---
@@ -191,27 +191,18 @@ StockToolkit/
 │   ├── icon.icns             # Multi-resolution macOS app bundle icon
 │   ├── icon.png              # High-resolution PNG logo wrapper
 │   └── android/              # Responsive Android density launcher launcher icons
-├── backend/
-│   ├── requirements.txt      # Lightweight pure-python package list
-│   ├── database.py           # SQLite local profile & database operations
-│   ├── robinhood_client.py   # Two-phase non-blocking Robinhood authenticator
-│   ├── session_vault.py      # Encrypted at-rest OAuth token storage
-│   ├── desktop_bridge.py     # Production pywebview IPC (no HTTP)
-│   ├── local_session.py      # Dev-mode loopback session middleware
-│   ├── advisor.py            # Quantitative indicators and evolution loops
-│   ├── generate_icons.py     # Pillow-driven icon conversion pipeline
-│   ├── verify_toolkit.py     # Automated quantitative test & verification suite
-│   └── main.py               # Uvicorn FastAPI interface entry point
+├── backend/                  # DEPRECATED legacy Python (reference only — see DEPRECATED.md)
 ├── frontend/
+│   ├── src-tauri/            # Tauri 2 Rust desktop shell (Windows/macOS/Linux)
 │   ├── capacitor.config.json # Mobile application mapping parameters
 │   ├── package.json          # UI Node package parameters
 │   └── src/
-│       ├── index.css         # Custom responsive obsidian CSS queries
 │       ├── App.jsx           # Main React UI Dashboard & SVG Charts
-│       ├── main.jsx          # Vite initialization layout
-│       ├── sidekickClient.js # Unified platform transport (IPC / Android native / dev HTTP)
-│       ├── plugins/robinhood-session/  # Capacitor Robinhood plugin bridge
-│       └── serverless/       # Offline local storage DB, advisor calculations, public quotes
-│   └── native/android/       # Kotlin Robinhood auth plugin sources (injected at CI build)
-└── PortfolioSidekick.spec     # PyInstaller single-file desktop compilation parameters
+│       ├── main.jsx          # DB bootstrap + Vite mount
+│       ├── sidekickClient.js # Unified serverless API transport
+│       ├── plugins/robinhood-session/  # Encrypted OAuth vault plugin
+│       └── serverless/       # SQLite, apiRouter, robinhoodAuth, advisor, news
+│   └── native/android/       # Kotlin session vault (injected at CI build)
+├── compile_windows.ps1       # Tauri Windows desktop compiler
+└── PortfolioSidekick.spec    # DEPRECATED PyInstaller spec (pre-v1.7)
 ```

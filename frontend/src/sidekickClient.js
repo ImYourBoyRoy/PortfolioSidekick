@@ -36,12 +36,12 @@ export function isAndroidNative() {
   return getRuntimeMode() === 'android-native';
 }
 
-/** Desktop pywebview window shell (Python API no longer invoked). */
+/** Tauri 2 desktop shell. */
 export function isDesktopShell() {
   return getRuntimeMode() === 'desktop-shell';
 }
 
-/** @deprecated Use isDesktopShell — kept for callers that check pywebview presence. */
+/** @deprecated Use isDesktopShell */
 export function isDesktopIpc() {
   return isDesktopShell();
 }

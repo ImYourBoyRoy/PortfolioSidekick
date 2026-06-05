@@ -1,6 +1,6 @@
 // ./frontend/src/serverless/apiRouter.js
 /**
- * Unified in-process API router for all platforms (Android, desktop pywebview, dev).
+ * Unified in-process API router for all platforms (Android, Tauri desktop, dev).
  * Replaces Python FastAPI + robin_stocks for every /api/* route the UI calls.
  * Robinhood auth uses embedded robinhoodAuth.js; persistence uses localDb + vault plugin.
  *
