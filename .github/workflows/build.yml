@@ -14,7 +14,7 @@ env:
 
 jobs:
   build-desktop:
-    name: Build Desktop Release
+    name: Build Desktop Release (Tauri)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,17 +25,29 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-          cache-dependency-path: 'backend/requirements.txt'
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+
+      - name: Install Linux Tauri Dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Setup Rust (1.88+ per src-tauri/rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.88
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
 
       - name: Install Frontend Dependencies & Build
         run: |
@@ -44,34 +56,37 @@ jobs:
           npm run lint
           npm run build
 
-      - name: Install Backend & PyInstaller
+      - name: Build Tauri Desktop Bundle
         run: |
-          pip install -r backend/requirements.txt
-          pip install pyinstaller Pillow
+          cd frontend
+          npm run tauri:build
 
-      - name: Run PyInstaller Bundle
-        run: |
-          pyinstaller --clean PortfolioSidekick.spec
-
-      - name: Package Windows Binary
+      - name: Package Windows Artifact
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          Copy-Item dist/PortfolioSidekick.exe ./PortfolioSidekick-Windows.exe
+          $exe = Get-ChildItem -Path frontend/src-tauri/target/release/bundle -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninstall" } | Select-Object -First 1
+          if (-not $exe) { throw "No Windows Tauri EXE found" }
+          Copy-Item $exe.FullName ./PortfolioSidekick-Windows.exe
 
       - name: Package macOS App Bundle
         if: matrix.os == 'macos-latest'
         run: |
-          if [ -d "dist/PortfolioSidekick.app" ]; then
-            zip -r ./PortfolioSidekick-MacOS.zip dist/PortfolioSidekick.app
+          if [ -d "frontend/src-tauri/target/release/bundle/macos/Portfolio Sidekick.app" ]; then
+            zip -r ./PortfolioSidekick-MacOS.zip "frontend/src-tauri/target/release/bundle/macos/Portfolio Sidekick.app"
           else
-            zip -r ./PortfolioSidekick-MacOS.zip dist/PortfolioSidekick
+            APP=$(find frontend/src-tauri/target/release/bundle -name "*.app" | head -1)
+            zip -r ./PortfolioSidekick-MacOS.zip "$APP"
           fi
 
       - name: Package Linux Binary
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cp dist/PortfolioSidekick ./PortfolioSidekick-Linux
+          BIN=$(find frontend/src-tauri/target/release/bundle -type f \( -name "*.AppImage" -o -name "portfolio-sidekick" -o -name "Portfolio Sidekick" \) | head -1)
+          if [ -z "$BIN" ]; then
+            BIN=frontend/src-tauri/target/release/portfolio-sidekick
+          fi
+          cp "$BIN" ./PortfolioSidekick-Linux
           tar -czvf ./PortfolioSidekick-Linux.tar.gz PortfolioSidekick-Linux
 
       - name: Upload Windows Artifact
@@ -132,14 +147,11 @@ jobs:
 
       - name: Inject Custom Android Launcher Icons
         run: |
-          # Create and configure all target res folders in native Android
           mkdir -p frontend/android/app/src/main/res/mipmap-mdpi
           mkdir -p frontend/android/app/src/main/res/mipmap-hdpi
           mkdir -p frontend/android/app/src/main/res/mipmap-xhdpi
           mkdir -p frontend/android/app/src/main/res/mipmap-xxhdpi
           mkdir -p frontend/android/app/src/main/res/mipmap-xxxhdpi
-          
-          # 1. Standard/legacy PNG launcher icons
           cp assets/android/icon-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
           cp assets/android/icon-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
           cp assets/android/icon-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
@@ -150,17 +162,12 @@ jobs:
           cp assets/android/icon-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
           cp assets/android/icon-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
           cp assets/android/icon-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
-          
-          # 2. Premium adaptive foreground launcher icons
           cp assets/android/icon-foreground-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png
           cp assets/android/icon-foreground-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
           cp assets/android/icon-foreground-xhdpi.png frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png
           cp assets/android/icon-foreground-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png
           cp assets/android/icon-foreground-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
-          
-          # 3. Create/overwrite adaptive XML files for proper circle/square shape resolution on SDK 26+
           mkdir -p frontend/android/app/src/main/res/mipmap-anydpi-v26
-          
           cat << 'EOF' > frontend/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -168,7 +175,6 @@ jobs:
               <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
           </adaptive-icon>
           EOF
-          
           cat << 'EOF' > frontend/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -176,13 +182,9 @@ jobs:
               <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
           </adaptive-icon>
           EOF
-          
-          # 4. Inject color hex matching our gorgeous premium brand color (#070c12) to override white background
           mkdir -p frontend/android/app/src/main/res/values
-          # Delete any previous colors.xml or background duplicates to prevent Gradle merger conflict
           rm -f frontend/android/app/src/main/res/values/colors.xml
           rm -f frontend/android/app/src/main/res/values/ic_launcher_background.xml
-          
           cat << 'EOF' > frontend/android/app/src/main/res/values/ic_launcher_background.xml
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -198,26 +200,17 @@ jobs:
           mkdir -p frontend/android/app/src/main/res/xml
           cp frontend/native/android/*.kt "$PKG_DIR/"
           cp frontend/native/android/network_security_config.xml frontend/android/app/src/main/res/xml/network_security_config.xml
-
-          # Enable Kotlin in the app module (Capacitor's template is Java-only by default,
-          # so the .kt native plugin would not compile without this).
           PROJECT_GRADLE="frontend/android/build.gradle"
           if ! grep -q "kotlin-gradle-plugin" "$PROJECT_GRADLE"; then
             sed -i "/classpath 'com.android.tools.build:gradle/a\        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.25'" "$PROJECT_GRADLE"
           fi
-
           APP_GRADLE="frontend/android/app/build.gradle"
           if ! grep -q "kotlin-android" "$APP_GRADLE"; then
             sed -i "1a apply plugin: 'kotlin-android'" "$APP_GRADLE"
           fi
-
-          # Gradle dependencies for OkHttp + EncryptedSharedPreferences + Kotlin stdlib
           if ! grep -q "security-crypto" "$APP_GRADLE"; then
             sed -i '/dependencies {/a\    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.25"\n    implementation "com.squareup.okhttp3:okhttp:4.12.0"\n    implementation "androidx.security:security-crypto:1.1.0-alpha06"' "$APP_GRADLE"
           fi
-
-          # Register the native plugin in MainActivity (Capacitor does not auto-register
-          # plugins defined inside the app module — they must be registered explicitly).
           cat > "$PKG_DIR/MainActivity.java" <<'JAVA'
           package com.imyourboyroy.portfoliosidekick;
 
@@ -232,10 +225,6 @@ jobs:
               }
           }
           JAVA
-
-          # AndroidManifest: disable backup + network allowlist.
-          # Set the existing allowBackup attribute (avoid duplicating it) and add the
-          # network security config + fullBackupContent only if not already present.
           python3 - <<'PY'
           import pathlib
           p = pathlib.Path("frontend/android/app/src/main/AndroidManifest.xml")

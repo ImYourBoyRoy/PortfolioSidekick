@@ -50,12 +50,7 @@ export async function serverlessApiFetch(path, options = {}) {
       data = { status: 'error', mode: 'live', message: pluginErrorMessage(e, 'Robinhood login failed.') };
     }
     if (data.status === 'success' && data.mode !== 'sandbox') {
-      const profiles = localDb.getProfiles();
-      const p = profiles.find((x) => x.id === body.profile_id);
-      if (p) {
-        p.robinhood_username = body.username;
-        localStorage.setItem('st_profiles', JSON.stringify(profiles));
-      }
+      localDb.setRobinhoodUsername(body.profile_id, body.username);
     }
     return { ok: true, status: 200, json: async () => data };
   }

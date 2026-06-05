@@ -1,0 +1,7 @@
+# Legacy Python desktop stack — deprecated, reference/verification only
+fastapi>=0.115.8
+uvicorn>=0.34.0
+robin-stocks>=3.4.0
+pywebview>=6.2.1
+cryptography>=42.0.0
+httpx>=0.27.0

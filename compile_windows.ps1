@@ -1,123 +1,74 @@
 # ./compile_windows.ps1
-# Portfolio Sidekick Windows Standalone Compiler Script
-# Automatically builds static frontend assets and bundles the complete application 
-# into a single-file executable ('dist/PortfolioSidekick.exe') with zero runtime console windows.
+# Portfolio Sidekick Windows Desktop Compiler (Tauri 2)
+# Builds the React frontend and packages a native Windows executable.
+# No Python, PyInstaller, or robin_stocks required.
 #
 # Created by: Roy Dawson IV
-#
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "         PORTFOLIO SIDEKICK WINDOWS COMPILER" -ForegroundColor Cyan
+Write-Host "    PORTFOLIO SIDEKICK TAURI WINDOWS COMPILER" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-# Always run from the repository root (script directory), regardless of caller cwd.
 $RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 Set-Location $RepoRoot
 Write-Host "Workspace: $RepoRoot" -ForegroundColor Gray
 
-# 1. Verify Prerequisites
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Error "Node.js is not found on your PATH. Please install Node.js (v24+) to compile the React frontend."
+    Write-Error "Node.js is not found on your PATH. Install Node.js 24+."
     Exit 1
 }
 
-# Enforce Node version >= 22.0.0
 $nodeVersion = (node -v) -replace 'v', ''
 $nodeMajor = [int]($nodeVersion.Split('.')[0])
-Write-Host "Detected Node.js version $nodeVersion (Major: $nodeMajor)" -ForegroundColor Gray
+Write-Host "Detected Node.js version $nodeVersion" -ForegroundColor Gray
 if ($nodeMajor -lt 22) {
-    Write-Error "Capacitor requires Node.js >= 22.0.0. Please upgrade to Node 22 or 24+."
+    Write-Error "Node.js >= 22 is required."
     Exit 1
 }
 
-# Verify Java JDK >= 21 (optional locally for Windows builds, but warns if target targets Android)
-if (Get-Command java -ErrorAction SilentlyContinue) {
-    $javaVersionStr = (java -version 2>&1 | Out-String)
-    if ($javaVersionStr -match '"(\d+)(?:\.\d+)*.*"') {
-        $javaMajor = [int]$Matches[1]
-        Write-Host "Detected Java version $javaMajor" -ForegroundColor Gray
-        if ($javaMajor -lt 21) {
-            Write-Warning "Capacitor mandates Java 21+ for Android compilations. Your local Java version is $javaMajor. Please upgrade before mobile packaging."
-        }
-    }
-}
-
-# Find Python executable
-$pythonExe = "python"
-$backendVenv = Join-Path $RepoRoot "backend\.venv\Scripts\python.exe"
-$rootVenv = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-if (Test-Path $backendVenv) {
-    $pythonExe = $backendVenv
-    Write-Host "Detected local virtual environment at 'backend/.venv'. Using it." -ForegroundColor Green
-} elseif (Test-Path $rootVenv) {
-    $pythonExe = $rootVenv
-    Write-Host "Detected local virtual environment at '.venv'. Using it." -ForegroundColor Green
-}
-
-if (-not (Get-Command $pythonExe -ErrorAction SilentlyContinue)) {
-    Write-Error "Python is not found. Please install Python 3.10+ to run backend scripts."
+if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+    Write-Error "Rust/Cargo is not found. Install from https://rustup.rs for Tauri desktop builds."
     Exit 1
 }
 
-# 2. Build Frontend Assets
-Write-Host "`n[STEP 1/3] Compiling & Linting React Frontend Assets..." -ForegroundColor Yellow
+Write-Host "`n[STEP 1/2] Compiling & linting React frontend..." -ForegroundColor Yellow
 Push-Location (Join-Path $RepoRoot "frontend")
-$frontendFailed = $false
+$failed = $false
 
-Write-Host "Running npm install..." -ForegroundColor Gray
 npm install
-if ($LASTEXITCODE -ne 0) { $frontendFailed = $true }
+if ($LASTEXITCODE -ne 0) { $failed = $true }
 
-if (-not $frontendFailed) {
-    Write-Host "Running ESLint verification (must pass with zero errors/warnings)..." -ForegroundColor Gray
+if (-not $failed) {
     npm run lint
-    if ($LASTEXITCODE -ne 0) {
-        $frontendFailed = $true
-        Write-Host "`n[ABORT] ESLint failed. Fix all reported issues before building." -ForegroundColor Red
-        Write-Host "        npm failures do not throw in PowerShell; lint exit code blocks the build." -ForegroundColor Red
-    }
+    if ($LASTEXITCODE -ne 0) { $failed = $true }
 }
 
-if (-not $frontendFailed) {
-    Write-Host "Running npm run build..." -ForegroundColor Gray
+if (-not $failed) {
     npm run build
-    if ($LASTEXITCODE -ne 0) { $frontendFailed = $true }
+    if ($LASTEXITCODE -ne 0) { $failed = $true }
 }
 
 Pop-Location
-if ($frontendFailed) {
+if ($failed) {
     Write-Error "Frontend compilation or linting failed."
     Exit 1
 }
 
-# 3. Setup Python Dependencies
-Write-Host "`n[STEP 2/3] Preparing Python Packaging Dependencies..." -ForegroundColor Yellow
-Write-Host "Installing standard backend libraries..." -ForegroundColor Gray
-& $pythonExe -m pip install -r (Join-Path $RepoRoot "backend\requirements.txt")
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Backend dependency install failed."
-    Exit 1
-}
-Write-Host "Installing PyInstaller & Pillow packagers..." -ForegroundColor Gray
-& $pythonExe -m pip install pyinstaller Pillow
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "PyInstaller/Pillow install failed."
-    Exit 1
-}
+Write-Host "`n[STEP 2/2] Building Tauri Windows executable..." -ForegroundColor Yellow
+Push-Location (Join-Path $RepoRoot "frontend")
+npm run tauri:build
+$tauriExit = $LASTEXITCODE
+Pop-Location
 
-# 4. Compile Standalone Desktop App
-Write-Host "`n[STEP 3/3] Compiling Single-File Windows Executable..." -ForegroundColor Yellow
-& $pythonExe -m PyInstaller --clean (Join-Path $RepoRoot "PortfolioSidekick.spec")
-
-if ($LASTEXITCODE -eq 0) {
+if ($tauriExit -eq 0) {
+    $bundleDir = Join-Path $RepoRoot "frontend\src-tauri\target\release\bundle"
     Write-Host "`n==========================================================" -ForegroundColor Green
-    Write-Host "     [SUCCESS] COMPILATION COMPLETED SUCCESSFULLY!" -ForegroundColor Green
+    Write-Host "     [SUCCESS] TAURI BUILD COMPLETED!" -ForegroundColor Green
     Write-Host "==========================================================" -ForegroundColor Green
-    Write-Host "Target Binary: dist/PortfolioSidekick.exe" -ForegroundColor Green
-    Write-Host "You can run this file directly to launch Portfolio Sidekick offline!" -ForegroundColor Green
+    Write-Host "Artifacts under: $bundleDir" -ForegroundColor Green
+    Write-Host "Windows installer/EXE typically at:" -ForegroundColor Green
+    Write-Host "  frontend\src-tauri\target\release\bundle\nsis\*.exe" -ForegroundColor Green
 } else {
-    Write-Host "`n==========================================================" -ForegroundColor Red
-    Write-Host "             [ERROR] COMPILATION FAILED!" -ForegroundColor Red
-    Write-Host "==========================================================" -ForegroundColor Red
+    Write-Host "`n[ERROR] Tauri build failed." -ForegroundColor Red
     Exit 1
 }

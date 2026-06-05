@@ -48,13 +48,21 @@ The toolkit is designed to be fully portable and compiled into standalone execut
 
 | Platform | Output Artifact | Format / Delivery | Architecture Support |
 | :--- | :--- | :--- | :--- |
-| **Windows** | `PortfolioSidekick-Windows.exe` | Standalone Portable Executable | x64 |
-| **macOS** | `PortfolioSidekick-MacOS.zip` | Standalone `.app` Application Bundle | ARM64 / Universal |
-| **Linux (Ubuntu)** | `PortfolioSidekick-Linux.tar.gz` | Standalone Portable Tarball | x64 |
-| **Android** | `PortfolioSidekick-Android.apk` | Native Mobile Application Package (Home Launcher label: **Sidekick**) | ARM64 |
+| **Windows** | `PortfolioSidekick-Windows.exe` | Tauri 2 native executable (NSIS installer or portable EXE) | x64 |
+| **macOS** | `PortfolioSidekick-MacOS.zip` | Tauri `.app` bundle | ARM64 / Universal |
+| **Linux (Ubuntu)** | `PortfolioSidekick-Linux.tar.gz` | Tauri AppImage or binary tarball | x64 |
+| **Android** | `PortfolioSidekick-Android.apk` | Capacitor APK (launcher label: **Sidekick**) | ARM64 |
 
 ### Automated Compilations on GitHub
-Every release tag pushed (e.g., `v*`) automatically triggers our GitHub Actions pipeline, compiling static frontend assets, packing the Python server, and embedding custom native icons (`assets/icon.ico` / `assets/icon.icns`) for clean desktop presentation. 
+Every release tag (`v*`) triggers CI: **Tauri** desktop builds (Windows/macOS/Linux) + **Capacitor** Android APK. No Python or PyInstaller.
+
+### Security model (v1.7+)
+| Asset | Storage | Notes |
+|-------|---------|-------|
+| Portfolio data | SQLite (`portfolio_sidekick.db`) | App-private dir: Tauri AppData / Android DATA / IndexedDB (dev) |
+| Robinhood OAuth tokens | Vault plugin only | **Never** in SQLite; Android uses EncryptedSharedPreferences |
+| Network | Allowlist | `api.robinhood.com`, Yahoo Finance only (CSP + Android network security config) |
+| Backups | Disabled | `allowBackup=false` on Android; no cloud sync | 
 
 ---
 
@@ -81,12 +89,13 @@ If you prefer running the development server locally:
    npm run dev
    ```
    *Loads at `http://localhost:5173`. All `/api/*` routes are handled in-process by `frontend/src/serverless/apiRouter.js`.*
-3. **Legacy desktop window shell (pywebview — API unused)**:
+3. **Tauri desktop (Windows / macOS / Linux)**:
    ```bash
-   pip install -r backend/requirements.txt
-   cd backend && python main.py
+   cd frontend
+   npm install
+   npm run tauri:build
    ```
-   *Opens the native window; business logic runs in JS, not Python.*
+   *Requires [Rust](https://rustup.rs) 1.88+. Windows: `.\compile_windows.ps1`*
 4. **Android standalone build**:
    ```bash
    cd frontend

@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+# DEPRECATED: Replaced by Tauri 2 builds (frontend/src-tauri). Do not use for v1.7.0+.
 import sys
 import os
 

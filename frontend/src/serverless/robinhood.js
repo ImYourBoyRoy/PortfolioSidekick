@@ -130,12 +130,7 @@ export const robinhoodClient = {
       }
       const data = await res.json();
       if (data.status === "success" && isServerlessBackend()) {
-        const profiles = localDb.getProfiles();
-        const p = profiles.find((x) => x.id === parseInt(profileId));
-        if (p) {
-          p.robinhood_username = username;
-          localStorage.setItem("st_profiles", JSON.stringify(profiles));
-        }
+        localDb.setRobinhoodUsername(parseInt(profileId, 10), username);
       }
       return data;
     } catch (err) {
@@ -195,12 +190,7 @@ export const robinhoodClient = {
       if (!res.ok) throw new Error("Logout failed.");
       const data = await res.json();
       if (isServerlessBackend()) {
-        const profiles = localDb.getProfiles();
-        const p = profiles.find((x) => x.id === parseInt(profileId));
-        if (p) {
-          delete p.robinhood_username;
-          localStorage.setItem("st_profiles", JSON.stringify(profiles));
-        }
+        localDb.clearRobinhoodUsername(parseInt(profileId, 10));
       }
       return data;
     } catch (err) {

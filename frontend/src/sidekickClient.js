@@ -4,15 +4,21 @@
  * All platforms route /api/* through the embedded serverless layer (JS).
  * Python FastAPI + robin_stocks are no longer used at runtime.
  *
- * Desktop production still loads inside pywebview for the native window shell;
+ * Desktop production runs inside Tauri 2 (Rust shell);
  * Android uses Capacitor; dev uses Vite directly — no backend server required.
  */
 
 import { Capacitor } from '@capacitor/core';
 import { serverlessApiFetch } from './serverless/apiRouter';
+import { ensureDatabaseReady } from './serverless/database';
+
+function isTauriShell() {
+  if (typeof window === 'undefined') return false;
+  return '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
+}
 
 export function getRuntimeMode() {
-  if (typeof window !== 'undefined' && window.pywebview?.api?.api_call) {
+  if (isTauriShell()) {
     return 'desktop-shell';
   }
   if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
@@ -45,6 +51,7 @@ export function isDesktopIpc() {
  * Path should be like `/profiles` or `/portfolio/holdings?profile_id=1` (with or without /api prefix).
  */
 export async function sidekickFetch(path, options = {}) {
+  await ensureDatabaseReady();
   const normalized = path.startsWith('/api/') ? path : `/api/${path.replace(/^\//, '')}`;
   return serverlessApiFetch(normalized, options);
 }

@@ -1,0 +1,26 @@
+[package]
+name = "portfolio-sidekick"
+version = "1.7.0"
+description = "Portfolio Sidekick — secure local Robinhood portfolio toolkit"
+authors = ["Roy Dawson IV"]
+license = "MIT"
+repository = "https://github.com/ImYourBoyRoy/PortfolioSidekick"
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.2", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.2", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-fs = "2"
