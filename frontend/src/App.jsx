@@ -1583,10 +1583,10 @@ export default function App() {
   useEffect(() => {
     if (!loading || loginStatus.status !== 'processing') return undefined;
     const messages = [
-      'Authenticating with Robinhood on this device...',
-      'Waiting for Robinhood to issue your verification challenge...',
-      'Still waiting — Robinhood may send SMS, email, or an app push approval...',
-      'Almost there — check your phone if you received a Robinhood notification.',
+      'Connecting to Robinhood securely on this device...',
+      'Waiting for Robinhood to issue your verification challenge (up to 2 minutes)...',
+      'Robinhood may send SMS, email, or an app push — keep your phone nearby.',
+      'Still waiting for Robinhood — check the app for a push approval or SMS code.',
     ];
     let step = 0;
     const timer = setInterval(() => {

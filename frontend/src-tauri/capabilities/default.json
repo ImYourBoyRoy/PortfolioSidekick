@@ -5,8 +5,8 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "fs:allow-app-read-recursive",
-    "fs:allow-app-write-recursive",
+    "fs:allow-exe-read-recursive",
+    "fs:allow-exe-write-recursive",
     "fs:allow-appdata-read-recursive",
     "fs:allow-appdata-write-recursive",
     "fs:allow-mkdir",

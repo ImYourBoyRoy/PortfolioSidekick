@@ -1,8 +1,8 @@
 // ./frontend/src/serverless/robinhoodAuth.js
 /**
  * Two-phase Robinhood authentication for all platforms (Android, desktop, dev).
- * Logic is ported from backend/robinhood_client.py and embedded robin_stocks semantics.
- * Sessions persist via the RobinhoodSession vault plugin.
+ * Sheriff challenge + workflow polling mirrors robin_stocks authentication.py
+ * (_validate_sherrif_id) and backend/robinhood_client.py.
  *
  * Created by: Roy Dawson IV
  */
@@ -20,21 +20,49 @@ import {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const CHALLENGE_POLL_ATTEMPTS = 30;
-const CHALLENGE_POLL_INTERVAL_MS = 2000;
-const WORKFLOW_POLL_ATTEMPTS = 8;
-const WORKFLOW_POLL_INTERVAL_MS = 2000;
+/** robin_stocks uses 5s polling for up to 120s during sheriff verification. */
+const SHERIFF_POLL_INTERVAL_MS = 5000;
+const SHERIFF_POLL_TIMEOUT_MS = 120000;
+const WORKFLOW_POLL_ATTEMPTS = 10;
+const WORKFLOW_POLL_INTERVAL_MS = 5000;
+const PUSH_POLL_ATTEMPTS = 12;
+const PUSH_POLL_INTERVAL_MS = 5000;
+
+/** In-memory fallback when vault/fs writes fail during MFA. */
+const memoryChallenges = new Map();
 
 async function getVaultPlugin() {
   const { RobinhoodSession } = await import('../plugins/robinhood-session');
   return RobinhoodSession;
 }
 
+async function loadChallengeState(vault, profileId) {
+  if (memoryChallenges.has(profileId)) {
+    return memoryChallenges.get(profileId);
+  }
+  try {
+    const loaded = await vault.loadChallenge({ profileId });
+    return loaded?.pending || null;
+  } catch {
+    return null;
+  }
+}
+
 async function saveChallengeSafe(vault, profileId, pending) {
+  memoryChallenges.set(profileId, pending);
   try {
     await vault.saveChallenge({ profileId, pending });
   } catch (err) {
-    console.warn('[RobinhoodAuth] Vault challenge save failed, using in-memory pending only:', err);
+    console.warn('[RobinhoodAuth] Vault challenge save failed; using in-memory MFA state.', err);
+  }
+}
+
+async function clearChallengeSafe(vault, profileId) {
+  memoryChallenges.delete(profileId);
+  try {
+    await vault.clearChallenge({ profileId });
+  } catch {
+    // Best effort.
   }
 }
 
@@ -70,26 +98,104 @@ function extractSheriffChallenge(inquiries) {
   };
 }
 
-async function pollSheriffChallenge(inquiriesUrl, maxAttempts = CHALLENGE_POLL_ATTEMPTS) {
-  let challengeType = null;
-  let challengeId = null;
+/**
+ * Mirrors robin_stocks _validate_sherrif_id polling semantics.
+ * Returns when challenge is actionable, already validated, or timeout.
+ */
+async function pollSheriffChallenge(inquiriesUrl) {
+  const started = Date.now();
+  let lastSeen = null;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (attempt > 0) {
-      await sleep(CHALLENGE_POLL_INTERVAL_MS);
+  while (Date.now() - started < SHERIFF_POLL_TIMEOUT_MS) {
+    if (Date.now() - started > 0) {
+      await sleep(SHERIFF_POLL_INTERVAL_MS);
     }
+
     const inquiries = await requestGet(inquiriesUrl);
     const challenge = extractSheriffChallenge(inquiries);
-    if (challenge) {
-      challengeType = challenge.challenge_type;
-      challengeId = challenge.challenge_id;
-      if (challengeId) break;
+    if (!challenge) continue;
+
+    lastSeen = challenge;
+
+    if (challenge.challenge_status === 'validated') {
+      return { ...challenge, ready: true, ready_phase: 'validated' };
+    }
+
+    if (challenge.challenge_type === 'prompt' && challenge.challenge_id) {
+      return { ...challenge, ready: true, ready_phase: 'prompt' };
+    }
+
+    if (
+      ['sms', 'email'].includes(challenge.challenge_type)
+      && challenge.challenge_id
+      && challenge.challenge_status === 'issued'
+    ) {
+      return { ...challenge, ready: true, ready_phase: 'code' };
     }
   }
 
   return {
-    challenge_type: challengeType || 'sms',
-    challenge_id: challengeId,
+    challenge_type: lastSeen?.challenge_type || 'sms',
+    challenge_id: lastSeen?.challenge_id || null,
+    challenge_status: lastSeen?.challenge_status || null,
+    ready: false,
+    ready_phase: 'timeout',
+  };
+}
+
+async function pollWorkflowApproval(inquiriesUrl) {
+  for (let attempt = 0; attempt < WORKFLOW_POLL_ATTEMPTS; attempt++) {
+    const inqResp = await requestPost(
+      inquiriesUrl,
+      { sequence: 0, user_input: { status: 'continue' } },
+      { json: true }
+    );
+    if (workflowApproved(inqResp)) {
+      return true;
+    }
+    if (attempt < WORKFLOW_POLL_ATTEMPTS - 1) {
+      await sleep(WORKFLOW_POLL_INTERVAL_MS);
+    }
+  }
+  // robin_stocks proceeds after max retries.
+  return false;
+}
+
+async function waitForPushValidated(challengeId) {
+  for (let attempt = 0; attempt < PUSH_POLL_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await sleep(PUSH_POLL_INTERVAL_MS);
+    }
+    const pushStatus = await requestGet(RH_URLS.pushStatus(challengeId));
+    if (pushStatus?.challenge_status === 'validated') {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function finalizeLogin(loginPayload, deviceToken) {
+  const data = await requestPost(RH_URLS.login, loginPayload);
+  if (data?.access_token) {
+    return {
+      status: 'success',
+      mode: 'live',
+      message: 'Successfully connected to Robinhood account!',
+      session: data,
+      device_token: deviceToken,
+    };
+  }
+  if (data?.verification_workflow) {
+    return {
+      status: 'error',
+      mode: 'live',
+      message: 'Verification not fully completed. Please restart login and try again.',
+    };
+  }
+  return {
+    status: 'error',
+    mode: 'live',
+    message: `Login failed after verification: ${data?.detail || 'Unknown error'}`,
   };
 }
 
@@ -112,87 +218,103 @@ async function initiateChallenge(loginResponse, deviceToken, loginPayload) {
 
   const machineId = machineData.id;
   const inquiriesUrl = RH_URLS.inquiries(machineId);
-  const { challenge_type: challengeType, challenge_id: challengeId } = await pollSheriffChallenge(inquiriesUrl);
+  const challenge = await pollSheriffChallenge(inquiriesUrl);
+
+  const pending = {
+    device_token: deviceToken,
+    login_payload: loginPayload,
+    workflow_id: workflowId,
+    machine_id: machineId,
+    challenge_type: challenge.challenge_type,
+    challenge_id: challenge.challenge_id,
+    challenge_status: challenge.challenge_status,
+    inquiries_url: inquiriesUrl,
+  };
+
+  if (challenge.ready_phase === 'validated') {
+    await pollWorkflowApproval(inquiriesUrl);
+    return finalizeLogin(loginPayload, deviceToken);
+  }
+
+  if (!challenge.ready) {
+    return {
+      status: 'error',
+      mode: 'live',
+      message: 'Robinhood did not issue a verification challenge in time. Check the Robinhood app, then try again.',
+    };
+  }
 
   let message;
-  if (challengeType === 'prompt') {
-    message = challengeId
-      ? 'Approve this login in your Robinhood mobile app. We will detect approval automatically.'
-      : 'Approve this login in your Robinhood mobile app, then click Confirm Approval.';
-  } else if (challengeType === 'email') {
-    message = challengeId
-      ? 'A verification code has been sent to your email. Enter it below.'
-      : 'Robinhood is preparing email verification. Wait a moment, then enter the code when it arrives.';
+  if (challenge.ready_phase === 'prompt') {
+    message = 'Approve this login in your Robinhood mobile app. We will detect approval automatically.';
+  } else if (challenge.challenge_type === 'email') {
+    message = 'A verification code has been sent to your email. Enter it below.';
   } else {
-    message = challengeId
-      ? 'A verification code has been sent via SMS. Enter it below.'
-      : 'Robinhood is preparing SMS verification. Wait a moment, then enter the code when it arrives.';
+    message = 'A verification code has been sent via SMS. Enter it below.';
   }
 
   return {
     status: 'mfa_required',
     mode: 'live',
-    challenge_type: challengeType,
+    challenge_type: challenge.challenge_type,
     message,
-    pending: {
-      device_token: deviceToken,
-      login_payload: loginPayload,
-      workflow_id: workflowId,
-      machine_id: machineId,
-      challenge_type: challengeType,
-      challenge_id: challengeId,
-      inquiries_url: inquiriesUrl,
-    },
+    pending,
   };
 }
 
-async function resolveChallengeId(pending) {
-  if (pending.challenge_id) return pending.challenge_id;
-  const refreshed = await pollSheriffChallenge(pending.inquiries_url, 15);
-  if (refreshed.challenge_id) {
-    pending.challenge_id = refreshed.challenge_id;
-    if (refreshed.challenge_type) pending.challenge_type = refreshed.challenge_type;
-    return refreshed.challenge_id;
-  }
-  return null;
+async function refreshSheriffChallenge(pending) {
+  const refreshed = await pollSheriffChallenge(pending.inquiries_url);
+  if (refreshed.challenge_id) pending.challenge_id = refreshed.challenge_id;
+  if (refreshed.challenge_type) pending.challenge_type = refreshed.challenge_type;
+  if (refreshed.challenge_status) pending.challenge_status = refreshed.challenge_status;
+  return refreshed;
 }
 
 async function completeChallenge(pending, mfaCode) {
-  const challengeType = pending.challenge_type;
-  let activePending = { ...pending };
+  const activePending = { ...pending };
+  const challengeType = activePending.challenge_type;
 
   if (challengeType === 'prompt') {
-    let challengeId = await resolveChallengeId(activePending);
+    let challengeId = activePending.challenge_id;
+    if (!challengeId) {
+      const refreshed = await refreshSheriffChallenge(activePending);
+      challengeId = refreshed.challenge_id;
+    }
     if (!challengeId) {
       return {
         status: 'mfa_required',
         mode: 'live',
         challenge_type: 'prompt',
-        message: 'Waiting for Robinhood to issue the app push challenge. Keep the Robinhood app open and try again shortly.',
+        message: 'Waiting for Robinhood to issue the app push challenge. Keep the Robinhood app open.',
         pending: activePending,
       };
     }
 
-    const pushStatus = await requestGet(RH_URLS.pushStatus(challengeId));
-    if (!pushStatus || pushStatus.challenge_status !== 'validated') {
+    const approved = mfaCode
+      ? (await requestGet(RH_URLS.pushStatus(challengeId)))?.challenge_status === 'validated'
+      : await waitForPushValidated(challengeId);
+
+    if (!approved) {
       return {
         status: 'mfa_required',
         mode: 'live',
         challenge_type: 'prompt',
-        message: 'Push not yet approved. Open your Robinhood app and approve the login, then try again.',
+        message: 'Push not yet approved. Open your Robinhood app and approve the login.',
         pending: activePending,
       };
     }
   } else {
-    const challengeId = await resolveChallengeId(activePending);
-    if (!challengeId) {
-      return {
-        status: 'mfa_required',
-        mode: 'live',
-        challenge_type: challengeType,
-        message: 'Robinhood has not issued a verification code yet. Wait a few seconds and submit your code again.',
-        pending: activePending,
-      };
+    if (!activePending.challenge_id || activePending.challenge_status !== 'issued') {
+      const refreshed = await refreshSheriffChallenge(activePending);
+      if (!refreshed.ready || refreshed.ready_phase !== 'code') {
+        return {
+          status: 'mfa_required',
+          mode: 'live',
+          challenge_type: challengeType,
+          message: 'Robinhood has not sent the verification code yet. Wait a few seconds and try again.',
+          pending: activePending,
+        };
+      }
     }
 
     if (!mfaCode) {
@@ -206,7 +328,7 @@ async function completeChallenge(pending, mfaCode) {
     }
 
     const challengeResp = await requestPost(
-      RH_URLS.challengeRespond(challengeId),
+      RH_URLS.challengeRespond(activePending.challenge_id),
       { response: mfaCode }
     );
     if (!challengeResp) {
@@ -227,50 +349,8 @@ async function completeChallenge(pending, mfaCode) {
     }
   }
 
-  let workflowApprovedFlag = false;
-  for (let attempt = 0; attempt < WORKFLOW_POLL_ATTEMPTS; attempt++) {
-    const inqResp = await requestPost(
-      activePending.inquiries_url,
-      { sequence: 0, user_input: { status: 'continue' } },
-      { json: true }
-    );
-    if (workflowApproved(inqResp)) {
-      workflowApprovedFlag = true;
-      break;
-    }
-    if (attempt < WORKFLOW_POLL_ATTEMPTS - 1) {
-      await sleep(WORKFLOW_POLL_INTERVAL_MS);
-    }
-  }
-
-  if (!workflowApprovedFlag) {
-    // Mirror Python client: proceed even if workflow approval was not explicit.
-  }
-
-  const data = await requestPost(RH_URLS.login, activePending.login_payload);
-  if (data?.access_token) {
-    return {
-      status: 'success',
-      mode: 'live',
-      message: 'Successfully connected to Robinhood account!',
-      session: data,
-      device_token: activePending.device_token,
-    };
-  }
-
-  if (data?.verification_workflow) {
-    return {
-      status: 'error',
-      mode: 'live',
-      message: 'Verification not fully completed. Please restart login and try again.',
-    };
-  }
-
-  return {
-    status: 'error',
-    mode: 'live',
-    message: `Login failed after verification: ${data?.detail || 'Unknown error'}`,
-  };
+  await pollWorkflowApproval(activePending.inquiries_url);
+  return finalizeLogin(activePending.login_payload, activePending.device_token);
 }
 
 async function validateSession(session) {
@@ -297,13 +377,7 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
   }
 
   const vault = await getVaultPlugin();
-  let pending = null;
-  try {
-    const loaded = await vault.loadChallenge({ profileId });
-    pending = loaded?.pending || null;
-  } catch {
-    // Vault unavailable — start a fresh login attempt.
-  }
+  let pending = await loadChallengeState(vault, profileId);
 
   const isPushPending = pending?.challenge_type === 'prompt';
   let result;
@@ -314,7 +388,7 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
       await saveChallengeSafe(vault, profileId, result.pending);
     }
   } else {
-    await vault.clearChallenge({ profileId }).catch(() => {});
+    await clearChallengeSafe(vault, profileId);
     const deviceToken = generateDeviceToken();
     const loginPayload = buildLoginPayload(username, password, deviceToken);
     const data = await requestPost(RH_URLS.login, loginPayload);
@@ -358,9 +432,9 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
 
   if (result.status === 'success' && result.mode !== 'sandbox' && result.session) {
     await saveSessionSafe(vault, profileId, sessionPayload(result.session, result.device_token), username);
-    await vault.clearChallenge({ profileId }).catch(() => {});
+    await clearChallengeSafe(vault, profileId);
   } else if (result.status === 'error') {
-    await vault.clearChallenge({ profileId }).catch(() => {});
+    await clearChallengeSafe(vault, profileId);
   }
 
   return {
@@ -373,6 +447,7 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
 
 export async function robinhoodLogout(profileId) {
   const vault = await getVaultPlugin();
+  await clearChallengeSafe(vault, profileId);
   await vault.wipe({ profileId }).catch(() => {});
   return {
     status: 'success',

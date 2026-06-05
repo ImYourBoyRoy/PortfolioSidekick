@@ -1,7 +1,7 @@
 // ./frontend/src/serverless/storagePaths.js
 /**
  * Resolves where Portfolio Sidekick stores on-device data.
- * Desktop (Tauri) defaults to portable mode: a `data/` folder beside the executable.
+ * Desktop (Tauri) portable mode: `data/` beside the executable ($EXE/data).
  * Android uses Capacitor internal storage; dev uses IndexedDB/localStorage.
  */
 
@@ -11,6 +11,7 @@ const DATA_SUBDIR = 'data';
 const INSTALLED_MARKER = 'portfolio_sidekick.installed';
 
 let cachedLayout = null;
+let cachedPortableDir = null;
 
 async function isTauriRuntime() {
   try {
@@ -21,6 +22,11 @@ async function isTauriRuntime() {
   }
 }
 
+async function getExecutableBaseDir() {
+  const { BaseDirectory } = await import('@tauri-apps/plugin-fs');
+  return BaseDirectory.Executable;
+}
+
 /**
  * @returns {Promise<'tauri-portable' | 'tauri-appdata' | 'capacitor' | 'browser'>}
  */
@@ -28,10 +34,11 @@ export async function getStorageLayout() {
   if (cachedLayout) return cachedLayout;
 
   if (await isTauriRuntime()) {
-    const { exists, BaseDirectory } = await import('@tauri-apps/plugin-fs');
+    const { exists } = await import('@tauri-apps/plugin-fs');
+    const baseDir = await getExecutableBaseDir();
     let useAppData;
     try {
-      useAppData = await exists(INSTALLED_MARKER, { baseDir: BaseDirectory.App });
+      useAppData = await exists(INSTALLED_MARKER, { baseDir });
     } catch {
       useAppData = false;
     }
@@ -52,6 +59,21 @@ export async function isPortableDesktop() {
   return (await getStorageLayout()) === 'tauri-portable';
 }
 
+/** Human-readable portable data directory for UI/debug (desktop only). */
+export async function getPortableDataDirectory() {
+  if (cachedPortableDir) return cachedPortableDir;
+  if (!(await isTauriRuntime())) return null;
+
+  try {
+    const { executableDir, join } = await import('@tauri-apps/api/path');
+    const exeDir = await executableDir();
+    cachedPortableDir = await join(exeDir, DATA_SUBDIR);
+    return cachedPortableDir;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Relative path under the active storage root (includes `data/` on portable desktop).
  */
@@ -63,12 +85,24 @@ export async function resolveDataPath(filename) {
   return filename;
 }
 
+async function resolveBaseDir() {
+  const layout = await getStorageLayout();
+  const { BaseDirectory } = await import('@tauri-apps/plugin-fs');
+  if (layout === 'tauri-portable') {
+    return BaseDirectory.Executable;
+  }
+  if (layout === 'tauri-appdata') {
+    return BaseDirectory.AppData;
+  }
+  return null;
+}
+
 export async function ensureStorageDirectory() {
   const layout = await getStorageLayout();
 
   if (layout === 'tauri-portable' || layout === 'tauri-appdata') {
-    const { mkdir, BaseDirectory } = await import('@tauri-apps/plugin-fs');
-    const baseDir = layout === 'tauri-portable' ? BaseDirectory.App : BaseDirectory.AppData;
+    const { mkdir } = await import('@tauri-apps/plugin-fs');
+    const baseDir = await resolveBaseDir();
     if (layout === 'tauri-portable') {
       try {
         await mkdir(DATA_SUBDIR, { baseDir, recursive: true });
@@ -96,8 +130,8 @@ export async function readStorageFile(filename) {
   const layout = await getStorageLayout();
 
   if (layout === 'tauri-portable' || layout === 'tauri-appdata') {
-    const { readFile, BaseDirectory } = await import('@tauri-apps/plugin-fs');
-    const baseDir = layout === 'tauri-portable' ? BaseDirectory.App : BaseDirectory.AppData;
+    const { readFile } = await import('@tauri-apps/plugin-fs');
+    const baseDir = await resolveBaseDir();
     const path = await resolveDataPath(filename);
     try {
       return await readFile(path, { baseDir });
@@ -130,8 +164,8 @@ export async function writeStorageFile(filename, data) {
 
   if (layout === 'tauri-portable' || layout === 'tauri-appdata') {
     await ensureStorageDirectory();
-    const { writeFile, BaseDirectory } = await import('@tauri-apps/plugin-fs');
-    const baseDir = layout === 'tauri-portable' ? BaseDirectory.App : BaseDirectory.AppData;
+    const { writeFile } = await import('@tauri-apps/plugin-fs');
+    const baseDir = await resolveBaseDir();
     const path = await resolveDataPath(filename);
     await writeFile(path, data, { baseDir });
     return;
@@ -160,8 +194,8 @@ export async function deleteStorageFile(filename) {
   const layout = await getStorageLayout();
 
   if (layout === 'tauri-portable' || layout === 'tauri-appdata') {
-    const { remove, BaseDirectory } = await import('@tauri-apps/plugin-fs');
-    const baseDir = layout === 'tauri-portable' ? BaseDirectory.App : BaseDirectory.AppData;
+    const { remove } = await import('@tauri-apps/plugin-fs');
+    const baseDir = await resolveBaseDir();
     const path = await resolveDataPath(filename);
     try {
       await remove(path, { baseDir });

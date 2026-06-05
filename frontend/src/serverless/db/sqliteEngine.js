@@ -7,6 +7,7 @@
 import initSqlJs from 'sql.js';
 import { SCHEMA_SQL } from './schema.js';
 import { loadDatabaseBlob, saveDatabaseBlob } from './persist.js';
+import { ensureStorageDirectory, getPortableDataDirectory } from '../storagePaths.js';
 import { migrateFromLocalStorage } from './migrateFromLocalStorage.js';
 
 let sqlDb = null;
@@ -38,6 +39,15 @@ export async function initDatabase() {
   applySchema(sqlDb);
   migrateFromLocalStorage(sqlDb);
   schedulePersist();
+  try {
+    await ensureStorageDirectory();
+    const portableDir = await getPortableDataDirectory();
+    if (portableDir) {
+      console.info(`[SQLite] Portable data directory: ${portableDir}`);
+    }
+  } catch (err) {
+    console.warn('[SQLite] Portable storage bootstrap warning:', err);
+  }
   return sqlDb;
 }
 
