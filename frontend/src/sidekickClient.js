@@ -15,6 +15,12 @@ import {
 } from './serverless/advisor';
 import { calculateMarketStrength } from './serverless/strength';
 import { fetchPublicHistoricalPrices, fetchPublicQuote } from './serverless/robinhood';
+import {
+  androidRobinhoodLogin,
+  androidRobinhoodLogout,
+  androidRobinhoodStatus,
+  androidRobinhoodSyncHoldings,
+} from './serverless/robinhoodAuth';
 
 const DEV_API_BASE = 'http://127.0.0.1:8000';
 let _devSessionToken = null;
@@ -88,30 +94,23 @@ async function devHttpFetch(path, options = {}) {
   return fetch(url, { ...options, headers });
 }
 
-async function getRobinhoodPlugin() {
-  const { RobinhoodSession } = await import('./plugins/robinhood-session');
-  return RobinhoodSession;
-}
-
 async function androidNativeFetch(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const base = path.split('?')[0];
   const params = new URLSearchParams(path.includes('?') ? path.split('?')[1] : '');
 
-  // Robinhood auth routes → native plugin
+  // Robinhood auth — embedded JS port of open-source robin_stocks (Capacitor native HTTP)
   if (base === '/api/auth/login' && method === 'POST') {
     const body = JSON.parse(options.body || '{}');
-    const plugin = await getRobinhoodPlugin();
     let data;
     try {
-      data = await plugin.login({
-        profileId: body.profile_id,
-        username: body.username,
-        password: body.password,
-        mfaCode: body.mfa_code || null,
-      });
+      data = await androidRobinhoodLogin(
+        body.profile_id,
+        body.username,
+        body.password,
+        body.mfa_code || null
+      );
     } catch (e) {
-      // Native plugin rejected — surface the real reason instead of a generic failure.
       data = { status: 'error', mode: 'live', message: pluginErrorMessage(e, 'Robinhood login failed on this device.') };
     }
     if (data.status === 'success' && data.mode !== 'sandbox') {
@@ -126,21 +125,19 @@ async function androidNativeFetch(path, options = {}) {
   }
   if (base === '/api/auth/logout' && method === 'POST') {
     const body = JSON.parse(options.body || '{}');
-    const plugin = await getRobinhoodPlugin();
     let data;
     try {
-      data = await plugin.logout({ profileId: body.profile_id });
+      data = await androidRobinhoodLogout(body.profile_id);
     } catch (e) {
       data = { status: 'error', message: pluginErrorMessage(e, 'Logout failed on this device.') };
     }
     return { ok: true, status: 200, json: async () => data };
   }
   if (base === '/api/auth/status' && method === 'GET') {
-    const plugin = await getRobinhoodPlugin();
     const profileId = parseInt(params.get('profile_id') || '0', 10);
     let data;
     try {
-      data = await plugin.getStatus({ profileId });
+      data = await androidRobinhoodStatus(profileId);
     } catch {
       data = { authenticated: false };
     }
@@ -148,10 +145,9 @@ async function androidNativeFetch(path, options = {}) {
   }
   if (base === '/api/portfolio/sync' && method === 'POST') {
     const body = JSON.parse(options.body || '{}');
-    const plugin = await getRobinhoodPlugin();
     let data;
     try {
-      data = await plugin.syncHoldings({ profileId: body.profile_id });
+      data = await androidRobinhoodSyncHoldings(body.profile_id);
     } catch (e) {
       return {
         ok: false,
@@ -191,8 +187,7 @@ async function androidNativeFetch(path, options = {}) {
   if (base.startsWith('/api/profiles/') && method === 'DELETE') {
     const id = parseInt(base.split('/').pop(), 10);
     localDb.deleteProfile(id);
-    const plugin = await getRobinhoodPlugin();
-    await plugin.logout({ profileId: id }).catch(() => {});
+    await androidRobinhoodLogout(id).catch(() => {});
     return { ok: true, status: 200, json: async () => ({ status: 'success' }) };
   }
 
@@ -229,8 +224,7 @@ async function androidNativeFetch(path, options = {}) {
         sector: 'Other/Speculative',
       });
     }
-    const plugin = await getRobinhoodPlugin();
-    const status = await plugin.getStatus({ profileId });
+    const status = await androidRobinhoodStatus(profileId);
     return {
       ok: true,
       status: 200,

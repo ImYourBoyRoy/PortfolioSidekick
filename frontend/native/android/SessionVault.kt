@@ -55,10 +55,4 @@ class SessionVault(private val context: Context) {
     fun getUsername(profileId: Int): String? =
         prefs(profileId).getString("robinhood_username", null)
 
-    companion object {
-        // Robinhood expects a UUID-format device token (8-4-4-4-12), matching
-        // robin_stocks' generate_device_token(). A non-UUID token breaks the
-        // device-verification workflow.
-        fun generateDeviceToken(): String = java.util.UUID.randomUUID().toString()
-    }
 }
