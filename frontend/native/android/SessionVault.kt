@@ -1,7 +1,6 @@
 package com.imyourboyroy.portfoliosidekick
 
 import android.content.Context
-import android.util.Base64
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import org.json.JSONObject
@@ -57,10 +56,9 @@ class SessionVault(private val context: Context) {
         prefs(profileId).getString("robinhood_username", null)
 
     companion object {
-        fun generateDeviceToken(): String {
-            val bytes = ByteArray(24)
-            java.security.SecureRandom().nextBytes(bytes)
-            return Base64.encodeToString(bytes, Base64.NO_WRAP)
-        }
+        // Robinhood expects a UUID-format device token (8-4-4-4-12), matching
+        // robin_stocks' generate_device_token(). A non-UUID token breaks the
+        // device-verification workflow.
+        fun generateDeviceToken(): String = java.util.UUID.randomUUID().toString()
     }
 }

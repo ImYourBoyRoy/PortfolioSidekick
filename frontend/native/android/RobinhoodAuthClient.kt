@@ -1,5 +1,6 @@
 package com.imyourboyroy.portfoliosidekick
 
+import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,50 +27,73 @@ class RobinhoodAuthClient {
         const val INSTRUMENT_URL = "https://api.robinhood.com/instruments/"
         const val QUOTES_URL = "https://api.robinhood.com/quotes/"
         const val CLIENT_ID = "c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS"
+        // Robinhood's API gates on these headers. They mirror the robin_stocks
+        // default session exactly so the native flow behaves like the desktop one.
+        const val RH_API_VERSION = "1.431.4"
+        const val RH_USER_AGENT = "Robinhood/823 (iPhone; iOS 7.1.2; Scale/2.00)"
     }
 
-    private fun postJson(url: String, body: JSONObject, auth: String? = null): JSONObject? {
-        val reqBuilder = Request.Builder()
-            .url(url)
-            .post(body.toString().toRequestBody(jsonMedia))
-        if (auth != null) reqBuilder.header("Authorization", auth)
-        val resp = client.newCall(reqBuilder.build()).execute()
+    // Apply the Robinhood-required headers (and optional auth) to every request.
+    private fun Request.Builder.rhHeaders(auth: String?): Request.Builder {
+        header("Accept", "*/*")
+        header("Accept-Language", "en-US,en;q=1")
+        header("X-Robinhood-API-Version", RH_API_VERSION)
+        header("Connection", "keep-alive")
+        header("User-Agent", RH_USER_AGENT)
+        if (auth != null) header("Authorization", auth)
+        return this
+    }
+
+    private fun exec(req: Request): JSONObject? {
+        val resp = client.newCall(req).execute()
         val text = resp.body?.string() ?: return null
         return try {
             JSONObject(text)
         } catch (_: Exception) {
             null
         }
+    }
+
+    // Form-encoded POST (application/x-www-form-urlencoded) — used for the OAuth
+    // token endpoint and challenge responses, matching robin_stocks' default.
+    private fun postForm(url: String, params: Map<String, String>, auth: String? = null): JSONObject? {
+        val form = FormBody.Builder()
+        for ((k, v) in params) form.add(k, v)
+        val req = Request.Builder().url(url).post(form.build()).rhHeaders(auth).build()
+        return exec(req)
+    }
+
+    // JSON POST — used for the pathfinder/inquiries flow (robin_stocks json=True).
+    private fun postJson(url: String, body: JSONObject, auth: String? = null): JSONObject? {
+        val req = Request.Builder().url(url)
+            .post(body.toString().toRequestBody(jsonMedia))
+            .rhHeaders(auth).build()
+        return exec(req)
     }
 
     private fun getJson(url: String, auth: String? = null): JSONObject? {
-        val reqBuilder = Request.Builder().url(url).get()
-        if (auth != null) reqBuilder.header("Authorization", auth)
-        val resp = client.newCall(reqBuilder.build()).execute()
-        val text = resp.body?.string() ?: return null
-        return try {
-            JSONObject(text)
-        } catch (_: Exception) {
-            null
-        }
+        val req = Request.Builder().url(url).get().rhHeaders(auth).build()
+        return exec(req)
     }
 
-    fun buildLoginPayload(username: String, password: String, deviceToken: String): JSONObject =
-        JSONObject().apply {
-            put("client_id", CLIENT_ID)
-            put("expires_in", 86400)
-            put("grant_type", "password")
-            put("password", password)
-            put("scope", "internal")
-            put("username", username)
-            put("device_token", deviceToken)
-            put("try_passkeys", false)
-            put("token_request_path", "/login")
-            put("create_read_only_secondary_token", true)
-        }
+    // Login params as ordered form fields. Booleans are encoded as Python-style
+    // "True"/"False" to byte-for-byte match the working desktop request.
+    fun loginParams(username: String, password: String, deviceToken: String): Map<String, String> =
+        linkedMapOf(
+            "client_id" to CLIENT_ID,
+            "expires_in" to "86400",
+            "grant_type" to "password",
+            "password" to password,
+            "scope" to "internal",
+            "username" to username,
+            "device_token" to deviceToken,
+            "try_passkeys" to "False",
+            "token_request_path" to "/login",
+            "create_read_only_secondary_token" to "True"
+        )
 
     fun loginPhase1(username: String, password: String, deviceToken: String): JSONObject {
-        val data = postJson(LOGIN_URL, buildLoginPayload(username, password, deviceToken))
+        val data = postForm(LOGIN_URL, loginParams(username, password, deviceToken))
             ?: return error("No response from Robinhood servers. Check your internet connection.")
 
         if (data.has("access_token")) {
@@ -169,9 +193,9 @@ class RobinhoodAuthClient {
         } else {
             val challengeId = pending.optString("challenge_id", "")
             if (challengeId.isEmpty()) return error("No challenge ID found. Please restart login.")
-            val challengeResp = postJson(
+            val challengeResp = postForm(
                 CHALLENGE_URL.format(challengeId),
-                JSONObject().put("response", mfaCode ?: "")
+                mapOf("response" to (mfaCode ?: ""))
             ) ?: return error("No response from Robinhood challenge endpoint.")
             if (challengeResp.optString("status") != "validated") {
                 return JSONObject().apply {
@@ -188,8 +212,7 @@ class RobinhoodAuthClient {
             Thread.sleep(2000)
         }
 
-        val loginPayload = buildLoginPayload(username, password, deviceToken)
-        val data = postJson(LOGIN_URL, loginPayload)
+        val data = postForm(LOGIN_URL, loginParams(username, password, deviceToken))
             ?: return error("No response from Robinhood after verification.")
 
         if (data.has("access_token")) {
