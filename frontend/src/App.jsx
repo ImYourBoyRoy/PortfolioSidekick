@@ -45,7 +45,15 @@ import {
   History,
   ArrowUpRight,
   ArrowDownRight,
-  Repeat
+  Repeat,
+  Settings,
+  Newspaper,
+  Save,
+  RotateCcw,
+  ExternalLink,
+  ShieldCheck,
+  Zap,
+  Gauge
 } from 'lucide-react';
 
 import { 
@@ -57,7 +65,13 @@ import {
   evolveWeights,
   generateViabilityForecast,
   calculateMarketStrength,
-  calculateAtr
+  calculateAtr,
+  DEFAULT_INDICATORS,
+  RISK_PROFILES,
+  INDICATOR_META,
+  getIndicatorConfig,
+  fetchMarketNews,
+  formatNewsTime
 } from './serverless';
 import { sidekickFetch } from './sidekickClient';
 
@@ -151,6 +165,14 @@ export default function App() {
     bollinger: true,
     signals: true
   });
+
+  // Advanced Settings: configurable indicator engine + risk/goal profile
+  const [indicatorSettings, setIndicatorSettings] = useState(() => getIndicatorConfig());
+  const [riskProfile, setRiskProfile] = useState(() => localDb.getSettings().riskProfile || "balanced");
+
+  // Market News state
+  const [newsData, setNewsData] = useState(null);
+  const [newsLoading, setNewsLoading] = useState(false);
   
   // Visual Coach mode for Roy's father
   const [isCoachMode, setIsCoachMode] = useState(true); // Default to True to help Roy's father immediately
@@ -313,6 +335,81 @@ export default function App() {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
+  // ── Advanced Settings handlers ──
+  const persistIndicatorSettings = useCallback((nextIndicators, nextProfile) => {
+    setIndicatorSettings(nextIndicators);
+    setRiskProfile(nextProfile);
+    localDb.saveSettings({ indicators: nextIndicators, riskProfile: nextProfile });
+  }, []);
+
+  const applyRiskProfile = useCallback((profileKey) => {
+    const preset = RISK_PROFILES[profileKey];
+    if (!preset) return;
+    const next = { ...DEFAULT_INDICATORS, ...preset.settings };
+    persistIndicatorSettings(next, profileKey);
+    showToast(`Applied "${preset.label}" risk profile. Analysis recalculated.`, "success");
+  }, [persistIndicatorSettings, showToast]);
+
+  const updateIndicatorField = useCallback((key, rawValue) => {
+    const meta = INDICATOR_META[key];
+    let value = parseFloat(rawValue);
+    if (isNaN(value)) return;
+    if (meta) value = Math.max(meta.min, Math.min(meta.max, value));
+    setIndicatorSettings(prev => {
+      const next = { ...prev, [key]: value };
+      // Editing any value switches the profile to "custom" so it's clear it's hand-tuned.
+      localDb.saveSettings({ indicators: next, riskProfile: "custom" });
+      return next;
+    });
+    setRiskProfile("custom");
+  }, []);
+
+  const resetIndicatorDefaults = useCallback(() => {
+    persistIndicatorSettings({ ...DEFAULT_INDICATORS }, "balanced");
+    showToast("Indicators reset to Balanced defaults.", "info");
+  }, [persistIndicatorSettings, showToast]);
+
+  // ── Market News loader ──
+  const loadMarketNews = useCallback(async () => {
+    setNewsLoading(true);
+    try {
+      const extra = [
+        ...holdings.map(h => h.ticker),
+        ...watchlist.map(w => w.ticker),
+      ];
+      const result = await fetchMarketNews(extra);
+      setNewsData(result);
+    } catch {
+      setNewsData({
+        buckets: { today: [], week: [], month: [], year: [] },
+        total: 0,
+        fetchedAt: Date.now(),
+        error: "Unable to load market news right now.",
+      });
+    } finally {
+      setNewsLoading(false);
+    }
+  }, [holdings, watchlist]);
+
+  const openNewsLink = useCallback((url) => {
+    if (!url) return;
+    try {
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch {
+      // no-op if the platform blocks external windows
+    }
+  }, []);
+
+  // Load market news the first time the News tab is opened.
+  useEffect(() => {
+    if (activeTab === "news" && !newsData && !newsLoading) {
+      queueMicrotask(() => {
+        void loadMarketNews();
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot load on tab open
+  }, [activeTab]);
+
   // Override standard window.alert with custom glassmorphic toasts
   const alert = useCallback((msg) => {
     let type = "info";
@@ -348,15 +445,16 @@ export default function App() {
       else mainPath += ` L ${x} ${y}`;
     });
 
+    const smaSpan = Math.max(2, Math.round(indicatorSettings.smaFast || 50));
     let sma50Path = "";
-    if (chartOverlays.sma50 && prices.length >= 50) {
+    if (chartOverlays.sma50 && prices.length >= smaSpan) {
       const smaValues = [];
       for (let i = 0; i < prices.length; i++) {
-        if (i < 49) {
+        if (i < smaSpan - 1) {
           smaValues.push(prices[i]);
         } else {
-          const sum = prices.slice(i - 49, i + 1).reduce((a, b) => a + b, 0);
-          smaValues.push(sum / 50);
+          const sum = prices.slice(i - (smaSpan - 1), i + 1).reduce((a, b) => a + b, 0);
+          smaValues.push(sum / smaSpan);
         }
       }
       smaValues.forEach((val, idx) => {
@@ -367,9 +465,11 @@ export default function App() {
       });
     }
 
+    const bbPeriodCfg = Math.max(2, Math.round(indicatorSettings.bbPeriod || 20));
+    const bbStdCfg = indicatorSettings.bbStdDev || 2;
     let bbAreaPath = "";
-    if (chartOverlays.bollinger && prices.length >= 20) {
-      const period = 20;
+    if (chartOverlays.bollinger && prices.length >= bbPeriodCfg) {
+      const period = bbPeriodCfg;
       const bbUpper = [];
       const bbLower = [];
       for (let i = 0; i < prices.length; i++) {
@@ -381,8 +481,8 @@ export default function App() {
           const mean = slice.reduce((a, b) => a + b, 0) / period;
           const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
           const std = Math.sqrt(variance);
-          bbUpper.push(mean + std * 2);
-          bbLower.push(mean - std * 2);
+          bbUpper.push(mean + std * bbStdCfg);
+          bbLower.push(mean - std * bbStdCfg);
         }
       }
 
@@ -451,7 +551,7 @@ export default function App() {
       bbAreaPath,
       simulatedMarkers
     };
-  }, [chartData, chartOverlays]);
+  }, [chartData, chartOverlays, indicatorSettings]);
 
   // Get all unique tickers from holdings and watchlist for quick cycle navigation
   const allAvailableTickers = React.useMemo(() => {
@@ -2057,6 +2157,20 @@ export default function App() {
           >
             <Eye style={{ width: 14, height: 14 }} />
             Watch What I Do
+          </button>
+          <button
+            onClick={() => setActiveTab("news")}
+            className={`tab-nav-btn ${activeTab === "news" ? 'tab-nav-btn-active' : ''}`}
+          >
+            <Newspaper style={{ width: 14, height: 14 }} />
+            Market News
+          </button>
+          <button
+            onClick={() => setActiveTab("settings")}
+            className={`tab-nav-btn ${activeTab === "settings" ? 'tab-nav-btn-active' : ''}`}
+          >
+            <Settings style={{ width: 14, height: 14 }} />
+            Advanced Settings
           </button>
         </div>
         {/* Accessibility Controls — Font Sizing & Contrast */}
@@ -5032,6 +5146,211 @@ export default function App() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ───────────────── MARKET NEWS TAB ───────────────── */}
+      {activeTab === "news" && (
+        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="glass-card" style={{ padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Newspaper style={{ width: 18, height: 18, color: 'var(--color-oracle, #a78bfa)' }} />
+                Major Market Events
+              </h3>
+              <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--text-muted)' }}>
+                Recent headlines across the major indices{(holdings.length > 0 || watchlist.length > 0) ? " plus your holdings & watchlist" : ""}, grouped by recency.
+                {newsData?.fetchedAt ? ` Updated ${formatNewsTime(newsData.fetchedAt)}.` : ""}
+              </p>
+            </div>
+            <button
+              onClick={() => loadMarketNews()}
+              disabled={newsLoading}
+              className="btn-primary"
+              style={{ padding: '10px 16px', fontSize: '11px', fontWeight: 800, borderRadius: 10, display: 'inline-flex', alignItems: 'center', gap: 6, opacity: newsLoading ? 0.6 : 1 }}
+            >
+              <RefreshCw className={newsLoading ? "animate-spin" : ""} style={{ width: 13, height: 13 }} />
+              {newsLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+
+          {newsLoading && !newsData && (
+            <div className="glass-card" style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+              <RefreshCw className="animate-spin" style={{ width: 22, height: 22, marginBottom: 10 }} />
+              <div>Gathering the latest major market headlines…</div>
+            </div>
+          )}
+
+          {newsData?.error && (
+            <div className="glass-card" style={{ padding: 28, textAlign: 'center', color: '#fbbf24', fontSize: '12px', border: '1px solid rgba(245,158,11,0.2)' }}>
+              {newsData.error}
+            </div>
+          )}
+
+          {newsData && !newsData.error && [
+            { key: 'today', label: 'Today', icon: <Zap style={{ width: 14, height: 14 }} /> },
+            { key: 'week', label: 'This Week', icon: <Calendar style={{ width: 14, height: 14 }} /> },
+            { key: 'month', label: 'This Month', icon: <Calendar style={{ width: 14, height: 14 }} /> },
+            { key: 'year', label: 'Earlier This Year', icon: <History style={{ width: 14, height: 14 }} /> },
+          ].map(section => {
+            const items = newsData.buckets[section.key] || [];
+            if (items.length === 0) return null;
+            return (
+              <div key={section.key} className="glass-card" style={{ padding: 18 }}>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '12px', fontWeight: 900, color: 'var(--color-oracle, #a78bfa)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {section.icon}{section.label}
+                  <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>· {items.length}</span>
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {items.map(item => (
+                    <button
+                      key={item.id}
+                      onClick={() => openNewsLink(item.link)}
+                      style={{ textAlign: 'left', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-light, rgba(255,255,255,0.06))', borderRadius: 10, padding: '12px 14px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 6, transition: 'background 0.15s' }}
+                    >
+                      <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#fff', lineHeight: 1.45, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                        {item.title}
+                        <ExternalLink style={{ width: 12, height: 12, color: 'var(--text-muted)', flexShrink: 0, marginTop: 2 }} />
+                      </span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <strong style={{ color: 'var(--text-secondary)' }}>{item.publisher}</strong>
+                        · {formatNewsTime(item.timestamp)}
+                        {item.relatedTickers.map(t => (
+                          <span key={t} style={{ background: 'rgba(139,92,246,0.12)', color: '#c4b5fd', padding: '1px 6px', borderRadius: 6, fontWeight: 700 }}>{t}</span>
+                        ))}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          {newsData && !newsData.error && newsData.total === 0 && (
+            <div className="glass-card" style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+              No headlines available right now. Try refreshing in a moment.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ───────────────── ADVANCED SETTINGS TAB ───────────────── */}
+      {activeTab === "settings" && (
+        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="glass-card" style={{ padding: 20 }}>
+            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Settings style={{ width: 18, height: 18, color: 'var(--color-oracle, #a78bfa)' }} />
+              Indicator Engine & Risk Profiles
+            </h3>
+            <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              These values drive every calculation in the app — the chart&apos;s Bollinger Bands & moving averages, the Advisor scores,
+              the Oracle viability forecasts, and stop-loss / target levels. Pick a risk profile to match your goals, or fine-tune any value.
+              Changes apply instantly.
+            </p>
+          </div>
+
+          {/* Risk Profile selector */}
+          <div className="glass-card" style={{ padding: 18 }}>
+            <h4 style={{ margin: '0 0 12px 0', fontSize: '12px', fontWeight: 900, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Risk / Goal Profile
+            </h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+              {Object.entries(RISK_PROFILES).map(([key, preset]) => {
+                const active = riskProfile === key;
+                const icon = key === 'conservative' ? <ShieldCheck style={{ width: 16, height: 16 }} />
+                  : key === 'aggressive' ? <Zap style={{ width: 16, height: 16 }} />
+                  : <Gauge style={{ width: 16, height: 16 }} />;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => applyRiskProfile(key)}
+                    style={{
+                      textAlign: 'left', cursor: 'pointer', borderRadius: 12, padding: '14px',
+                      background: active ? 'rgba(139,92,246,0.10)' : 'rgba(255,255,255,0.02)',
+                      border: active ? '1.5px solid var(--color-oracle, #a78bfa)' : '1px solid var(--border-light, rgba(255,255,255,0.07))',
+                      display: 'flex', flexDirection: 'column', gap: 6, transition: 'all 0.15s'
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '13px', fontWeight: 900, color: active ? '#c4b5fd' : '#fff' }}>
+                      {icon}{preset.label}
+                    </span>
+                    <span style={{ fontSize: '9.5px', fontWeight: 700, color: 'var(--color-oracle, #a78bfa)' }}>{preset.tagline}</span>
+                    <span style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5 }}>{preset.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                Active profile: <strong style={{ color: riskProfile === 'custom' ? '#fbbf24' : '#c4b5fd' }}>
+                  {riskProfile === 'custom' ? 'Custom (hand-tuned)' : (RISK_PROFILES[riskProfile]?.label || 'Balanced')}
+                </strong>
+              </span>
+              <button
+                onClick={resetIndicatorDefaults}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '11px', fontWeight: 800, padding: '8px 12px', borderRadius: 9, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-light, rgba(255,255,255,0.08))', color: 'var(--text-secondary)', cursor: 'pointer' }}
+              >
+                <RotateCcw style={{ width: 12, height: 12 }} /> Reset to Balanced defaults
+              </button>
+            </div>
+          </div>
+
+          {/* Editable indicator groups */}
+          {Object.entries(
+            Object.entries(INDICATOR_META).reduce((groups, [key, meta]) => {
+              (groups[meta.group] = groups[meta.group] || []).push([key, meta]);
+              return groups;
+            }, {})
+          ).map(([groupName, fields]) => (
+            <div key={groupName} className="glass-card" style={{ padding: 18 }}>
+              <h4 style={{ margin: '0 0 14px 0', fontSize: '12px', fontWeight: 900, color: 'var(--color-oracle, #a78bfa)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {groupName}
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+                {fields.map(([key, meta]) => (
+                  <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <label style={{ fontSize: '11.5px', fontWeight: 800, color: '#fff' }}>{meta.label}</label>
+                      <span style={{ fontSize: '11px', fontWeight: 900, color: '#c4b5fd', minWidth: 36, textAlign: 'right' }}>
+                        {indicatorSettings[key]}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={meta.min}
+                      max={meta.max}
+                      step={meta.step}
+                      value={indicatorSettings[key]}
+                      onChange={(e) => updateIndicatorField(key, e.target.value)}
+                      style={{ width: '100%', accentColor: 'var(--color-oracle, #a78bfa)' }}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="number"
+                        min={meta.min}
+                        max={meta.max}
+                        step={meta.step}
+                        value={indicatorSettings[key]}
+                        onChange={(e) => updateIndicatorField(key, e.target.value)}
+                        className="form-input-text"
+                        style={{ width: 78, padding: '6px 8px', fontSize: '11px', textAlign: 'center' }}
+                      />
+                      <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>range {meta.min}–{meta.max}</span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5, display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                      <Info style={{ width: 11, height: 11, flexShrink: 0, marginTop: 1 }} />
+                      {meta.help}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          <div className="glass-card" style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 8, fontSize: '10.5px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            <Save style={{ width: 14, height: 14, flexShrink: 0 }} />
+            Settings save automatically to this device and apply to all analysis immediately. Re-open a stock on the Coach chart to see updated bands and signals.
+          </div>
         </div>
       )}
 
