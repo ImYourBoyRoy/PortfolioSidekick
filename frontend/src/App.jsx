@@ -1503,6 +1503,44 @@ export default function App() {
     }
   };
 
+  // Autonomous push-approval detection.
+  // For the "prompt" challenge, the user only has to approve inside the Robinhood
+  // mobile app — we poll the push status automatically so no manual "Confirm
+  // Approval" click is required. SMS/email codes still require manual entry.
+  useEffect(() => {
+    if (loginStatus.status !== "mfa_required" || loginStatus.challenge_type !== "prompt") {
+      return undefined;
+    }
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const data = await robinhoodClient.login(activeProfile.id, loginForm.username, loginForm.password, null);
+        if (cancelled) return;
+        if (data.status === "success") {
+          const newSandbox = data.mode === "sandbox";
+          setIsSandbox(newSandbox);
+          setIsLoginOpen(false);
+          setLoginForm({ username: "", password: "", mfa_code: "" });
+          setLoginStatus({ status: "", message: "" });
+          setLoading(false);
+          triggerSync(newSandbox);
+        } else if (data.status === "error") {
+          setLoginStatus({ status: "error", message: data.message || "Approval failed. Please restart login." });
+          setLoading(false);
+        }
+        // Still mfa_required → push not yet approved; keep polling silently.
+      } catch {
+        // Transient network blip during polling; keep waiting.
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll keyed on challenge state; uses latest form/profile closures
+  }, [loginStatus.status, loginStatus.challenge_type]);
+
   // Robinhood Secure Logout & Wiping
   const handleLogout = async () => {
     if (!activeProfile) return;
@@ -5296,7 +5334,13 @@ export default function App() {
                   </label>
                   {loginStatus.challenge_type === "prompt" ? (
                     <p style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center', margin: '8px 0', lineHeight: 1.6 }}>
-                      Open your <strong style={{ color: 'var(--color-buy)' }}>Robinhood mobile app</strong> and approve the login notification, then click <strong>Confirm Approval</strong> below.
+                      Open your <strong style={{ color: 'var(--color-buy)' }}>Robinhood mobile app</strong> and approve the login notification.
+                      We&apos;ll detect it <strong style={{ color: 'var(--color-buy)' }}>automatically</strong> — no need to click anything.
+                      <br />
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, color: '#fbbf24' }}>
+                        <RefreshCw className="animate-spin" style={{ width: 12, height: 12 }} />
+                        Waiting for approval…
+                      </span>
                     </p>
                   ) : (
                     <input
@@ -5352,7 +5396,7 @@ export default function App() {
               >
                 {loading && <RefreshCw className="animate-spin" style={{ width: 14, height: 14 }} />}
                 {loginStatus.status === "mfa_required"
-                  ? (loginStatus.challenge_type === "prompt" ? "Confirm Approval" : "Verify Code & Link")
+                  ? (loginStatus.challenge_type === "prompt" ? "Check Approval Now" : "Verify Code & Link")
                   : (loading ? "Linking Account..." : "Initiate Login")}
               </button>
 
