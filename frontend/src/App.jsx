@@ -32,9 +32,7 @@ import {
   AlertTriangle,
   Brain,
   MousePointerClick,
-  HelpCircle,
   Activity,
-  DollarSign,
   Award,
   Target,
   ChevronDown,
@@ -42,11 +40,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
-  Settings,
   ZoomIn,
   ZoomOut,
   History,
-  BarChart3,
   ArrowUpRight,
   ArrowDownRight,
   Repeat
@@ -60,7 +56,8 @@ import {
   robinhoodClient,
   evolveWeights,
   generateViabilityForecast,
-  calculateMarketStrength
+  calculateMarketStrength,
+  calculateAtr
 } from './serverless';
 
 // Dynamic API Base URL resolver supporting local networking and Android viewports
@@ -84,6 +81,11 @@ let API_BASE = getDefaultApiBase();
 const formatCurrency = (val) => {
   if (val === undefined || val === null || isNaN(val)) return "$0.00";
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+};
+
+const getCoachActionCutoff = (coachTimeFilter, referenceTimeMs) => {
+  const daysMap = { "7d": 7, "30d": 30, "90d": 90 };
+  return referenceTimeMs - (daysMap[coachTimeFilter] || 9999) * 86400000;
 };
 
 export default function App() {
@@ -134,7 +136,9 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === "strength") {
-      fetchMarketStrength();
+      queueMicrotask(() => {
+        void fetchMarketStrength();
+      });
     }
   }, [activeTab, fetchMarketStrength]);
 
@@ -229,12 +233,11 @@ export default function App() {
   const [coachTimeFilter, setCoachTimeFilter] = useState("all"); // "7d", "30d", "90d", "all"
 
   // Accessibility — Font Sizing Engine & High Contrast (Always enabled by default)
-  const FONT_SIZE_STEPS = [-3, -2, -1, 0, 1, 2, 3, 4, 5]; // 0 = default
   const [fontSizeOffset, setFontSizeOffset] = useState(() => {
     const saved = localDb.getSettings();
     return saved.fontSize || 0;
   });
-  const [highContrast, setHighContrast] = useState(true);
+  const highContrast = true;
 
   // Font Sizing Engine: Apply dynamically to document root using global accessibility page zoom
   useEffect(() => {
@@ -313,18 +316,11 @@ export default function App() {
 
   // Sync Status Stepper Cycle
   useEffect(() => {
-    let interval;
-    if (syncing) {
-      setSyncStepIndex(0);
-      interval = setInterval(() => {
-        setSyncStepIndex(prev => (prev + 1) % 5);
-      }, 1500);
-    } else {
-      setSyncStepIndex(0);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
+    if (!syncing) return undefined;
+    const interval = setInterval(() => {
+      setSyncStepIndex(prev => (prev + 1) % 5);
+    }, 1500);
+    return () => clearInterval(interval);
   }, [syncing]);
 
   const showToast = useCallback((message, type = "info", duration = 4500) => {
@@ -496,68 +492,6 @@ export default function App() {
     setSelectedTicker(allAvailableTickers[nextIndex]);
   }, [allAvailableTickers, selectedTicker]);
 
-  // Load profiles on start
-  useEffect(() => {
-    fetchProfiles();
-  }, []);
-
-  // Fetch holdings, guesses, and chart details whenever profile or ticker changes
-  useEffect(() => {
-    if (activeProfile) {
-      // Load last sync time from localStorage
-      const savedSync = localStorage.getItem(`st_last_sync_${activeProfile.id}`);
-      setLastSyncTime(savedSync ? new Date(savedSync) : null);
-      
-      const loadProfileData = async () => {
-        setPortfolioLoading(true);
-        try {
-          await Promise.all([
-            fetchPortfolio(),
-            fetchGuesses(),
-            fetchAnalytics(),
-            fetchWatchlist(),
-            fetchShadowCoachData(),
-            fetchMarketStrength()
-          ]);
-        } catch (err) {
-          console.error("Error loading profile data:", err);
-        } finally {
-          // A subtle 300ms delay to make the transition extremely smooth and intentional
-          setTimeout(() => {
-            setPortfolioLoading(false);
-          }, 300);
-        }
-      };
-      loadProfileData();
-    }
-  }, [activeProfile]);
-
-  useEffect(() => {
-    if (activeProfile && selectedTicker) {
-      fetchStockHistoryAndAdvisor();
-      fetchStrategyBrackets();
-    }
-  }, [activeProfile, selectedTicker]);
-
-  // Active Keep-Alive & Auto-Refresh loop (every 10 seconds)
-  useEffect(() => {
-    let interval;
-    if (activeProfile) {
-      interval = setInterval(() => {
-        // Only refresh if the document is visible to conserve resources and API limits
-        if (document.hidden) return;
-        
-        console.log("Background Auto-Refresh: Refreshing holdings, watchlist, and leaderboards...");
-        fetchPortfolio();
-        fetchWatchlist();
-        fetchMarketStrength();
-      }, 10000); // 10 seconds
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [activeProfile, apiBaseUrl, selectedTicker, strengthTimeframe, strengthSector]);
-
   // --- LAST SYNCED RELATIVE TIME ENGINE ---
   const isSyncStale = () => {
     if (!lastSyncTime) return true; // Never synced is stale
@@ -670,7 +604,7 @@ export default function App() {
           fetchGuesses(),
           fetchAnalytics(),
           fetchWatchlist(),
-          fetchShadowCoachData(),
+          fetchShadowCoachData(Date.now()),
           fetchMarketStrength()
         ]);
         
@@ -824,7 +758,7 @@ export default function App() {
       setModalProfileName("");
       setIsProfileModalOpen(false);
       await fetchProfiles(profileId);
-    } catch (err) {
+    } catch {
       alert("Profile creation failed.");
     } finally {
       setLoading(false);
@@ -850,7 +784,7 @@ export default function App() {
         alert(`Profile "${name}" was successfully removed.`);
       }
       await fetchProfiles();
-    } catch (err) {
+    } catch {
       alert("Failed to delete profile.");
     } finally {
       setLoading(false);
@@ -871,7 +805,9 @@ export default function App() {
             const statusData = await statusRes.json();
             isAuthenticated = statusData.authenticated;
           }
-        } catch (_) {}
+        } catch {
+          // Auth status probe is best-effort before holdings fetch.
+        }
 
         if (activeProfile.robinhood_username && !isAuthenticated) {
           setIsSandbox(true);
@@ -921,10 +857,10 @@ export default function App() {
         totalEquity += equity;
         totalCost += cost;
         
-        let sector = "Technology";
         const tech = ["NVDA", "AAPL", "MSFT", "AMD", "AVGO", "PLTR", "TSM", "INTC"];
         const quantum = ["QBTS", "RGTI", "IONQ"];
         const energy = ["NUKZ"];
+        let sector;
         if (tech.includes(h.ticker)) sector = "Technology";
         else if (quantum.includes(h.ticker)) sector = "Quantum Tech";
         else if (energy.includes(h.ticker)) sector = "Nuclear Energy";
@@ -1109,7 +1045,9 @@ export default function App() {
       
       try {
         localDb.resolveGuesses(activeProfile.id, selectedTicker, livePrice);
-      } catch (_) {}
+      } catch {
+        // Guess resolution is best-effort during chart refresh.
+      }
       
       let dataAdv;
       try {
@@ -1176,7 +1114,7 @@ export default function App() {
           const resRec = await fetch(`${apiBaseUrl}/advisor/recommendation?profile_id=${activeProfile.id}&ticker=${item.ticker}`);
           if (!resRec.ok) throw new Error("Rec non-OK");
           rec = await resRec.json();
-        } catch (backendErr) {
+        } catch {
           livePrice = await fetchPublicQuote(item.ticker);
           hist = await fetchPublicHistoricalPrices(item.ticker, "year");
           rec = generateRecommendation(activeProfile.id, item.ticker, hist, livePrice);
@@ -1211,7 +1149,7 @@ export default function App() {
   };
 
   // Shadow Coach — Fetch behavioral analysis and action history
-  const fetchShadowCoachData = async () => {
+  const fetchShadowCoachData = async (referenceTimeMs) => {
     if (!activeProfile) return;
     setCoachLoading(true);
     try {
@@ -1235,8 +1173,7 @@ export default function App() {
       if (actionsData && actionsData.length > 0) {
         let filtered = actionsData;
         if (coachTimeFilter !== "all") {
-          const daysMap = { "7d": 7, "30d": 30, "90d": 90 };
-          const cutoff = Date.now() - (daysMap[coachTimeFilter] || 9999) * 86400000;
+          const cutoff = getCoachActionCutoff(coachTimeFilter, referenceTimeMs);
           filtered = actionsData.filter(a => new Date(a.timestamp).getTime() > cutoff);
         }
         setActionHistory(filtered);
@@ -1252,8 +1189,13 @@ export default function App() {
 
   // Re-fetch when time filter changes
   useEffect(() => {
-    if (activeProfile) fetchShadowCoachData();
-  }, [coachTimeFilter]);
+    if (activeProfile) {
+      queueMicrotask(() => {
+        void fetchShadowCoachData(Date.now());
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchShadowCoachData omitted to avoid refetch loops
+  }, [coachTimeFilter, activeProfile]);
 
   const handleAddToWatchlist = async (e) => {
     e.preventDefault();
@@ -1285,7 +1227,7 @@ export default function App() {
           alert(res.message);
         }
       }
-    } catch (err) {
+    } catch {
       alert("Failed to add to watchlist.");
     } finally {
       setLoading(false);
@@ -1328,8 +1270,6 @@ export default function App() {
         const livePrice = chartData[chartData.length - 1].close_price;
         const closes = chartData.map(d => d.close_price);
         
-        const sma50 = closes.slice(-50).reduce((a, b) => a + b, 0) / 50.0;
-        
         const subset = closes.slice(-20);
         const mid = subset.reduce((a, b) => a + b, 0) / 20.0;
         const variance = subset.reduce((sum, x) => sum + Math.pow(x - mid, 2), 0) / 20.0;
@@ -1366,9 +1306,78 @@ export default function App() {
     }
   };
 
+  // Load profiles on start
+  useEffect(() => {
+    queueMicrotask(() => {
+      void fetchProfiles();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap
+  }, []);
+
+  // Fetch holdings, guesses, and chart details whenever profile changes
+  useEffect(() => {
+    if (!activeProfile) return;
+
+    const savedSync = localStorage.getItem(`st_last_sync_${activeProfile.id}`);
+    queueMicrotask(() => {
+      setLastSyncTime(savedSync ? new Date(savedSync) : null);
+    });
+
+    const loadProfileData = async () => {
+      setPortfolioLoading(true);
+      try {
+        await Promise.all([
+          fetchPortfolio(),
+          fetchGuesses(),
+          fetchAnalytics(),
+          fetchWatchlist(),
+          fetchShadowCoachData(Date.now()),
+          fetchMarketStrength()
+        ]);
+      } catch (err) {
+        console.error("Error loading profile data:", err);
+      } finally {
+        setTimeout(() => {
+          setPortfolioLoading(false);
+        }, 300);
+      }
+    };
+    void loadProfileData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- profile-scoped reload; fetch helpers omitted to avoid render loops
+  }, [activeProfile]);
+
+  useEffect(() => {
+    if (activeProfile && selectedTicker) {
+      queueMicrotask(() => {
+        void fetchStockHistoryAndAdvisor();
+        void fetchStrategyBrackets();
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ticker/profile scoped chart reload
+  }, [activeProfile, selectedTicker]);
+
+  // Active Keep-Alive & Auto-Refresh loop (every 10 seconds)
+  useEffect(() => {
+    let interval;
+    if (activeProfile) {
+      interval = setInterval(() => {
+        if (document.hidden) return;
+        console.log("Background Auto-Refresh: Refreshing holdings, watchlist, and leaderboards...");
+        void fetchPortfolio();
+        void fetchWatchlist();
+        void fetchMarketStrength();
+      }, 10000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- interval refresh uses latest fetch closures by design
+  }, [activeProfile, apiBaseUrl, selectedTicker, strengthTimeframe, strengthSector]);
+
   // Sync with Robinhood
   const triggerSync = async (overrideSandbox = null) => {
     if (!activeProfile) return;
+    setSyncStepIndex(0);
     setSyncing(true);
     const targetSandbox = overrideSandbox !== null ? overrideSandbox : isSandbox;
     try {
@@ -1382,7 +1391,7 @@ export default function App() {
         fetchGuesses(),
         fetchAnalytics(),
         fetchWatchlist(),
-        fetchShadowCoachData(),
+        fetchShadowCoachData(Date.now()),
         fetchMarketStrength()
       ]);
       
@@ -1400,6 +1409,7 @@ export default function App() {
       showToast(err.message || "Error linking with Robinhood client.", "error");
     } finally {
       setSyncing(false);
+      setSyncStepIndex(0);
     }
   };
 
@@ -1432,7 +1442,7 @@ export default function App() {
             })
           });
           if (!res.ok) throw new Error("API holding import non-OK");
-        } catch (_) {
+        } catch {
           localDb.updateHolding(activeProfile.id, ticker, shares, avgCost, livePrice);
         }
         count++;
@@ -1449,7 +1459,7 @@ export default function App() {
       } else {
         alert("Parse failed. Expected format: NVDA 41.35 shares $212.49 average cost");
       }
-    } catch (err) {
+    } catch {
       alert("Failed to import clipboard.");
     } finally {
       setLoading(false);
@@ -1487,7 +1497,7 @@ export default function App() {
         setLoginStatus({ status: "error", message: data.message || "Authentication failed." });
         setLoading(false);
       }
-    } catch (err) {
+    } catch {
       setLoginStatus({ status: "error", message: "Error linking to Robinhood client." });
       setLoading(false);
     }
@@ -1552,7 +1562,7 @@ export default function App() {
       fetchGuesses();
       fetchAnalytics();
       if (selectedTicker) fetchStockHistoryAndAdvisor();
-    } catch (err) {
+    } catch {
       showToast("Failed to submit guess.", "error");
     }
   };
@@ -1588,7 +1598,7 @@ export default function App() {
       
       fetchPortfolio();
       if (selectedTicker) fetchStockHistoryAndAdvisor();
-    } catch (err) {
+    } catch {
       alert("Failed to adjust holding.");
     }
   };
@@ -1628,7 +1638,7 @@ export default function App() {
           alert("Insufficient historical data to evolve weights.");
         }
       }
-    } catch (err) {
+    } catch {
       alert("Evolution failed.");
     } finally {
       setLoading(false);
@@ -3399,7 +3409,7 @@ export default function App() {
                       simSectorConcentrations[sec] = (val / simTotalVal) * 100;
                     });
                     
-                    const overConcentratedSectors = Object.entries(simSectorConcentrations).filter(([sec, pct]) => pct > 25);
+                    const overConcentratedSectors = Object.entries(simSectorConcentrations).filter(([, pct]) => pct > 25);
                     const isCorrelatedShift = sellSector === buySector;
 
                     return (
@@ -4811,9 +4821,9 @@ export default function App() {
                 const buyH = isBear ? 78.0 : 65.0;
                 const sellH = isBear ? 45.0 : 35.0;
 
-                let dynamicAction = "HOLD";
+                let dynamicAction;
                 let actionColor = "var(--text-muted)";
-                let glowColor = "rgba(255,255,255,0.05)";
+                let glowColor;
 
                 if (dynamicScore >= 80) {
                   dynamicAction = "STRONG BUY";

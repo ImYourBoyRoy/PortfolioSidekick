@@ -10,6 +10,11 @@ Write-Host "==========================================================" -Foregro
 Write-Host "         PORTFOLIO SIDEKICK WINDOWS COMPILER" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
+# Always run from the repository root (script directory), regardless of caller cwd.
+$RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+Set-Location $RepoRoot
+Write-Host "Workspace: $RepoRoot" -ForegroundColor Gray
+
 # 1. Verify Prerequisites
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Error "Node.js is not found on your PATH. Please install Node.js (v24+) to compile the React frontend."
@@ -39,11 +44,13 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
 
 # Find Python executable
 $pythonExe = "python"
-if (Test-Path "backend/.venv/Scripts/python.exe") {
-    $pythonExe = "backend/.venv/Scripts/python.exe"
+$backendVenv = Join-Path $RepoRoot "backend\.venv\Scripts\python.exe"
+$rootVenv = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+if (Test-Path $backendVenv) {
+    $pythonExe = $backendVenv
     Write-Host "Detected local virtual environment at 'backend/.venv'. Using it." -ForegroundColor Green
-} elseif (Test-Path ".venv/Scripts/python.exe") {
-    $pythonExe = ".venv/Scripts/python.exe"
+} elseif (Test-Path $rootVenv) {
+    $pythonExe = $rootVenv
     Write-Host "Detected local virtual environment at '.venv'. Using it." -ForegroundColor Green
 }
 
@@ -54,31 +61,53 @@ if (-not (Get-Command $pythonExe -ErrorAction SilentlyContinue)) {
 
 # 2. Build Frontend Assets
 Write-Host "`n[STEP 1/3] Compiling & Linting React Frontend Assets..." -ForegroundColor Yellow
-Push-Location frontend
-try {
-    Write-Host "Running npm install..." -ForegroundColor Gray
-    npm install
-    Write-Host "Running ESLint verification (smoke checks)..." -ForegroundColor Gray
+Push-Location (Join-Path $RepoRoot "frontend")
+$frontendFailed = $false
+
+Write-Host "Running npm install..." -ForegroundColor Gray
+npm install
+if ($LASTEXITCODE -ne 0) { $frontendFailed = $true }
+
+if (-not $frontendFailed) {
+    Write-Host "Running ESLint verification (must pass with zero errors/warnings)..." -ForegroundColor Gray
     npm run lint
+    if ($LASTEXITCODE -ne 0) {
+        $frontendFailed = $true
+        Write-Host "`n[ABORT] ESLint failed. Fix all reported issues before building." -ForegroundColor Red
+        Write-Host "        npm failures do not throw in PowerShell; lint exit code blocks the build." -ForegroundColor Red
+    }
+}
+
+if (-not $frontendFailed) {
     Write-Host "Running npm run build..." -ForegroundColor Gray
     npm run build
-} catch {
+    if ($LASTEXITCODE -ne 0) { $frontendFailed = $true }
+}
+
+Pop-Location
+if ($frontendFailed) {
     Write-Error "Frontend compilation or linting failed."
-    Pop-Location
     Exit 1
 }
-Pop-Location
 
 # 3. Setup Python Dependencies
 Write-Host "`n[STEP 2/3] Preparing Python Packaging Dependencies..." -ForegroundColor Yellow
 Write-Host "Installing standard backend libraries..." -ForegroundColor Gray
-& $pythonExe -m pip install -r backend/requirements.txt
+& $pythonExe -m pip install -r (Join-Path $RepoRoot "backend\requirements.txt")
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Backend dependency install failed."
+    Exit 1
+}
 Write-Host "Installing PyInstaller & Pillow packagers..." -ForegroundColor Gray
 & $pythonExe -m pip install pyinstaller Pillow
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "PyInstaller/Pillow install failed."
+    Exit 1
+}
 
 # 4. Compile Standalone Desktop App
 Write-Host "`n[STEP 3/3] Compiling Single-File Windows Executable..." -ForegroundColor Yellow
-& $pythonExe -m PyInstaller --clean PortfolioSidekick.spec
+& $pythonExe -m PyInstaller --clean (Join-Path $RepoRoot "PortfolioSidekick.spec")
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`n==========================================================" -ForegroundColor Green

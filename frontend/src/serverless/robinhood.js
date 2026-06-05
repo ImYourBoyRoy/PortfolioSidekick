@@ -174,7 +174,9 @@ export const robinhoodClient = {
         try {
           const errObj = JSON.parse(errText);
           errMsg = errObj.detail || errMsg;
-        } catch (_) {}
+        } catch {
+          // Response body may not be JSON.
+        }
         throw new Error(errMsg);
       }
 
@@ -185,7 +187,7 @@ export const robinhoodClient = {
       console.error("Robinhood login connection failed:", err.message);
       // If it's a network error/connection refused, throw a clean, helpful message
       if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError") || err.message.includes("network")) {
-        throw new Error("Portfolio Sidekick backend server is offline or unreachable. Please launch the backend service (main.py) or executable first!");
+        throw new Error("Portfolio Sidekick backend server is offline or unreachable. Please launch the backend service (main.py) or executable first!", { cause: err });
       }
       throw err;
     }
@@ -209,7 +211,9 @@ export const robinhoodClient = {
         try {
           const errObj = JSON.parse(errText);
           errMsg = errObj.detail || errMsg;
-        } catch (_) {}
+        } catch {
+          // Response body may not be JSON.
+        }
         throw new Error(errMsg);
       }
       
@@ -222,7 +226,7 @@ export const robinhoodClient = {
       // If it's a real live profile, do NOT silently mock a success
       if (!isSandbox) {
         if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
-          throw new Error("Portfolio Sidekick backend server is offline or unreachable. Sync aborted.");
+          throw new Error("Portfolio Sidekick backend server is offline or unreachable. Sync aborted.", { cause: err });
         }
         throw err;
       }
@@ -267,7 +271,7 @@ export const robinhoodClient = {
     } catch (err) {
       console.error("Logout request failed:", err.message);
       if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
-        throw new Error("Backend server is offline. Session could not be verified/wiped from disk securely.");
+        throw new Error("Backend server is offline. Session could not be verified/wiped from disk securely.", { cause: err });
       }
       throw err;
     }
