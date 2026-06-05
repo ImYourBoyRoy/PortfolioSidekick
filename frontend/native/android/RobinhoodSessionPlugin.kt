@@ -96,16 +96,33 @@ class RobinhoodSessionPlugin : Plugin() {
         }
         val username = vault.getUsername(profileId)
         val session = vault.load(profileId)
-        val res = JSObject()
         if (username == null || session == null) {
+            val res = JSObject()
             res.put("authenticated", false)
             call.resolve(res)
             return
         }
-        val valid = authClient.validateSession(session)
-        res.put("authenticated", valid)
-        if (valid) res.put("username", username)
-        call.resolve(res)
+        // Network must run off the main thread (validateSession hits the network).
+        Thread {
+            try {
+                var valid = authClient.validateSession(session)
+                if (!valid) {
+                    val refreshed = authClient.refreshSession(session)
+                    if (refreshed != null) {
+                        vault.save(profileId, refreshed)
+                        valid = authClient.validateSession(refreshed)
+                    }
+                }
+                val res = JSObject()
+                res.put("authenticated", valid)
+                if (valid) res.put("username", username)
+                call.resolve(res)
+            } catch (e: Exception) {
+                val res = JSObject()
+                res.put("authenticated", false)
+                call.resolve(res)
+            }
+        }.start()
     }
 
     @PluginMethod
@@ -122,11 +139,19 @@ class RobinhoodSessionPlugin : Plugin() {
 
         Thread {
             try {
-                if (!authClient.validateSession(session)) {
+                var active = session
+                if (!authClient.validateSession(active)) {
+                    val refreshed = authClient.refreshSession(active)
+                    if (refreshed != null) {
+                        vault.save(profileId, refreshed)
+                        active = refreshed
+                    }
+                }
+                if (!authClient.validateSession(active)) {
                     call.reject("Robinhood session expired. Please sign in again.")
                     return@Thread
                 }
-                val holdings = authClient.fetchHoldings(session)
+                val holdings = authClient.fetchHoldings(active)
                 val arr = JSArray()
                 for (i in 0 until holdings.length()) {
                     arr.put(jsonToJSObject(holdings.getJSONObject(i)))

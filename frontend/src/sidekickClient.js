@@ -37,6 +37,13 @@ export function isDesktopIpc() {
   return getRuntimeMode() === 'desktop-ipc';
 }
 
+// Extract a human-readable message from a Capacitor plugin rejection.
+function pluginErrorMessage(err, fallback) {
+  if (!err) return fallback;
+  const msg = err.message || err.errorMessage || (typeof err === 'string' ? err : '');
+  return msg && msg.trim() ? msg : fallback;
+}
+
 async function ensureDevSession() {
   if (_devSessionToken) return _devSessionToken;
   try {
@@ -95,12 +102,18 @@ async function androidNativeFetch(path, options = {}) {
   if (base === '/api/auth/login' && method === 'POST') {
     const body = JSON.parse(options.body || '{}');
     const plugin = await getRobinhoodPlugin();
-    const data = await plugin.login({
-      profileId: body.profile_id,
-      username: body.username,
-      password: body.password,
-      mfaCode: body.mfa_code || null,
-    });
+    let data;
+    try {
+      data = await plugin.login({
+        profileId: body.profile_id,
+        username: body.username,
+        password: body.password,
+        mfaCode: body.mfa_code || null,
+      });
+    } catch (e) {
+      // Native plugin rejected — surface the real reason instead of a generic failure.
+      data = { status: 'error', mode: 'live', message: pluginErrorMessage(e, 'Robinhood login failed on this device.') };
+    }
     if (data.status === 'success' && data.mode !== 'sandbox') {
       const profiles = localDb.getProfiles();
       const p = profiles.find((x) => x.id === body.profile_id);
@@ -114,19 +127,38 @@ async function androidNativeFetch(path, options = {}) {
   if (base === '/api/auth/logout' && method === 'POST') {
     const body = JSON.parse(options.body || '{}');
     const plugin = await getRobinhoodPlugin();
-    const data = await plugin.logout({ profileId: body.profile_id });
+    let data;
+    try {
+      data = await plugin.logout({ profileId: body.profile_id });
+    } catch (e) {
+      data = { status: 'error', message: pluginErrorMessage(e, 'Logout failed on this device.') };
+    }
     return { ok: true, status: 200, json: async () => data };
   }
   if (base === '/api/auth/status' && method === 'GET') {
     const plugin = await getRobinhoodPlugin();
     const profileId = parseInt(params.get('profile_id') || '0', 10);
-    const data = await plugin.getStatus({ profileId });
+    let data;
+    try {
+      data = await plugin.getStatus({ profileId });
+    } catch {
+      data = { authenticated: false };
+    }
     return { ok: true, status: 200, json: async () => data };
   }
   if (base === '/api/portfolio/sync' && method === 'POST') {
     const body = JSON.parse(options.body || '{}');
     const plugin = await getRobinhoodPlugin();
-    const data = await plugin.syncHoldings({ profileId: body.profile_id });
+    let data;
+    try {
+      data = await plugin.syncHoldings({ profileId: body.profile_id });
+    } catch (e) {
+      return {
+        ok: false,
+        status: 502,
+        json: async () => ({ status: 'error', detail: pluginErrorMessage(e, 'Sync failed on this device.') }),
+      };
+    }
     if (data.holdings && Array.isArray(data.holdings)) {
       for (const h of data.holdings) {
         localDb.updateHolding(body.profile_id, h.ticker, h.shares, h.avg_buy_price, h.current_price);

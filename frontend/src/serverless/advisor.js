@@ -114,9 +114,20 @@ export const INDICATOR_META = {
     help: 'Overall blended score below which the advisor recommends SELL.' },
 };
 
-export const getIndicatorConfig = () => {
-  const saved = localDb.getSettings();
-  return { ...DEFAULT_INDICATORS, ...(saved.indicators || {}) };
+// Resolve the active indicator configuration. Prefers the given profile's saved
+// settings, then falls back to the legacy global settings (for migration), then
+// to DEFAULT_INDICATORS.
+export const getIndicatorConfig = (profileId) => {
+  let indicators = null;
+  if (profileId != null) {
+    const perProfile = localDb.getIndicatorSettings(profileId);
+    if (perProfile && perProfile.indicators) indicators = perProfile.indicators;
+  }
+  if (!indicators) {
+    const global = localDb.getSettings();
+    if (global.indicators) indicators = global.indicators;
+  }
+  return { ...DEFAULT_INDICATORS, ...(indicators || {}) };
 };
 
 // ─── Mathematical Core Indicators ───
@@ -338,7 +349,7 @@ export const generateRecommendation = (profileId, ticker, historyData, currentPr
   const lows = historyData.map(d => parseFloat(d.low_price || d.close_price));
 
   // Live, user-tunable indicator configuration (Settings → Risk Profiles)
-  const cfg = getIndicatorConfig();
+  const cfg = getIndicatorConfig(profileId);
 
   // Compute Core Metrics
   const rsi = calculateRsi(prices, cfg.rsiPeriod);
@@ -666,7 +677,7 @@ export const generateViabilityForecast = (profileId, ticker, historyData, curren
   const lows = historyData.map(d => parseFloat(d.low_price || d.close_price));
 
   // User RSI thresholds apply across every horizon so risk posture is consistent.
-  const cfg = getIndicatorConfig();
+  const cfg = getIndicatorConfig(profileId);
 
   const analyzeHorizon = (horizonName, rsiPeriod, macdParams, bbPeriod, bbStd, atrPeriod, lookbackPeriod, maFast, maSlow) => {
     // Indicators

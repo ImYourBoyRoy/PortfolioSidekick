@@ -335,20 +335,22 @@ export default function App() {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
-  // ── Advanced Settings handlers ──
+  // ── Advanced Settings handlers (per-profile) ──
   const persistIndicatorSettings = useCallback((nextIndicators, nextProfile) => {
     setIndicatorSettings(nextIndicators);
     setRiskProfile(nextProfile);
-    localDb.saveSettings({ indicators: nextIndicators, riskProfile: nextProfile });
-  }, []);
+    if (activeProfile) {
+      localDb.saveIndicatorSettings(activeProfile.id, { indicators: nextIndicators, riskProfile: nextProfile });
+    }
+  }, [activeProfile]);
 
   const applyRiskProfile = useCallback((profileKey) => {
     const preset = RISK_PROFILES[profileKey];
     if (!preset) return;
     const next = { ...DEFAULT_INDICATORS, ...preset.settings };
     persistIndicatorSettings(next, profileKey);
-    showToast(`Applied "${preset.label}" risk profile. Analysis recalculated.`, "success");
-  }, [persistIndicatorSettings, showToast]);
+    showToast(`Applied "${preset.label}" risk profile to ${activeProfile?.name || "this profile"}. Analysis recalculated.`, "success");
+  }, [persistIndicatorSettings, showToast, activeProfile]);
 
   const updateIndicatorField = useCallback((key, rawValue) => {
     const meta = INDICATOR_META[key];
@@ -358,11 +360,11 @@ export default function App() {
     setIndicatorSettings(prev => {
       const next = { ...prev, [key]: value };
       // Editing any value switches the profile to "custom" so it's clear it's hand-tuned.
-      localDb.saveSettings({ indicators: next, riskProfile: "custom" });
+      if (activeProfile) localDb.saveIndicatorSettings(activeProfile.id, { indicators: next, riskProfile: "custom" });
       return next;
     });
     setRiskProfile("custom");
-  }, []);
+  }, [activeProfile]);
 
   const resetIndicatorDefaults = useCallback(() => {
     persistIndicatorSettings({ ...DEFAULT_INDICATORS }, "balanced");
@@ -409,6 +411,17 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot load on tab open
   }, [activeTab]);
+
+  // Load the active profile's saved indicator/risk settings whenever it changes.
+  useEffect(() => {
+    if (!activeProfile) return;
+    const saved = localDb.getIndicatorSettings(activeProfile.id);
+    const cfg = getIndicatorConfig(activeProfile.id);
+    queueMicrotask(() => {
+      setIndicatorSettings(cfg);
+      setRiskProfile(saved?.riskProfile || "balanced");
+    });
+  }, [activeProfile]);
 
   // Override standard window.alert with custom glassmorphic toasts
   const alert = useCallback((msg) => {
@@ -5245,7 +5258,8 @@ export default function App() {
             <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
               These values drive every calculation in the app — the chart&apos;s Bollinger Bands & moving averages, the Advisor scores,
               the Oracle viability forecasts, and stop-loss / target levels. Pick a risk profile to match your goals, or fine-tune any value.
-              Changes apply instantly.
+              Changes apply instantly and are saved <strong>per profile</strong>
+              {activeProfile ? <> — currently editing <strong style={{ color: '#c4b5fd' }}>{activeProfile.name}</strong>.</> : "."}
             </p>
           </div>
 
