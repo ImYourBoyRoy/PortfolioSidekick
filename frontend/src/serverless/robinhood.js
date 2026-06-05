@@ -135,7 +135,7 @@ export const robinhoodClient = {
       return data;
     } catch (err) {
       if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError")) {
-        throw new Error("Could not reach the secure local Robinhood session layer on this device.", { cause: err });
+        throw new Error("Could not reach Robinhood from this device. Check your internet connection and try again.", { cause: err });
       }
       throw err;
     }
@@ -163,7 +163,7 @@ export const robinhoodClient = {
     } catch (err) {
       if (!isSandbox) {
         if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError")) {
-          throw new Error("Secure local sync layer unreachable. Please sign in again.", { cause: err });
+          throw new Error("Could not reach Robinhood from this device. Check your connection and sign in again.", { cause: err });
         }
         throw err;
       }

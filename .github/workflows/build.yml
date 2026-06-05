@@ -65,9 +65,13 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path frontend/src-tauri/target/release/bundle -Recurse -Filter "*.exe" | Where-Object { $_.Name -notmatch "uninstall" } | Select-Object -First 1
-          if (-not $exe) { throw "No Windows Tauri EXE found" }
-          Copy-Item $exe.FullName ./PortfolioSidekick-Windows.exe
+          $portableExe = "frontend/src-tauri/target/release/portfolio-sidekick.exe"
+          if (-not (Test-Path $portableExe)) {
+            $exe = Get-ChildItem -Path frontend/src-tauri/target/release -Filter "portfolio-sidekick.exe" | Select-Object -First 1
+            if (-not $exe) { throw "No portable Windows EXE found at target/release/portfolio-sidekick.exe" }
+            $portableExe = $exe.FullName
+          }
+          Copy-Item $portableExe ./PortfolioSidekick-Windows.exe
 
       - name: Package macOS App Bundle
         if: matrix.os == 'macos-latest'

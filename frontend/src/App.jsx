@@ -74,6 +74,7 @@ import {
   formatNewsTime
 } from './serverless';
 import { sidekickFetch } from './sidekickClient';
+import { APP_VERSION } from './appVersion';
 
 const formatCurrency = (val) => {
   if (val === undefined || val === null || isNaN(val)) return "$0.00";
@@ -714,6 +715,24 @@ export default function App() {
     }, 1200);
   };
 
+  const refreshConnectionMode = async (profile) => {
+    if (!profile?.robinhood_username) {
+      setIsSandbox(true);
+      return;
+    }
+    try {
+      const statusRes = await sidekickFetch(`/auth/status?profile_id=${profile.id}`);
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        setIsSandbox(!statusData.authenticated);
+        return;
+      }
+    } catch {
+      // Best-effort auth probe.
+    }
+    setIsSandbox(true);
+  };
+
   // Fetch Profiles
   const fetchProfiles = async (selectNewId = null) => {
     try {
@@ -748,30 +767,26 @@ export default function App() {
         }
         // -------------------------------------
         
-        setIsSandbox(false); // Live backend connected
       } catch (backendErr) {
         console.warn("Hybrid Fallback: Backend profiles fetch failed, reading localDb:", backendErr.message);
         data = localDb.getProfiles();
-        setIsSandbox(true); // Sandbox local mode
       }
 
       setProfiles(data);
       if (data.length > 0) {
+        let nextProfile = null;
         if (selectNewId) {
-          const match = data.find(p => p.id === selectNewId);
-          if (match) {
-            setActiveProfile(match);
-            return;
-          }
+          nextProfile = data.find(p => p.id === selectNewId) || null;
         }
-        const currentExists = activeProfile && data.find(p => p.id === activeProfile.id);
-        if (currentExists) {
-          setActiveProfile(currentExists);
-        } else {
-          setActiveProfile(data[0]);
+        if (!nextProfile) {
+          const currentExists = activeProfile && data.find(p => p.id === activeProfile.id);
+          nextProfile = currentExists || data[0];
         }
+        setActiveProfile(nextProfile);
+        await refreshConnectionMode(nextProfile);
       } else {
         setActiveProfile(null);
+        setIsSandbox(true);
       }
     } catch (err) {
       console.error("Error loading profiles:", err);
@@ -902,9 +917,8 @@ export default function App() {
         if (activeProfile.robinhood_username && !isAuthenticated) {
           setIsSandbox(true);
           if (!isLoginOpen) {
-            showToast("Robinhood session expired or unauthenticated. Please re-sign in to restore your live connection.", "warning");
+            showToast("Robinhood session expired. Use Sync Account when you want to reconnect, or stay offline.", "warning");
             setLoginForm(prev => ({ ...prev, username: activeProfile.robinhood_username, password: "", mfa_code: "" }));
-            setIsLoginOpen(true);
           }
         }
 
@@ -1556,11 +1570,20 @@ export default function App() {
     }
   };
 
+  const handleStayOffline = () => {
+    setIsLoginOpen(false);
+    setLoginForm({ username: "", password: "", mfa_code: "" });
+    setLoginStatus({ status: "", message: "" });
+    setLoading(false);
+    setIsSandbox(true);
+    showToast("Staying offline. Add holdings manually, paste a list, or seed sandbox assets.", "info");
+  };
+
   // Robinhood Secure Login
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setLoginStatus({ status: "processing", message: "Connecting to Robinhood local wrapper..." });
+    setLoginStatus({ status: "processing", message: "Authenticating with Robinhood on this device..." });
     
     try {
       const data = await robinhoodClient.login(activeProfile.id, loginForm.username, loginForm.password, loginForm.mfa_code);
@@ -1588,7 +1611,7 @@ export default function App() {
         setLoading(false);
       }
     } catch (err) {
-      setLoginStatus({ status: "error", message: err.message || "Error linking to Robinhood client." });
+      setLoginStatus({ status: "error", message: err.message || "Robinhood sign-in failed. Check credentials or stay offline." });
       setLoading(false);
     }
   };
@@ -2000,7 +2023,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="brand-title">
-              Portfolio Sidekick <span className="brand-version-badge">COACH ACTIVE v1.1</span>
+              Portfolio Sidekick <span className="brand-version-badge">COACH ACTIVE v{APP_VERSION}</span>
             </h1>
             <p className="brand-desc">Local Privacy-Preserved Companion for Robinhood</p>
           </div>
@@ -2263,9 +2286,9 @@ export default function App() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, width: '100%' }}>
                 <div className="viability-target-card" style={{ display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left', padding: 20, background: 'rgba(16, 185, 129, 0.01)', border: '1px solid rgba(16, 185, 129, 0.08)' }}>
                   <span style={{ fontSize: '9px', color: '#34d399', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pathway 1 — Recommended</span>
-                  <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '850', color: '#fff' }}>Robinhood Local Sync</h4>
+                  <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '850', color: '#fff' }}>Sign in with Robinhood</h4>
                   <p style={{ margin: 0, fontSize: '10.5px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-                    🔒 100% private handshake. Your credentials stay encrypted on your device and are never sent to any cloud.
+                    🔒 Embedded on-device auth. Credentials stay encrypted locally — no Python wrapper, no cloud backend.
                   </p>
                 </div>
 
@@ -5485,12 +5508,12 @@ export default function App() {
               <div className="modal-icon-container" style={{ backgroundColor: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
                 <Sliders className="w-5 h-5" style={{ color: 'var(--color-buy)' }} />
               </div>
-              <h3 className="modal-title">Robinhood Local Sync</h3>
+              <h3 className="modal-title">Sign in with Robinhood (Optional)</h3>
               <p className="modal-subtitle" style={{ color: 'var(--color-buy)', fontWeight: '700', marginBottom: '8px' }}>
-                🔒 100% Optional & Local Isolation
+                🔒 Embedded on-device auth — no Python wrapper, no cloud backend
               </p>
               <p className="modal-subtitle" style={{ fontSize: '10.5px', lineHeight: '1.5', margin: '0 8px' }}>
-                Connecting your account is entirely optional! All planning, predicting, and rebalancing tools are fully operational offline. If you choose to sync, your credentials are encrypted and stored only locally on your machine—never sent to any third-party cloud.
+                Connecting is optional. All planning, prediction, and rebalancing tools work offline. If you sign in, credentials and session tokens are encrypted and stored only on this device beside your portable data folder.
               </p>
             </div>
 
@@ -5568,12 +5591,15 @@ export default function App() {
                   textAlign: 'center',
                   backgroundColor: loginStatus.status === 'success' ? 'rgba(16, 185, 129, 0.05)' :
                                    loginStatus.status === 'mfa_required' ? 'rgba(245, 158, 11, 0.05)' :
+                                   loginStatus.status === 'processing' ? 'rgba(139, 92, 246, 0.05)' :
                                    'rgba(244, 63, 94, 0.05)',
                   border: loginStatus.status === 'success' ? '1px solid rgba(16, 185, 129, 0.2)' :
                           loginStatus.status === 'mfa_required' ? '1px solid rgba(245, 158, 11, 0.2)' :
+                          loginStatus.status === 'processing' ? '1px solid rgba(139, 92, 246, 0.2)' :
                           '1px solid rgba(244, 63, 94, 0.2)',
                   color: loginStatus.status === 'success' ? '#34d399' :
                          loginStatus.status === 'mfa_required' ? '#fbbf24' :
+                         loginStatus.status === 'processing' ? '#a78bfa' :
                          '#fb7185'
                 }}>
                   {loginStatus.message}
@@ -5597,8 +5623,27 @@ export default function App() {
               >
                 {loading && <RefreshCw className="animate-spin" style={{ width: 14, height: 14 }} />}
                 {loginStatus.status === "mfa_required"
-                  ? (loginStatus.challenge_type === "prompt" ? "Check Approval Now" : "Verify Code & Link")
-                  : (loading ? "Linking Account..." : "Initiate Login")}
+                  ? (loginStatus.challenge_type === "prompt" ? "Check Approval Now" : "Verify Code & Sign In")
+                  : (loading ? "Signing in..." : "Sign in with Robinhood")}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleStayOffline}
+                disabled={loading}
+                className="btn-base btn-secondary"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  justifyContent: 'center',
+                  fontSize: '11px',
+                  fontWeight: '800',
+                  borderRadius: '12px',
+                  opacity: loading ? 0.65 : 1,
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Stay Offline — Use Manual / Paste Import
               </button>
 
             </form>
@@ -5663,7 +5708,7 @@ export default function App() {
       <footer className="app-footer">
         <div className="status-footer-badge-box">
           <div className={`status-footer-indicator-light ${isSandbox ? 'status-sandbox-light' : 'status-live-light'}`}></div>
-          <span>Execution Mode: <strong className={isSandbox ? 'text-highlight-purple' : 'text-highlight-green'}>{isSandbox ? 'Offline Portfolio Tracking' : 'Live Robinhood Connected'}</strong></span>
+          <span>Execution Mode: <strong className={isSandbox ? 'text-highlight-purple' : 'text-highlight-green'}>{isSandbox ? 'Offline Portfolio Tracking' : 'Live Robinhood Session Active'}</strong></span>
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '10px' }}>

@@ -65,9 +65,13 @@ if ($tauriExit -eq 0) {
     Write-Host "`n==========================================================" -ForegroundColor Green
     Write-Host "     [SUCCESS] TAURI BUILD COMPLETED!" -ForegroundColor Green
     Write-Host "==========================================================" -ForegroundColor Green
-    Write-Host "Artifacts under: $bundleDir" -ForegroundColor Green
-    Write-Host "Windows installer/EXE typically at:" -ForegroundColor Green
-    Write-Host "  frontend\src-tauri\target\release\bundle\nsis\*.exe" -ForegroundColor Green
+    $portableExe = Join-Path $RepoRoot "frontend\src-tauri\target\release\portfolio-sidekick.exe"
+    Write-Host "Portable EXE:" -ForegroundColor Green
+    Write-Host "  $portableExe" -ForegroundColor Green
+    Write-Host "Portable data folder (created on first run):" -ForegroundColor Green
+    Write-Host "  <same folder as EXE>\data\" -ForegroundColor Green
+    Write-Host "Optional bundles (if enabled):" -ForegroundColor Gray
+    Write-Host "  $bundleDir" -ForegroundColor Gray
 } else {
     Write-Host "`n[ERROR] Tauri build failed." -ForegroundColor Red
     Exit 1

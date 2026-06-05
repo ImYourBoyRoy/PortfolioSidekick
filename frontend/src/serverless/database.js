@@ -1,7 +1,7 @@
 // ./frontend/src/serverless/database.js
 /**
  * Portfolio Sidekick unified SQLite database layer.
- * Single schema across Android (Capacitor DATA dir), Tauri desktop (AppData),
+ * Single schema across Android (Capacitor DATA dir), Tauri desktop (portable data/ beside EXE),
  * and dev (IndexedDB). Replaces legacy localStorage persistence.
  *
  * Created by: Roy Dawson IV

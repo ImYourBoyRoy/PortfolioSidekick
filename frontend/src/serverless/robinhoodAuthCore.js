@@ -33,14 +33,26 @@ export function generateDeviceToken() {
   return token;
 }
 
+const FETCH_TIMEOUT_MS = 45000;
+
 const BASE_HEADERS = {
   Accept: '*/*',
   'Accept-Encoding': 'gzip,deflate,br',
   'Accept-Language': 'en-US,en;q=1',
   'X-Robinhood-API-Version': '1.431.4',
   Connection: 'keep-alive',
-  'User-Agent': '*',
+  'User-Agent': 'PortfolioSidekick/1.7.0',
 };
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function formEncodeValue(value) {
   if (typeof value === 'boolean') return value ? 'True' : 'False';
@@ -71,10 +83,13 @@ export async function requestGet(url, auth = null) {
   const headers = { ...BASE_HEADERS };
   if (auth) headers.Authorization = auth;
   try {
-    const res = await fetch(url, { method: 'GET', headers });
+    const res = await fetchWithTimeout(url, { method: 'GET', headers });
     if (!res.ok) return null;
     return parseJsonResponse(res);
-  } catch {
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Robinhood request timed out. Check your internet connection and try again.', { cause: err });
+    }
     return null;
   }
 }
@@ -100,12 +115,15 @@ export async function requestPost(url, payload, options = {}) {
   }
 
   try {
-    const res = await fetch(url, { method: 'POST', headers, body });
+    const res = await fetchWithTimeout(url, { method: 'POST', headers, body });
     if (![200, 201, 202, 204, 301, 302, 303, 304, 307, 400, 401, 402, 403].includes(res.status)) {
       return null;
     }
     return parseJsonResponse(res);
-  } catch {
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Robinhood request timed out. Check your internet connection and try again.', { cause: err });
+    }
     return null;
   }
 }
