@@ -1,7 +1,8 @@
 # ./backend/desktop_bridge.py
 """
-PyWebView js_api bridge for production desktop builds.
-Dispatches in-process API calls via Starlette TestClient — no TCP listener.
+DEPRECATED: Legacy PyWebView js_api bridge for production desktop builds.
+Runtime API traffic now routes through frontend/src/serverless/apiRouter.js.
+This module remains until the pywebview shell is replaced by Tauri/Capacitor Desktop.
 """
 
 import json

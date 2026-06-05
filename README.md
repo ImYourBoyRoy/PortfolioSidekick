@@ -1,6 +1,6 @@
 # Portfolio Sidekick (for Robinhood)
 
-An advanced, premium, and locally-running stock analysis, prediction, and tracking tool designed specifically to help users plan, strategize, and execute trades while managing risks. It integrates secure local authentication with **Robinhood** via the excellent open-source `robin_stocks` library, while utilizing a localized SQLite DB (or serverless `localStorage` inside mobile environments) to record custom price predictions ("Gut Predictions") and automatically evolve indicator weights based on historical accuracy.
+An advanced, premium, and locally-running stock analysis, prediction, and tracking tool designed specifically to help users plan, strategize, and execute trades while managing risks. It integrates secure local authentication with **Robinhood** via **embedded in-project auth** (ported from open-source `robin_stocks` semantics — no PyPI runtime dependency), while utilizing on-device `localStorage` persistence to record custom price predictions ("Gut Predictions") and automatically evolve indicator weights based on historical accuracy.
 
 Created by: **Roy Dawson IV**  
 * GitHub: [https://github.com/imyourboyroy](https://github.com/imyourboyroy)  
@@ -22,8 +22,8 @@ Created by: **Roy Dawson IV**
 Your peace of mind and data security are the highest priority. **Portfolio Sidekick** uses a **fully segregated, device-local architecture**:
 
 * **Zero Cross-Device Sync:** Android and desktop are **completely independent**. Robinhood sessions, tokens, and profiles **never sync** between your phone and PC. Use either platform on its own.
-* **No Companion / LAN Mode:** There is no pairing, no shared backend URL, and no `HOST=0.0.0.0` network exposure. Desktop production builds use **pywebview IPC only** (no TCP listener). Android uses a **native on-device Robinhood plugin** (HTTPS to `api.robinhood.com` only).
-* **Encrypted Session Vaults:** Robinhood OAuth tokens are stored in encrypted vaults (Windows DPAPI / Fernet on desktop; Android Keystore + EncryptedSharedPreferences on mobile). Passwords are **never persisted**.
+* **No Companion / LAN Mode:** There is no pairing, no shared backend URL, and no `HOST=0.0.0.0` network exposure. All platforms route `/api/*` through the **embedded JS serverless layer** — no Python FastAPI or `robin_stocks` at runtime.
+* **Encrypted Session Vaults:** Robinhood OAuth tokens are stored in encrypted vaults (Android: EncryptedSharedPreferences; desktop/dev: vault plugin + localStorage until Tauri keychain). Passwords are **never persisted**.
 * **Sync is 100% Optional:** Sandbox mode, paste import, and manual holdings work without any Robinhood connection.
 * **True Local Isolation (Zero Cloud):** No cloud databases, telemetry, or third-party relay servers.
 
@@ -34,7 +34,7 @@ Your peace of mind and data security are the highest priority. **Portfolio Sidek
 **Portfolio Sidekick** delivers a high-aesthetic, production-grade local suite to track and analyze equity holdings securely:
 * **Multi-User Profiles**: Seamless profile-switching supporting independent portfolios and prediction track-records.
 * **Two-Phase Non-Blocking Auth**: Secure integration with Robinhood supporting SMS, Email, and App Push multi-factor authentication (MFA) challenges.
-* **Advanced Scoring Scanners**: Pure Python calculation engine for Wilder Relative Strength Index (RSI), MACD Histogram, Bollinger Bands, and dynamic EMA/SMA crossovers.
+* **Advanced Scoring Scanners**: Pure JavaScript calculation engine for Wilder Relative Strength Index (RSI), MACD Histogram, Bollinger Bands, and dynamic EMA/SMA crossovers.
 * **Watchlist & Entry Triggers**: High-fidelity watchlist supporting live quote checks and technical entry scanning (e.g. *Oversold Pullback*, *Bollinger Support Bounce*, *Bullish Momentum Shift*).
 * **Tactical Rebalancer**: Real-time allocation simulator previews share trades and cash shifts before making live movements.
 * **Bracket Strategy Blueprints**: Dynamic trade templates automatically calculating multi-stage Scale-Out profit takes and Scale-In DCA support entries.
@@ -65,39 +65,35 @@ Every release tag pushed (e.g., `v*`) automatically triggers our GitHub Actions 
 If you prefer running the development server locally:
 
 #### Prerequisites
-* **Python**: 3.11+ (Tested on **Python 3.11.15** and native **Python 3.14.5**)
-* **Node.js**: v20+ (Tested on **v20** & **v26**)
+* **Node.js**: 24+ (LTS recommended)
+* **Python**: 3.12+ — **optional**, only for legacy desktop EXE packaging (`compile_windows.ps1`) until Tauri migration completes
 
 #### Installation & Execution
 1. **Clone and Enter Workspace**:
    ```bash
-   git clone https://github.com/imyourboyroy/StockToolkit.git
-   cd StockToolkit
+   git clone https://github.com/ImYourBoyRoy/PortfolioSidekick.git
+   cd PortfolioSidekick
    ```
-2. **Install Python Server Dependencies**:
-   ```bash
-   pip install -r backend/requirements.txt
-   ```
-3. **Development Desktop (loopback HTTP + IPC window)**:
-   ```bash
-   cd backend
-   python main.py
-   ```
-   *Dev mode serves API at `http://127.0.0.1:8000` with a local session token. Production `.exe` / `.app` builds use IPC only — no HTTP port.*
-4. **Boot React Frontend Dashboard (optional hot reload)**:
+2. **Boot React Frontend (primary dev path — no Python server required)**:
    ```bash
    cd frontend
    npm install
    npm run dev
    ```
-   *Loads at `http://localhost:5173` and talks to the dev backend using `X-Sidekick-Local-Session`.*
-5. **Android standalone build**:
+   *Loads at `http://localhost:5173`. All `/api/*` routes are handled in-process by `frontend/src/serverless/apiRouter.js`.*
+3. **Legacy desktop window shell (pywebview — API unused)**:
+   ```bash
+   pip install -r backend/requirements.txt
+   cd backend && python main.py
+   ```
+   *Opens the native window; business logic runs in JS, not Python.*
+4. **Android standalone build**:
    ```bash
    cd frontend
    npm run build
    npx cap sync android
    ```
-   *Robinhood auth runs entirely on-device via the native `RobinhoodSession` Capacitor plugin. No desktop dependency.*
+   *Robinhood auth + sync run in embedded JS; Kotlin plugin stores encrypted sessions only.*
 
 ---
 

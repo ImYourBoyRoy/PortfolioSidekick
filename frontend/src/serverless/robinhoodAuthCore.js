@@ -1,8 +1,8 @@
 // ./frontend/src/serverless/robinhoodAuthCore.js
 /**
  * Embedded Robinhood HTTP primitives ported from the open-source robin_stocks package
- * (MIT, jmfernandes/robin_stocks). Used on Android via Capacitor native HTTP so auth
- * matches the desktop Python path without depending on PyPI at runtime.
+ * (MIT, jmfernandes/robin_stocks). Used on all platforms via fetch / Capacitor native
+ * HTTP — no PyPI robin_stocks dependency at runtime.
  *
  * Created by: Roy Dawson IV
  */

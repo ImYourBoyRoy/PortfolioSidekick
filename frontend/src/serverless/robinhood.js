@@ -8,7 +8,7 @@
  */
 
 import { localDb } from './database';
-import { sidekickFetch, isAndroidNative } from '../sidekickClient';
+import { sidekickFetch, isServerlessBackend } from '../sidekickClient';
 
 // ─────────────────────────────────────────────────────────────
 // Public Yahoo Finance (HTTPS only)
@@ -129,7 +129,7 @@ export const robinhoodClient = {
         throw new Error(errObj.detail || errObj.message || "Authentication failed.");
       }
       const data = await res.json();
-      if (data.status === "success" && isAndroidNative()) {
+      if (data.status === "success" && isServerlessBackend()) {
         const profiles = localDb.getProfiles();
         const p = profiles.find((x) => x.id === parseInt(profileId));
         if (p) {
@@ -158,12 +158,10 @@ export const robinhoodClient = {
       }
       const data = await res.json();
 
-      if (isAndroidNative() && data.holdings) {
+      if (data.holdings && Array.isArray(data.holdings)) {
         for (const h of data.holdings) {
           localDb.updateHolding(profileId, h.ticker, h.shares, h.avg_buy_price, h.current_price);
         }
-      } else if (isAndroidNative() && Array.isArray(data.holdings)) {
-        // holdings embedded from plugin via sidekickClient - already handled above
       }
 
       return data;
@@ -196,7 +194,7 @@ export const robinhoodClient = {
       });
       if (!res.ok) throw new Error("Logout failed.");
       const data = await res.json();
-      if (isAndroidNative()) {
+      if (isServerlessBackend()) {
         const profiles = localDb.getProfiles();
         const p = profiles.find((x) => x.id === parseInt(profileId));
         if (p) {

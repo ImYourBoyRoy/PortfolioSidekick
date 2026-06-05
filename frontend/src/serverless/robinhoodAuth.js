@@ -1,8 +1,9 @@
 // ./frontend/src/serverless/robinhoodAuth.js
 /**
- * Two-phase Robinhood authentication for Android (and any JS-native runtime).
- * Logic is ported from backend/robinhood_client.py and robin_stocks open-source auth.
- * Pending challenges and sessions are persisted via the native vault plugin.
+ * Two-phase Robinhood authentication for all platforms (Android, desktop, dev).
+ * Logic is ported from backend/robinhood_client.py and embedded robin_stocks semantics.
+ * Sessions persist via the RobinhoodSession vault plugin (EncryptedSharedPreferences on
+ * Android, localStorage on desktop/dev until Tauri keychain lands).
  *
  * Created by: Roy Dawson IV
  */
@@ -204,7 +205,7 @@ async function refreshSession(session) {
   return sessionPayload(data, deviceToken);
 }
 
-export async function androidRobinhoodLogin(profileId, username, password, mfaCode = null) {
+export async function robinhoodLogin(profileId, username, password, mfaCode = null) {
   if (isSandboxUsername(username)) {
     return {
       status: 'success',
@@ -289,7 +290,7 @@ export async function androidRobinhoodLogin(profileId, username, password, mfaCo
   };
 }
 
-export async function androidRobinhoodLogout(profileId) {
+export async function robinhoodLogout(profileId) {
   const vault = await getVaultPlugin();
   await vault.wipe({ profileId }).catch(() => {});
   return {
@@ -298,7 +299,7 @@ export async function androidRobinhoodLogout(profileId) {
   };
 }
 
-export async function androidRobinhoodStatus(profileId) {
+export async function robinhoodStatus(profileId) {
   const vault = await getVaultPlugin();
   let username;
   let session;
@@ -325,7 +326,7 @@ export async function androidRobinhoodStatus(profileId) {
   return valid ? { authenticated: true, username } : { authenticated: false };
 }
 
-export async function androidRobinhoodSyncHoldings(profileId) {
+export async function robinhoodSyncHoldings(profileId) {
   const vault = await getVaultPlugin();
   let session;
   try {
