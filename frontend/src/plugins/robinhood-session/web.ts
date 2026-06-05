@@ -25,7 +25,7 @@ async function isTauriRuntime() {
 
 async function readVaultFile(): Promise<VaultFile> {
   if (await isTauriRuntime()) {
-    const { readStorageFile, writeStorageFile } = await import('../../serverless/storagePaths.js');
+    const { readStorageFile } = await import('../../serverless/storagePaths.js');
     const raw = await readStorageFile(VAULT_FILENAME);
     if (!raw) return { sessions: {}, challenges: {}, usernames: {} };
     try {
@@ -47,9 +47,13 @@ async function readVaultFile(): Promise<VaultFile> {
 async function writeVaultFile(vault: VaultFile) {
   const payload = JSON.stringify(vault);
   if (await isTauriRuntime()) {
-    const { writeStorageFile } = await import('../../serverless/storagePaths.js');
-    await writeStorageFile(VAULT_FILENAME, new TextEncoder().encode(payload));
-    return;
+    try {
+      const { writeStorageFile } = await import('../../serverless/storagePaths.js');
+      await writeStorageFile(VAULT_FILENAME, new TextEncoder().encode(payload));
+      return;
+    } catch (err) {
+      console.warn('[RobinhoodSession] Portable vault write failed; using WebView storage fallback.', err);
+    }
   }
   localStorage.setItem(VAULT_FILENAME, payload);
 }

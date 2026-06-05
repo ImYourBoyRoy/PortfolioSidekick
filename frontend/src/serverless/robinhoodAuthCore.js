@@ -41,7 +41,7 @@ const BASE_HEADERS = {
   'Accept-Language': 'en-US,en;q=1',
   'X-Robinhood-API-Version': '1.431.4',
   Connection: 'keep-alive',
-  'User-Agent': 'PortfolioSidekick/1.7.0',
+  'User-Agent': '*',
 };
 
 async function fetchWithTimeout(url, options = {}) {

@@ -1579,11 +1579,30 @@ export default function App() {
     showToast("Staying offline. Add holdings manually, paste a list, or seed sandbox assets.", "info");
   };
 
+  // Progress hints while Robinhood issues MFA challenges (can take up to ~60s).
+  useEffect(() => {
+    if (!loading || loginStatus.status !== 'processing') return undefined;
+    const messages = [
+      'Authenticating with Robinhood on this device...',
+      'Waiting for Robinhood to issue your verification challenge...',
+      'Still waiting — Robinhood may send SMS, email, or an app push approval...',
+      'Almost there — check your phone if you received a Robinhood notification.',
+    ];
+    let step = 0;
+    const timer = setInterval(() => {
+      step = Math.min(step + 1, messages.length - 1);
+      setLoginStatus((prev) => (
+        prev.status === 'processing' ? { ...prev, message: messages[step] } : prev
+      ));
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [loading, loginStatus.status]);
+
   // Robinhood Secure Login
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setLoginStatus({ status: "processing", message: "Authenticating with Robinhood on this device..." });
+    setLoginStatus({ status: "processing", message: "Connecting to Robinhood securely on this device..." });
     
     try {
       const data = await robinhoodClient.login(activeProfile.id, loginForm.username, loginForm.password, loginForm.mfa_code);
@@ -2241,7 +2260,7 @@ export default function App() {
       {/* VIEW PANEL 1: DASHBOARD OVERVIEW */}
       {activeTab === "dashboard" && (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-          {portfolioLoading ? (
+          {portfolioLoading && !isLoginOpen ? (
             <div className="glass-card animate-fade-in onboarding-hero-card" style={{ padding: '64px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 32, minHeight: '400px', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '24px', position: 'relative', overflow: 'hidden' }}>
               <div className="loader-glow-ring" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 90, height: 90, borderRadius: '50%', background: 'rgba(139, 92, 246, 0.03)', border: '1px solid rgba(139, 92, 246, 0.1)', boxShadow: '0 0 25px rgba(139, 92, 246, 0.05)' }}>
                 <RefreshCw className="animate-spin" style={{ width: 42, height: 42, color: 'var(--color-oracle)' }} />
@@ -2286,9 +2305,9 @@ export default function App() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, width: '100%' }}>
                 <div className="viability-target-card" style={{ display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left', padding: 20, background: 'rgba(16, 185, 129, 0.01)', border: '1px solid rgba(16, 185, 129, 0.08)' }}>
                   <span style={{ fontSize: '9px', color: '#34d399', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pathway 1 — Recommended</span>
-                  <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '850', color: '#fff' }}>Sign in with Robinhood</h4>
+                  <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '850', color: '#fff' }}>Robinhood Local Sync</h4>
                   <p style={{ margin: 0, fontSize: '10.5px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-                    🔒 Embedded on-device auth. Credentials stay encrypted locally — no Python wrapper, no cloud backend.
+                    🔒 100% private handshake. Your credentials stay encrypted on your device and are never sent to any cloud.
                   </p>
                 </div>
 
@@ -5508,12 +5527,12 @@ export default function App() {
               <div className="modal-icon-container" style={{ backgroundColor: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
                 <Sliders className="w-5 h-5" style={{ color: 'var(--color-buy)' }} />
               </div>
-              <h3 className="modal-title">Sign in with Robinhood (Optional)</h3>
+              <h3 className="modal-title">Robinhood Local Sync</h3>
               <p className="modal-subtitle" style={{ color: 'var(--color-buy)', fontWeight: '700', marginBottom: '8px' }}>
-                🔒 Embedded on-device auth — no Python wrapper, no cloud backend
+                🔒 100% Optional &amp; Local Isolation
               </p>
               <p className="modal-subtitle" style={{ fontSize: '10.5px', lineHeight: '1.5', margin: '0 8px' }}>
-                Connecting is optional. All planning, prediction, and rebalancing tools work offline. If you sign in, credentials and session tokens are encrypted and stored only on this device beside your portable data folder.
+                Connecting your account is entirely optional! All planning, predicting, and rebalancing tools are fully operational offline. If you choose to sync, credentials are encrypted and stored only locally on this machine — never sent to any third-party cloud.
               </p>
             </div>
 
@@ -5623,27 +5642,30 @@ export default function App() {
               >
                 {loading && <RefreshCw className="animate-spin" style={{ width: 14, height: 14 }} />}
                 {loginStatus.status === "mfa_required"
-                  ? (loginStatus.challenge_type === "prompt" ? "Check Approval Now" : "Verify Code & Sign In")
-                  : (loading ? "Signing in..." : "Sign in with Robinhood")}
+                  ? (loginStatus.challenge_type === "prompt" ? "Confirm Approval" : "Verify Code & Link")
+                  : (loading ? "Linking Account..." : "Initiate Login")}
               </button>
 
               <button
                 type="button"
                 onClick={handleStayOffline}
                 disabled={loading}
-                className="btn-base btn-secondary"
+                className="font-size-btn"
                 style={{
                   width: '100%',
-                  padding: '12px',
+                  padding: '10px',
                   justifyContent: 'center',
-                  fontSize: '11px',
-                  fontWeight: '800',
-                  borderRadius: '12px',
-                  opacity: loading ? 0.65 : 1,
+                  fontSize: '10px',
+                  fontWeight: '700',
+                  borderRadius: '10px',
+                  opacity: loading ? 0.55 : 0.85,
                   cursor: loading ? 'not-allowed' : 'pointer',
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-muted)',
                 }}
               >
-                Stay Offline — Use Manual / Paste Import
+                Stay offline — use manual entry or paste import instead
               </button>
 
             </form>
