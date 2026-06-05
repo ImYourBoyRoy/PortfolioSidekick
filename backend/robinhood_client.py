@@ -26,6 +26,8 @@ import pickle
 import logging
 from typing import Dict, List, Any, Optional
 
+from session_vault import load_session, save_session, wipe_session as vault_wipe_session
+
 logger = logging.getLogger(__name__)
 
 # Determine backend directory path for portable data storage
@@ -96,7 +98,18 @@ class RobinhoodClient:
         self.is_authenticated: bool = False
         self.sandbox_mode: bool = True
         self.username: Optional[str] = None
-        self._pending_challenge: Optional[Dict[str, Any]] = None
+        self._pending_challenges: Dict[str, Dict[str, Any]] = {}
+        self._active_profile: Optional[str] = None
+
+    def _get_pending_challenge(self, profile_name: str) -> Optional[Dict[str, Any]]:
+        return self._pending_challenges.get(profile_name.lower())
+
+    def _set_pending_challenge(self, profile_name: str, challenge: Optional[Dict[str, Any]]) -> None:
+        key = profile_name.lower()
+        if challenge is None:
+            self._pending_challenges.pop(key, None)
+        else:
+            self._pending_challenges[key] = challenge
 
     # ─────────────────────────────────────────────────────────
     # Session Directory Helpers
@@ -109,8 +122,29 @@ class RobinhoodClient:
         return session_dir
 
     def _get_pickle_path(self, session_dir: str) -> str:
-        """Returns the path to the session pickle file."""
+        """Legacy pickle path kept for migration reads only."""
         return os.path.join(session_dir, "robinhood.pickle")
+
+    def _restore_tokens(self, profile_name: str, token_data: Dict[str, Any]) -> bool:
+        if not ROBIN_STOCKS_AVAILABLE:
+            return False
+        access_token = token_data.get("access_token")
+        token_type = token_data.get("token_type", "Bearer")
+        if not access_token:
+            return False
+        _rs_set_login_state(True)
+        _rs_update_session("Authorization", f"{token_type} {access_token}")
+        res = _rs_request_get(
+            _rs_positions_url(),
+            "pagination",
+            {"nonzero": "true"},
+            jsonify_data=False,
+        )
+        res.raise_for_status()
+        self.sandbox_mode = False
+        self.is_authenticated = True
+        self._active_profile = profile_name
+        return True
 
     # ─────────────────────────────────────────────────────────
     # Token Isolation & Cached Session Restoration
@@ -129,45 +163,41 @@ class RobinhoodClient:
         os.environ["ROBINHOOD_TOKEN_PATH"] = session_dir
         pickle_path = self._get_pickle_path(session_dir)
 
+        vault_data = load_session(profile_name)
+        if ROBIN_STOCKS_AVAILABLE and vault_data:
+            try:
+                logger.info("Found encrypted session vault for '%s'. Validating...", profile_name)
+                if self._restore_tokens(profile_name, vault_data):
+                    logger.info("Successfully restored live Robinhood session for '%s'.", profile_name)
+                    return
+            except Exception as e:
+                logger.warning("Vault session invalid for '%s': %s", profile_name, e)
+                vault_wipe_session(profile_name)
+
+        # Legacy pickle migration
         if ROBIN_STOCKS_AVAILABLE and os.path.isfile(pickle_path):
             try:
-                logger.info(f"Found cached session pickle for '{profile_name}'. Validating...")
-                with open(pickle_path, 'rb') as f:
+                with open(pickle_path, "rb") as f:
                     pickle_data = pickle.load(f)
-
-                access_token = pickle_data['access_token']
-                token_type = pickle_data['token_type']
-
-                # Set the session authorization header directly
-                _rs_set_login_state(True)
-                _rs_update_session('Authorization', f'{token_type} {access_token}')
-
-                # Validate the session is still alive by hitting the positions endpoint
-                res = _rs_request_get(
-                    _rs_positions_url(),
-                    'pagination',
-                    {'nonzero': 'true'},
-                    jsonify_data=False
-                )
-                res.raise_for_status()
-
-                self.sandbox_mode = False
-                self.is_authenticated = True
-                logger.info(f"Successfully restored live Robinhood session for '{profile_name}'.")
+                if self._restore_tokens(profile_name, pickle_data):
+                    save_session(profile_name, pickle_data)
+                    os.remove(pickle_path)
+                    logger.info("Migrated legacy pickle to encrypted vault for '%s'.", profile_name)
+                    return
             except Exception as e:
-                logger.warning(f"Could not restore cached session for '{profile_name}': {e}. Clearing stale/corrupt session.")
-                _rs_set_login_state(False)
-                _rs_update_session('Authorization', None)
-                self.sandbox_mode = True
-                self.is_authenticated = False
+                logger.warning("Legacy pickle invalid for '%s': %s", profile_name, e)
                 try:
                     os.remove(pickle_path)
                 except OSError:
                     pass
-        else:
-            if ROBIN_STOCKS_AVAILABLE:
-                logger.info(f"No cached session for '{profile_name}'. Operating in sandbox mode.")
-            self.sandbox_mode = True
+
+        if ROBIN_STOCKS_AVAILABLE:
+            logger.info("No cached session for '%s'. Operating in sandbox mode.", profile_name)
+        _rs_set_login_state(False) if ROBIN_STOCKS_AVAILABLE else None
+        if ROBIN_STOCKS_AVAILABLE:
+            _rs_update_session("Authorization", None)
+        self.sandbox_mode = True
+        self.is_authenticated = False
 
     # ─────────────────────────────────────────────────────────
     # Two-Phase Login
@@ -203,14 +233,15 @@ class RobinhoodClient:
         # Execute Phase 2 if either:
         # a) an mfa_code is provided and a challenge is pending, OR
         # b) a push challenge (prompt) is pending (since push doesn't use a verification code)
-        is_push_pending = self._pending_challenge and self._pending_challenge.get('challenge_type') == "prompt"
-        if (mfa_code or is_push_pending) and self._pending_challenge:
+        pending = self._get_pending_challenge(profile_name)
+        is_push_pending = pending and pending.get("challenge_type") == "prompt"
+        if (mfa_code or is_push_pending) and pending:
             mfa_log_str = f"code '{mfa_code[:2]}...'" if mfa_code else "push confirmation"
-            logger.info(f"Phase 2: Completing MFA challenge for '{profile_name}' with {mfa_log_str}")
+            logger.info("Phase 2: Completing MFA challenge for '%s' with %s", profile_name, mfa_log_str)
             return self._complete_challenge(mfa_code, profile_name, session_dir)
 
         # ── Phase 1: Initial login attempt ──
-        self._pending_challenge = None
+        self._set_pending_challenge(profile_name, None)
         try:
             pickle_path = self._get_pickle_path(session_dir)
 
@@ -287,47 +318,44 @@ class RobinhoodClient:
         }
 
     def _try_cached_session(self, pickle_path: str, profile_name: str) -> Optional[Dict[str, Any]]:
-        """Attempts to restore a cached session. Returns a result dict if successful, None otherwise."""
+        """Attempts to restore a cached encrypted vault or legacy pickle session."""
+        vault_data = load_session(profile_name)
+        if vault_data:
+            try:
+                if self._restore_tokens(profile_name, vault_data):
+                    logger.info("Restored encrypted vault session for '%s'.", profile_name)
+                    return {
+                        "status": "success",
+                        "mode": "live",
+                        "message": f"Connected using cached session for {profile_name}.",
+                    }
+            except Exception as e:
+                logger.warning("Vault session expired for '%s': %s", profile_name, e)
+                vault_wipe_session(profile_name)
+
         if not os.path.isfile(pickle_path):
             return None
 
         try:
-            with open(pickle_path, 'rb') as f:
+            with open(pickle_path, "rb") as f:
                 pickle_data = pickle.load(f)
-
-            access_token = pickle_data['access_token']
-            token_type = pickle_data['token_type']
-
-            _rs_set_login_state(True)
-            _rs_update_session('Authorization', f'{token_type} {access_token}')
-
-            # Validate the token is still alive
-            res = _rs_request_get(
-                _rs_positions_url(),
-                'pagination',
-                {'nonzero': 'true'},
-                jsonify_data=False
-            )
-            res.raise_for_status()
-
-            self.sandbox_mode = False
-            self.is_authenticated = True
-            logger.info(f"Restored cached Robinhood session for '{profile_name}'.")
-            return {
-                "status": "success",
-                "mode": "live",
-                "message": f"Connected using cached session for {profile_name}."
-            }
+            if self._restore_tokens(profile_name, pickle_data):
+                save_session(profile_name, pickle_data)
+                os.remove(pickle_path)
+                return {
+                    "status": "success",
+                    "mode": "live",
+                    "message": f"Connected using cached session for {profile_name}.",
+                }
         except Exception as e:
-            logger.warning(f"Cached session expired for '{profile_name}': {e}. Starting fresh login...")
-            _rs_set_login_state(False)
-            _rs_update_session('Authorization', None)
-            # Delete the stale pickle
+            logger.warning("Legacy pickle expired for '%s': %s", profile_name, e)
             try:
                 os.remove(pickle_path)
             except OSError:
                 pass
-            return None
+        _rs_set_login_state(False)
+        _rs_update_session("Authorization", None)
+        return None
 
     def _initiate_challenge(self, login_response: dict, device_token: str, login_payload: dict, session_dir: str, profile_name: str) -> Dict[str, Any]:
         """
@@ -383,17 +411,17 @@ class RobinhoodClient:
             challenge_type = "sms"
 
         # Store state for Phase 2
-        self._pending_challenge = {
-            'device_token': device_token,
-            'login_payload': login_payload,
-            'workflow_id': workflow_id,
-            'machine_id': machine_id,
-            'challenge_type': challenge_type,
-            'challenge_id': challenge_id,
-            'challenge_status': challenge_status,
-            'session_dir': session_dir,
-            'inquiries_url': inquiries_url,
-        }
+        self._set_pending_challenge(profile_name, {
+            "device_token": device_token,
+            "login_payload": login_payload,
+            "workflow_id": workflow_id,
+            "machine_id": machine_id,
+            "challenge_type": challenge_type,
+            "challenge_id": challenge_id,
+            "challenge_status": challenge_status,
+            "session_dir": session_dir,
+            "inquiries_url": inquiries_url,
+        })
 
         # Build user-facing message based on challenge type
         if challenge_type == "prompt":
@@ -418,11 +446,17 @@ class RobinhoodClient:
         For push: Checks if the push was approved.
         Then advances the workflow and re-attempts login.
         """
-        challenge = self._pending_challenge
+        challenge = self._get_pending_challenge(profile_name)
+        if not challenge:
+            return {
+                "status": "error",
+                "mode": "live",
+                "message": "No pending MFA challenge. Please restart login.",
+            }
 
         try:
             # Step 1: Respond to the challenge
-            if challenge['challenge_type'] == "prompt":
+            if challenge["challenge_type"] == "prompt":
                 # App push: check if user approved in the mobile app
                 if challenge.get('challenge_id'):
                     push_url = RH_PUSH_STATUS_URL.format(challenge_id=challenge['challenge_id'])
@@ -440,8 +474,8 @@ class RobinhoodClient:
                     logger.warning("No challenge_id for push type. Attempting to continue workflow anyway.")
             else:
                 # SMS or email: submit the verification code
-                if not challenge.get('challenge_id'):
-                    self._pending_challenge = None
+                if not challenge.get("challenge_id"):
+                    self._set_pending_challenge(profile_name, None)
                     return {
                         "status": "error",
                         "mode": "live",
@@ -454,7 +488,7 @@ class RobinhoodClient:
                 challenge_response = _rs_request_post(url=challenge_url, payload=challenge_payload)
 
                 if not challenge_response:
-                    self._pending_challenge = None
+                    self._set_pending_challenge(profile_name, None)
                     return {
                         "status": "error",
                         "mode": "live",
@@ -511,9 +545,9 @@ class RobinhoodClient:
             logger.info("Re-attempting login after verification...")
             data = _rs_request_post(RH_LOGIN_URL, challenge['login_payload'])
 
-            if data and 'access_token' in data:
-                self._finalize_login(data, challenge['login_payload'], session_dir, profile_name)
-                self._pending_challenge = None
+            if data and "access_token" in data:
+                self._finalize_login(data, challenge["login_payload"], session_dir, profile_name)
+                self._set_pending_challenge(profile_name, None)
                 return {
                     "status": "success",
                     "mode": "live",
@@ -521,9 +555,9 @@ class RobinhoodClient:
                 }
 
             # If we still get a verification_workflow, the challenge wasn't fully completed
-            if data and 'verification_workflow' in data:
-                self._pending_challenge = None
-                logger.error(f"Still getting verification_workflow after challenge. Response: {data}")
+            if data and "verification_workflow" in data:
+                self._set_pending_challenge(profile_name, None)
+                logger.error("Still getting verification_workflow after challenge. Response: %s", data)
                 return {
                     "status": "error",
                     "mode": "live",
@@ -531,8 +565,8 @@ class RobinhoodClient:
                 }
 
             # Other failure
-            self._pending_challenge = None
-            error_detail = data.get('detail', 'Unknown error') if data else 'No response from Robinhood'
+            self._set_pending_challenge(profile_name, None)
+            error_detail = data.get("detail", "Unknown error") if data else "No response from Robinhood"
             logger.error(f"Login failed after verification: {error_detail}")
             return {
                 "status": "error",
@@ -541,8 +575,8 @@ class RobinhoodClient:
             }
 
         except Exception as e:
-            self._pending_challenge = None
-            logger.error(f"Error completing MFA challenge: {e}", exc_info=True)
+            self._set_pending_challenge(profile_name, None)
+            logger.error("Error completing MFA challenge: %s", e, exc_info=True)
             return {
                 "status": "error",
                 "mode": "live",
@@ -558,25 +592,20 @@ class RobinhoodClient:
         _rs_update_session('Authorization', token)
         _rs_set_login_state(True)
 
-        # Persist session to pickle with secure owner-only permissions (0o600)
-        pickle_path = self._get_pickle_path(session_dir)
         try:
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-            fd = os.open(pickle_path, flags, 0o600)
-            with os.fdopen(fd, 'wb') as f:
-                pickle.dump({
-                    'token_type': data['token_type'],
-                    'access_token': data['access_token'],
-                    'refresh_token': data['refresh_token'],
-                    'device_token': login_payload['device_token'],
-                }, f)
-            logger.info(f"Session persisted securely to {pickle_path}")
+            save_session(profile_name, {
+                "token_type": data["token_type"],
+                "access_token": data["access_token"],
+                "refresh_token": data.get("refresh_token"),
+                "device_token": login_payload["device_token"],
+            })
         except Exception as e:
-            logger.error(f"Failed to persist session pickle securely: {e}")
+            logger.error("Failed to persist encrypted session vault: %s", e)
 
         self.sandbox_mode = False
         self.is_authenticated = True
-        logger.info(f"Login finalized for '{profile_name}'. Mode: LIVE.")
+        self._active_profile = profile_name
+        logger.info("Login finalized for '%s'. Mode: LIVE.", profile_name)
 
     # ─────────────────────────────────────────────────────────
     # Logout
@@ -586,10 +615,11 @@ class RobinhoodClient:
         """Logs out and destroys the local session for the profile."""
         self.is_authenticated = False
         self.sandbox_mode = True
-        self._pending_challenge = None
+        self._set_pending_challenge(profile_name, None)
 
         session_dir = self._get_session_dir(profile_name)
         pickle_path = self._get_pickle_path(session_dir)
+        vault_wipe_session(profile_name)
 
         # Clear robin_stocks session state
         if ROBIN_STOCKS_AVAILABLE:
@@ -780,6 +810,8 @@ class RobinhoodClient:
 
     def wipe_session(self, profile_name: str) -> None:
         """Securely overwrites and deletes the Robinhood session file for a profile."""
+        self._set_pending_challenge(profile_name, None)
+        vault_wipe_session(profile_name)
         session_dir = self._get_session_dir(profile_name)
         pickle_path = self._get_pickle_path(session_dir)
 

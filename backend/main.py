@@ -64,6 +64,7 @@ if getattr(sys, 'frozen', False):
         sys.stdout = open(os.devnull, 'w')
         sys.stderr = open(os.devnull, 'w')
 import re
+import pathlib
 import threading
 import logging
 import webview
@@ -80,6 +81,8 @@ from database import init_db, get_db_connection
 from robinhood_client import robinhood_client
 from advisor import generate_recommendation, evolve_weights, generate_viability_forecast
 from strength import calculate_market_strength
+from local_session import check_rate_limit, dev_session_middleware_factory, get_or_create_dev_secret
+from desktop_bridge import DesktopBridge
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -88,22 +91,28 @@ logger = logging.getLogger(__name__)
 # Initialize database schemas
 init_db()
 
-app = FastAPI(title="Portfolio Sidekick Desktop API", version="1.1.0")
+app = FastAPI(title="Portfolio Sidekick Desktop API", version="1.2.0")
 
-# Setup CORS to allow secure connection with our local React Vite frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:4173",
-        "http://127.0.0.1:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000"
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+IS_FROZEN = getattr(sys, "frozen", False)
+
+# Dev-mode HTTP only: loopback CORS + local session header required on /api/*
+if not IS_FROZEN:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://localhost:4173",
+            "http://127.0.0.1:5173",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    @app.middleware("http")
+    async def dev_local_session_guard(request, call_next):
+        return await dev_session_middleware_factory()(request, call_next)
 
 # ─── Sector Classification Matrix ───
 SECTOR_MAP = {
@@ -339,6 +348,19 @@ def resolve_pending_guesses(conn, profile_id: int):
 
 # REST Endpoints
 
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "mode": "desktop-ipc" if IS_FROZEN else "dev-http"}
+
+
+@app.get("/api/dev/session")
+def dev_session_token():
+    """Dev-only: returns loopback session token for Vite frontend (127.0.0.1 only)."""
+    if IS_FROZEN:
+        raise HTTPException(status_code=404, detail="Not available in production IPC mode.")
+    return {"token": get_or_create_dev_secret()}
+
+
 @app.get("/api/profiles")
 def list_profiles(conn = Depends(get_db)):
     cursor = conn.cursor()
@@ -380,13 +402,16 @@ def delete_profile(profile_id: int, conn = Depends(get_db)):
 
 @app.post("/api/auth/login")
 def login_robinhood(payload: LoginRequest, conn = Depends(get_db)):
+    if not check_rate_limit(payload.profile_id):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Please wait and try again.")
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM profiles WHERE id = ?", (payload.profile_id,))
     row = cursor.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Profile not found.")
     profile_name = row["name"]
-        
+    logger.info("Robinhood login attempt for profile '%s' (credentials not logged).", profile_name)
+
     res = robinhood_client.login(
         username=payload.username,
         password=payload.password,
@@ -1529,9 +1554,12 @@ else:
 
 # GUI WebView Launcher Thread and Event loop
 def run_fastapi_server():
-    """Boots Uvicorn in a daemon worker thread."""
-    logger.info("FastAPI Uvicorn worker thread starting...")
+    """Boots Uvicorn in a daemon worker thread (development mode only)."""
+    logger.info("FastAPI Uvicorn dev worker thread starting...")
     host = os.getenv("HOST", "127.0.0.1")
+    if host == "0.0.0.0":
+        logger.warning("HOST=0.0.0.0 is disabled for security. Binding to 127.0.0.1 only.")
+        host = "127.0.0.1"
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
@@ -1564,28 +1592,51 @@ def wait_for_server(timeout: int = 15) -> bool:
     return False
 
 
-if __name__ == "__main__":
-    # 1. Start FastAPI server silently in background thread
-    server_thread = threading.Thread(target=run_fastapi_server, daemon=True)
-    server_thread.start()
+def _resolve_static_dir() -> str:
+    if IS_FROZEN:
+        return os.path.join(sys._MEIPASS, "frontend", "dist")
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
 
-    # 2. Wait for server to finish binding and accepting connections before opening the window
-    wait_for_server()
-    
-    # 3. Open standard windowed GUI natively using Edge WebView2 (Windows) / WebKit (Mac/Linux)
-    logger.info("Launching standalone windowed desktop GUI panel...")
-    host = os.getenv("HOST", "127.0.0.1")
-    local_host = "127.0.0.1" if host == "0.0.0.0" else host
-    port = os.getenv("PORT", "8000")
-    url = f"http://{local_host}:{port}/"
-    webview.create_window(
-        title="Portfolio Sidekick (for Robinhood)",
-        url=url,
-        width=1280,
-        height=820,
-        min_size=(1024, 768),
-        resizable=True
-    )
-    # Start native operating system thread blocking loop (exits cleanly when window closes)
-    webview.start()
-    logger.info("WebView desktop GUI window closed. Exiting process...")
+
+def _file_url_for_index(static_dir: str) -> str:
+    index_path = os.path.join(static_dir, "index.html")
+    return pathlib.Path(index_path).as_uri()
+
+
+if __name__ == "__main__":
+    static_dir = _resolve_static_dir()
+
+    if IS_FROZEN:
+        # Production: IPC-only desktop — no TCP listener exposed
+        logger.info("Launching production desktop (IPC-only, no HTTP server)...")
+        index_url = _file_url_for_index(static_dir)
+        bridge = DesktopBridge(app)
+        webview.create_window(
+            title="Portfolio Sidekick (for Robinhood)",
+            url=index_url,
+            width=1280,
+            height=820,
+            min_size=(1024, 768),
+            resizable=True,
+            js_api=bridge,
+        )
+        webview.start()
+        logger.info("WebView desktop GUI window closed. Exiting process.")
+    else:
+        # Development: loopback HTTP for Vite hot reload workflows
+        server_thread = threading.Thread(target=run_fastapi_server, daemon=True)
+        server_thread.start()
+        wait_for_server()
+        logger.info("Launching development desktop GUI (loopback HTTP)...")
+        port = os.getenv("PORT", "8000")
+        url = f"http://127.0.0.1:{port}/"
+        webview.create_window(
+            title="Portfolio Sidekick (for Robinhood)",
+            url=url,
+            width=1280,
+            height=820,
+            min_size=(1024, 768),
+            resizable=True,
+        )
+        webview.start()
+        logger.info("WebView desktop GUI window closed. Exiting process.")

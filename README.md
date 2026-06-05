@@ -17,13 +17,15 @@ Created by: **Roy Dawson IV**
 
 ---
 
-## 🔒 Security & Privacy (100% Optional Sync!)
+## 🔒 Security & Privacy (Segregated Standalone Architecture)
 
-Your peace of mind and data security are the highest priority. **Portfolio Sidekick** is engineered with a strict **Local-First, Privacy-First Architecture**:
+Your peace of mind and data security are the highest priority. **Portfolio Sidekick** uses a **fully segregated, device-local architecture**:
 
-* **Sync is 100% Optional:** You are **never** forced to connect a real Robinhood account. The app is fully functional as an offline sandbox simulator! You can click **"Paste List"** or enter holdings manually to track, plan, and analyze portfolios with complete comfort.
-* **True Local Isolation (Zero Cloud):** We have **no cloud databases, no telemetry, no tracking, and no external servers**. If you choose to sync your Robinhood account, your credentials and sessions are encrypted and stored **strictly locally on your device**—never sent to any third party.
-* **Official Encrypted Connections Only:** The optional sync interfaces directly with the official, encrypted Robinhood APIs via the audited open-source `robin_stocks` library. All transactions and details are processed natively from your machine.
+* **Zero Cross-Device Sync:** Android and desktop are **completely independent**. Robinhood sessions, tokens, and profiles **never sync** between your phone and PC. Use either platform on its own.
+* **No Companion / LAN Mode:** There is no pairing, no shared backend URL, and no `HOST=0.0.0.0` network exposure. Desktop production builds use **pywebview IPC only** (no TCP listener). Android uses a **native on-device Robinhood plugin** (HTTPS to `api.robinhood.com` only).
+* **Encrypted Session Vaults:** Robinhood OAuth tokens are stored in encrypted vaults (Windows DPAPI / Fernet on desktop; Android Keystore + EncryptedSharedPreferences on mobile). Passwords are **never persisted**.
+* **Sync is 100% Optional:** Sandbox mode, paste import, and manual holdings work without any Robinhood connection.
+* **True Local Isolation (Zero Cloud):** No cloud databases, telemetry, or third-party relay servers.
 
 ---
 
@@ -76,20 +78,26 @@ If you prefer running the development server locally:
    ```bash
    pip install -r backend/requirements.txt
    ```
-3. **Start Backend Daemon**:
+3. **Development Desktop (loopback HTTP + IPC window)**:
    ```bash
    cd backend
    python main.py
    ```
-   *Bootstraps the local FastAPI server at `http://127.0.0.1:8000` and creates your secure local `portfolio_sidekick.db` instance (auto-migrating existing data from your old database if present).*
-4. **Boot React Frontend Dashboard**:
-   *Open a second terminal window:*
+   *Dev mode serves API at `http://127.0.0.1:8000` with a local session token. Production `.exe` / `.app` builds use IPC only — no HTTP port.*
+4. **Boot React Frontend Dashboard (optional hot reload)**:
    ```bash
    cd frontend
    npm install
    npm run dev
    ```
-   *The stunning dark glassmorphic dashboard will load at `http://localhost:5173`.*
+   *Loads at `http://localhost:5173` and talks to the dev backend using `X-Sidekick-Local-Session`.*
+5. **Android standalone build**:
+   ```bash
+   cd frontend
+   npm run build
+   npx cap sync android
+   ```
+   *Robinhood auth runs entirely on-device via the native `RobinhoodSession` Capacitor plugin. No desktop dependency.*
 
 ---
 
@@ -103,17 +111,19 @@ Agents can programmatically execute the integrity check suite to assert correct 
 python backend/verify_toolkit.py
 ```
 
-#### 2. Querying Backend Endpoints via MCP HTTP Gateway
-MCP Clients can interact with the running server using REST requests. Example for retrieving profile holdings:
+#### 2. Querying Backend Endpoints via MCP HTTP Gateway (Dev Mode Only)
+In development, MCP clients can query the loopback API with a session header:
 ```bash
-curl -X GET http://127.0.0.1:8000/api/profiles
+TOKEN=$(curl -s http://127.0.0.1:8000/api/dev/session | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+curl -H "X-Sidekick-Local-Session: $TOKEN" http://127.0.0.1:8000/api/profiles
 ```
+Production desktop builds do not expose HTTP.
 
 ---
 
 ## 4. Sample Walkthrough & Visuals
 
-**Portfolio Sidekick** runs **100% serverlessly client-side** inside your web browser, native WebView window, or Capacitor mobile wrapper. It utilizes high-fidelity client-side local database layers (`localStorage` and `IndexedDB`) to persist your portfolios, profile credentials, watchlists, weights, and predictions completely privately on your device.
+**Portfolio Sidekick** runs as a **standalone app per platform**: desktop via PyWebView + Python IPC, Android via Capacitor + native Robinhood plugin. Portfolio data is stored locally (SQLite on desktop, `localStorage` on Android). Robinhood sessions never leave the device they were created on.
 
 Below is an authentic visual walkthrough of the real, running application:
 
@@ -180,6 +190,9 @@ StockToolkit/
 │   ├── requirements.txt      # Lightweight pure-python package list
 │   ├── database.py           # SQLite local profile & database operations
 │   ├── robinhood_client.py   # Two-phase non-blocking Robinhood authenticator
+│   ├── session_vault.py      # Encrypted at-rest OAuth token storage
+│   ├── desktop_bridge.py     # Production pywebview IPC (no HTTP)
+│   ├── local_session.py      # Dev-mode loopback session middleware
 │   ├── advisor.py            # Quantitative indicators and evolution loops
 │   ├── generate_icons.py     # Pillow-driven icon conversion pipeline
 │   ├── verify_toolkit.py     # Automated quantitative test & verification suite
@@ -191,6 +204,9 @@ StockToolkit/
 │       ├── index.css         # Custom responsive obsidian CSS queries
 │       ├── App.jsx           # Main React UI Dashboard & SVG Charts
 │       ├── main.jsx          # Vite initialization layout
-│       └── serverless/       # Pure JavaScript offline local storage DB, advisor calculations, and public quotes
+│       ├── sidekickClient.js # Unified platform transport (IPC / Android native / dev HTTP)
+│       ├── plugins/robinhood-session/  # Capacitor Robinhood plugin bridge
+│       └── serverless/       # Offline local storage DB, advisor calculations, public quotes
+│   └── native/android/       # Kotlin Robinhood auth plugin sources (injected at CI build)
 └── PortfolioSidekick.spec     # PyInstaller single-file desktop compilation parameters
 ```

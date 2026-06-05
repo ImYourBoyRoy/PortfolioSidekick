@@ -1,17 +1,17 @@
 // ./frontend/src/serverless/robinhood.js
 /**
- * Portfolio Sidekick Serverless Robinhood Client & Yahoo Finance public quote integrations
- * Runs direct public API connections for quotes and historical prices, and falls back
- * to pre-populated mock historical series if standard REST queries fail due to offline/CORS states,
- * guaranteeing high-fidelity rendering.
+ * Portfolio Sidekick Robinhood Client & Yahoo Finance public quote integrations.
+ * Robinhood auth uses platform-native transports (desktop IPC / Android plugin / dev HTTP).
+ * Never routes credentials through configurable remote backend URLs.
  *
  * Created by: Roy Dawson IV
  */
 
 import { localDb } from './database';
+import { sidekickFetch, isAndroidNative } from '../sidekickClient';
 
 // ─────────────────────────────────────────────────────────────
-// Public Yahoo Finance Fallback (Zero Dependencies, Natively Bypasses CORS in Android/PyWebView)
+// Public Yahoo Finance (HTTPS only)
 // ─────────────────────────────────────────────────────────────
 
 export const fetchPublicQuote = async (ticker) => {
@@ -24,8 +24,7 @@ export const fetchPublicQuote = async (ticker) => {
     const price = data.chart.result[0].meta.regularMarketPrice;
     return parseFloat(price);
   } catch (err) {
-    console.warn(`[WARNING] Failed to fetch quote for ${formattedTicker} via Yahoo Finance: ${err.message}. Using seed value.`);
-    // Fallback seed values matching screenshots
+    console.warn(`[WARNING] Failed to fetch quote for ${formattedTicker}: ${err.message}. Using seed value.`);
     const defaults = {
       "QBTS": 30.16, "RGTI": 23.86, "ZYNE": 100.31, "SLRC": 12.98,
       "ARKK": 82.28, "NVDA": 210.85, "AMD": 511.16, "IONQ": 71.76,
@@ -36,8 +35,6 @@ export const fetchPublicQuote = async (ticker) => {
   }
 };
 
-// Generates an incredibly realistic, mathematically correct random walk historical chart
-// in case standard API network fetches are offline or restricted by CORS
 const generateMockHistoricals = (ticker, count = 100) => {
   const defaults = {
     "QBTS": 30.16, "RGTI": 23.86, "ZYNE": 100.31, "SLRC": 12.98,
@@ -46,30 +43,24 @@ const generateMockHistoricals = (ticker, count = 100) => {
     "NUKZ": 2.40, "NLR": 132.47, "SPY": 510.50, "QQQ": 435.20, "VIX": 14.85
   };
   const basePrice = defaults[ticker.toUpperCase()] || 100.0;
-  
   const history = [];
-  let currentPrice = basePrice * 0.90; // Start slightly lower to show an uptrend
-  
+  let currentPrice = basePrice * 0.90;
   for (let i = 0; i < count; i++) {
-    const changePercent = (Math.random() - 0.47) * 0.04; // Slights upward bias
+    const changePercent = (Math.random() - 0.47) * 0.04;
     const open = currentPrice;
     const close = currentPrice * (1 + changePercent);
     const high = Math.max(open, close) * (1 + Math.random() * 0.015);
     const low = Math.min(open, close) * (1 - Math.random() * 0.015);
-    const volume = Math.floor(100000 + Math.random() * 900000);
-    
     currentPrice = close;
-    
     const d = new Date();
     d.setDate(d.getDate() - (count - i));
-    
     history.push({
       begins_at: d.toISOString(),
       open_price: Math.round(open * 100) / 100,
       close_price: Math.round(close * 100) / 100,
       high_price: Math.round(high * 100) / 100,
       low_price: Math.round(low * 100) / 100,
-      volume: volume
+      volume: Math.floor(100000 + Math.random() * 900000)
     });
   }
   return history;
@@ -83,37 +74,23 @@ export const fetchPublicHistoricalPrices = async (ticker, span = "year") => {
     const res = await fetch(url);
     if (!res.ok) throw new Error("Yahoo Finance historical fetch failed.");
     const data = await res.json();
-    
     const result = data.chart.result[0];
     const timestamps = result.timestamp || [];
     const quote = result.indicators.quote[0];
-    const opens = quote.open || [];
-    const highs = quote.high || [];
-    const lows = quote.low || [];
-    const closes = quote.close || [];
-    const volumes = quote.volume || [];
-
     const formatted = [];
     for (let i = 0; i < timestamps.length; i++) {
-      const closePrice = closes[i];
+      const closePrice = quote.close[i];
       if (closePrice === null || closePrice === undefined) continue;
-
-      const openPrice = opens[i] !== null ? opens[i] : closePrice;
-      const highPrice = highs[i] !== null ? highs[i] : closePrice;
-      const lowPrice = lows[i] !== null ? lows[i] : closePrice;
-      const vol = volumes[i] !== null ? volumes[i] : 0;
-
       const d = new Date(timestamps[i] * 1000);
       formatted.push({
         begins_at: d.toISOString(),
-        open_price: Math.round(openPrice * 100) / 100,
-        close_price: Math.round(closePrice * 100) / 100,
-        high_price: Math.round(highPrice * 100) / 100,
-        low_price: Math.round(lowPrice * 100) / 100,
-        volume: parseInt(vol)
+        open_price: quote.open[i] ?? closePrice,
+        close_price: closePrice,
+        high_price: quote.high[i] ?? closePrice,
+        low_price: quote.low[i] ?? closePrice,
+        volume: parseInt(quote.volume[i] ?? 0)
       });
     }
-    
     if (formatted.length === 0) throw new Error("Empty history returned.");
     return formatted;
   } catch (err) {
@@ -124,152 +101,112 @@ export const fetchPublicHistoricalPrices = async (ticker, span = "year") => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// Hybrid API Base Resolver & Robinhood HTTP Authenticator
+// Platform-native Robinhood authenticator
 // ─────────────────────────────────────────────────────────────
 
-const getApiBaseUrl = () => {
-  if (typeof window === "undefined") return "http://127.0.0.1:8000/api";
-  const saved = localStorage.getItem("portfolio_sidekick_api_base") || localStorage.getItem("stock_toolkit_api_base");
-  if (saved) return saved;
-  
-  if (navigator.userAgent.includes("Android") || 
-      window.location.href.includes("android") || 
-      window.location.origin.includes("capacitor")) {
-    return "http://10.0.2.2:8000/api";
-  }
-  return "http://127.0.0.1:8000/api";
-};
-
 export const robinhoodClient = {
-  // Initiates or completes a two-phase secure Robinhood sync session
   login: async (profileId, username, password, mfaCode = null) => {
-    // Sandbox bypass escape hatch
     if (username.toLowerCase() === "sandbox" || username.toLowerCase() === "example" || username.toLowerCase().includes("test")) {
       return {
         status: "success",
         mode: "sandbox",
-        message: `Successfully connected to Sandbox Profile! Using Yahoo Finance quotes.`
+        message: "Successfully connected to Sandbox Profile! Using Yahoo Finance quotes."
       };
     }
 
-    const apiBase = getApiBaseUrl();
     try {
-      console.log(`Hybrid: Initiating Robinhood token login via backend at ${apiBase}...`);
-      const res = await fetch(`${apiBase}/auth/login`, {
+      const res = await sidekickFetch("/auth/login", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify({
           profile_id: parseInt(profileId),
-          username: username,
-          password: password,
+          username,
+          password,
           mfa_code: mfaCode || null
         })
       });
-
       if (!res.ok) {
-        const errText = await res.text();
-        let errMsg = "Authentication server failure.";
-        try {
-          const errObj = JSON.parse(errText);
-          errMsg = errObj.detail || errMsg;
-        } catch (_) {}
-        throw new Error(errMsg);
+        const errObj = await res.json().catch(() => ({}));
+        throw new Error(errObj.detail || errObj.message || "Authentication failed.");
       }
-
       const data = await res.json();
-      console.log("Hybrid: Login endpoint returned:", data);
+      if (data.status === "success" && isAndroidNative()) {
+        const profiles = localDb.getProfiles();
+        const p = profiles.find((x) => x.id === parseInt(profileId));
+        if (p) {
+          p.robinhood_username = username;
+          localStorage.setItem("st_profiles", JSON.stringify(profiles));
+        }
+      }
       return data;
     } catch (err) {
-      console.error("Robinhood login connection failed:", err.message);
-      // If it's a network error/connection refused, throw a clean, helpful message
-      if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError") || err.message.includes("network")) {
-        throw new Error("Portfolio Sidekick backend server is offline or unreachable. Please launch the backend service (main.py) or executable first!");
+      if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError")) {
+        throw new Error("Could not reach the secure local Robinhood session layer on this device.");
       }
       throw err;
     }
   },
 
   syncHoldings: async (profileId, isSandbox = false) => {
-    const apiBase = getApiBaseUrl();
     try {
-      console.log(`Hybrid: Syncing positions via backend at ${apiBase}...`);
-      const res = await fetch(`${apiBase}/portfolio/sync`, {
+      const res = await sidekickFetch("/portfolio/sync", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify({ profile_id: parseInt(profileId) })
       });
-
       if (!res.ok) {
-        const errText = await res.text();
-        let errMsg = "Sync server returned error status.";
-        try {
-          const errObj = JSON.parse(errText);
-          errMsg = errObj.detail || errMsg;
-        } catch (_) {}
-        throw new Error(errMsg);
+        const errObj = await res.json().catch(() => ({}));
+        throw new Error(errObj.detail || errObj.message || "Sync server returned error status.");
       }
-      
       const data = await res.json();
-      console.log("Hybrid: Portfolio sync succeeded, count:", data.synced_count);
+
+      if (isAndroidNative() && data.holdings) {
+        for (const h of data.holdings) {
+          localDb.updateHolding(profileId, h.ticker, h.shares, h.avg_buy_price, h.current_price);
+        }
+      } else if (isAndroidNative() && Array.isArray(data.holdings)) {
+        // holdings embedded from plugin via sidekickClient - already handled above
+      }
+
       return data;
     } catch (err) {
-      console.warn(`Hybrid Fallback: Sync failed (${err.message}).`);
-      
-      // If it's a real live profile, do NOT silently mock a success
       if (!isSandbox) {
-        if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
-          throw new Error("Portfolio Sidekick backend server is offline or unreachable. Sync aborted.");
+        if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError")) {
+          throw new Error("Secure local sync layer unreachable. Please sign in again.");
         }
         throw err;
       }
-
-      // Offline/Serverless mock fallback sync for sandbox using local storage + public quotes
-      console.log("Performing serverless sandbox quote update...");
       const current = localDb.getHoldings(profileId);
       let count = 0;
-      for (let h of current) {
+      for (const h of current) {
         const livePrice = await fetchPublicQuote(h.ticker);
         localDb.updateHolding(profileId, h.ticker, h.shares, h.avg_buy_price, livePrice);
         count++;
       }
-      return {
-        status: "success",
-        synced_count: count
-      };
+      return { status: "success", synced_count: count };
     }
   },
 
   logout: async (profileId, isSandbox = false) => {
     if (isSandbox) {
-      return {
-        status: "success",
-        message: "Successfully logged out of Sandbox Profile locally."
-      };
+      return { status: "success", message: "Successfully logged out of Sandbox Profile locally." };
     }
-
-    const apiBase = getApiBaseUrl();
     try {
-      console.log(`Hybrid: Requesting secure session wipe from backend at ${apiBase}...`);
-      const res = await fetch(`${apiBase}/auth/logout`, {
+      const res = await sidekickFetch("/auth/logout", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify({ profile_id: parseInt(profileId) })
       });
-
-      if (!res.ok) throw new Error("Logout server returned error status.");
-      return await res.json();
-    } catch (err) {
-      console.error("Logout request failed:", err.message);
-      if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
-        throw new Error("Backend server is offline. Session could not be verified/wiped from disk securely.");
+      if (!res.ok) throw new Error("Logout failed.");
+      const data = await res.json();
+      if (isAndroidNative()) {
+        const profiles = localDb.getProfiles();
+        const p = profiles.find((x) => x.id === parseInt(profileId));
+        if (p) {
+          delete p.robinhood_username;
+          localStorage.setItem("st_profiles", JSON.stringify(profiles));
+        }
       }
-      throw err;
+      return data;
+    } catch (err) {
+      throw new Error(err.message || "Failed to log out securely.");
     }
   }
 };
