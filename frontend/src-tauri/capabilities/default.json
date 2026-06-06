@@ -11,6 +11,14 @@
     "fs:allow-appdata-write-recursive",
     "fs:allow-mkdir",
     "fs:allow-exists",
-    "fs:allow-remove"
+    "fs:allow-remove",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://api.robinhood.com/**" },
+        { "url": "https://query1.finance.yahoo.com/**" },
+        { "url": "https://query2.finance.yahoo.com/**" }
+      ]
+    }
   ]
 }

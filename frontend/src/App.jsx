@@ -225,7 +225,6 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [syncStepIndex, setSyncStepIndex] = useState(0);
   const [toasts, setToasts] = useState([]);
-  const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
 
   // Shadow Coach "Watch What I Do" states
@@ -606,9 +605,6 @@ export default function App() {
   // --- REFACTORED EXACT SANDBOX MOCK SEEDER WITH LIVE QUOTES ---
   const handleSeedMockAssets = async () => {
     if (!activeProfile) return;
-    setPortfolioLoading(true);
-    
-    // Simulate beautiful deep calculations and seeding calibration transition
     setTimeout(async () => {
       try {
         const seedDefinitions = [
@@ -709,8 +705,6 @@ export default function App() {
       } catch (err) {
         console.error("Mock Seeding error:", err);
         showToast("Seeding failed: " + err.message, "error");
-      } finally {
-        setPortfolioLoading(false);
       }
     }, 1200);
   };
@@ -1428,7 +1422,7 @@ export default function App() {
     });
 
     const loadProfileData = async () => {
-      setPortfolioLoading(true);
+      // Offline/empty profiles load silently — no fake "Calibrating Analytics" spinner.
       try {
         await Promise.all([
           fetchPortfolio(),
@@ -1440,10 +1434,6 @@ export default function App() {
         ]);
       } catch (err) {
         console.error("Error loading profile data:", err);
-      } finally {
-        setTimeout(() => {
-          setPortfolioLoading(false);
-        }, 300);
       }
     };
     void loadProfileData();
@@ -1579,99 +1569,115 @@ export default function App() {
     showToast("Staying offline. Add holdings manually, paste a list, or seed sandbox assets.", "info");
   };
 
-  // Progress hints while Robinhood issues MFA challenges (can take up to ~60s).
-  useEffect(() => {
-    if (!loading || loginStatus.status !== 'processing') return undefined;
-    const messages = [
-      'Connecting to Robinhood securely on this device...',
-      'Waiting for Robinhood to issue your verification challenge (up to 2 minutes)...',
-      'Robinhood may send SMS, email, or an app push — keep your phone nearby.',
-      'Still waiting for Robinhood — check the app for a push approval or SMS code.',
-    ];
-    let step = 0;
-    const timer = setInterval(() => {
-      step = Math.min(step + 1, messages.length - 1);
-      setLoginStatus((prev) => (
-        prev.status === 'processing' ? { ...prev, message: messages[step] } : prev
-      ));
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [loading, loginStatus.status]);
+  const applyLoginResult = (data) => {
+    if (data.status === "success") {
+      const newSandbox = data.mode === "sandbox";
+      setIsSandbox(newSandbox);
+      setIsLoginOpen(false);
+      setLoginForm({ username: "", password: "", mfa_code: "" });
+      setLoginStatus({ status: "", message: "" });
+      setLoading(false);
+      triggerSync(newSandbox);
+      return;
+    }
+    if (data.status === "mfa_required") {
+      setLoginStatus({
+        status: "mfa_required",
+        message: data.message || "Complete Robinhood verification below.",
+        challenge_type: data.challenge_type || "prompt",
+        challenge_issued: data.challenge_issued ?? false,
+      });
+      setLoading(false);
+      return;
+    }
+    setLoginStatus({ status: "error", message: data.message || "Authentication failed." });
+    setLoading(false);
+  };
 
-  // Robinhood Secure Login
+  // Robinhood Secure Login — Phase 1 only; MFA completion is handled by the poll loop below.
   const handleLogin = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setLoginStatus({ status: "processing", message: "Connecting to Robinhood securely on this device..." });
-    
-    try {
-      const data = await robinhoodClient.login(activeProfile.id, loginForm.username, loginForm.password, loginForm.mfa_code);
-      
-      if (data.status === "success") {
-        setLoginStatus({ status: "success", message: data.message });
-        const newSandbox = data.mode === "sandbox";
-        setIsSandbox(newSandbox);
-        
-        // Immediately close the modal and trigger sync overlay
-        // so that no stale/sandbox/false data is shown in the background.
-        setIsLoginOpen(false);
-        setLoginForm({ username: "", password: "", mfa_code: "" });
-        setLoginStatus({ status: "", message: "" });
-        
-        // Disable loading state so we don't block sync
-        setLoading(false);
-        
-        triggerSync(newSandbox);
-      } else if (data.status === "mfa_required") {
-        setLoginStatus({ status: "mfa_required", message: data.message || "Multi-Factor Authentication code required. Please check your SMS/App.", challenge_type: data.challenge_type || "sms" });
-        setLoading(false);
-      } else {
-        setLoginStatus({ status: "error", message: data.message || "Authentication failed." });
-        setLoading(false);
+    if (loginStatus.status === "mfa_required") {
+      const needsCode = ["sms", "email"].includes(loginStatus.challenge_type);
+      if (needsCode && loginStatus.challenge_issued) {
+        if (!loginForm.mfa_code?.trim()) {
+          setLoginStatus((prev) => ({
+            ...prev,
+            message: `Enter the ${loginStatus.challenge_type} verification code below.`,
+          }));
+          return;
+        }
+        setLoading(true);
+        try {
+          const data = await robinhoodClient.login(
+            activeProfile.id,
+            loginForm.username,
+            loginForm.password,
+            loginForm.mfa_code.trim()
+          );
+          applyLoginResult(data);
+        } catch (err) {
+          setLoginStatus({ status: "error", message: err.message || "Verification failed. Please restart login." });
+          setLoading(false);
+        }
       }
+      return;
+    }
+
+    setLoading(true);
+    setLoginStatus({ status: "processing", message: "Contacting Robinhood API..." });
+
+    try {
+      const data = await robinhoodClient.login(
+        activeProfile.id,
+        loginForm.username,
+        loginForm.password,
+        null
+      );
+      applyLoginResult(data);
     } catch (err) {
       setLoginStatus({ status: "error", message: err.message || "Robinhood sign-in failed. Check credentials or stay offline." });
       setLoading(false);
     }
   };
 
-  // Autonomous push-approval detection.
-  // For the "prompt" challenge, the user only has to approve inside the Robinhood
-  // mobile app — we poll the push status automatically so no manual "Confirm
-  // Approval" click is required. SMS/email codes still require manual entry.
+  // Dynamic MFA polling — mirrors robin_stocks push loop + SMS issued detection.
   useEffect(() => {
-    if (loginStatus.status !== "mfa_required" || loginStatus.challenge_type !== "prompt") {
-      return undefined;
-    }
+    if (loginStatus.status !== "mfa_required" || !activeProfile) return undefined;
+
     let cancelled = false;
-    const interval = setInterval(async () => {
+
+    const pollMfa = async () => {
       if (cancelled) return;
       try {
-        const data = await robinhoodClient.login(activeProfile.id, loginForm.username, loginForm.password, null);
+        const needsCode = ["sms", "email"].includes(loginStatus.challenge_type);
+        const code = needsCode && loginStatus.challenge_issued
+          ? (loginForm.mfa_code?.trim() || null)
+          : null;
+        const data = await robinhoodClient.login(
+          activeProfile.id,
+          loginForm.username,
+          loginForm.password,
+          code
+        );
         if (cancelled) return;
-        if (data.status === "success") {
-          const newSandbox = data.mode === "sandbox";
-          setIsSandbox(newSandbox);
-          setIsLoginOpen(false);
-          setLoginForm({ username: "", password: "", mfa_code: "" });
-          setLoginStatus({ status: "", message: "" });
-          setLoading(false);
-          triggerSync(newSandbox);
-        } else if (data.status === "error") {
-          setLoginStatus({ status: "error", message: data.message || "Approval failed. Please restart login." });
-          setLoading(false);
-        }
-        // Still mfa_required → push not yet approved; keep polling silently.
+        applyLoginResult(data);
       } catch {
         // Transient network blip during polling; keep waiting.
       }
-    }, 3000);
+    };
+
+    void pollMfa();
+    const interval = setInterval(() => {
+      void pollMfa();
+    }, 5000);
+
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll keyed on challenge state; uses latest form/profile closures
-  }, [loginStatus.status, loginStatus.challenge_type]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll keyed on MFA state
+  }, [loginStatus.status, loginStatus.challenge_type, loginStatus.challenge_issued, loginForm.mfa_code, activeProfile]);
 
   // Robinhood Secure Logout & Wiping
   const handleLogout = async () => {
@@ -2260,34 +2266,7 @@ export default function App() {
       {/* VIEW PANEL 1: DASHBOARD OVERVIEW */}
       {activeTab === "dashboard" && (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-          {portfolioLoading && !isLoginOpen ? (
-            <div className="glass-card animate-fade-in onboarding-hero-card" style={{ padding: '64px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 32, minHeight: '400px', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '24px', position: 'relative', overflow: 'hidden' }}>
-              <div className="loader-glow-ring" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 90, height: 90, borderRadius: '50%', background: 'rgba(139, 92, 246, 0.03)', border: '1px solid rgba(139, 92, 246, 0.1)', boxShadow: '0 0 25px rgba(139, 92, 246, 0.05)' }}>
-                <RefreshCw className="animate-spin" style={{ width: 42, height: 42, color: 'var(--color-oracle)' }} />
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, textAlign: 'center' }}>
-                <h3 style={{ margin: 0, fontSize: '20px', fontWeight: '950', color: '#fff', letterSpacing: '-0.02em' }}>Calibrating Portfolio Analytics...</h3>
-                <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--text-muted)', maxWidth: '480px', lineHeight: '1.6' }}>
-                  Retrieving real-time position metrics, running Wilder quantitative RSI models, backtesting indicator ROI, and compiling Shadow Coach behavior patterns...
-                </p>
-              </div>
-              {/* Premium table skeleton placeholders */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', maxWidth: '600px', opacity: 0.35, marginTop: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: 8, borderBottom: '1px solid var(--border-light)' }}>
-                  <div style={{ width: '80px', height: '10px', borderRadius: '4px', background: 'rgba(255,255,255,0.08)' }} className="skeleton-pulse"></div>
-                  <div style={{ width: '60px', height: '10px', borderRadius: '4px', background: 'rgba(255,255,255,0.08)' }} className="skeleton-pulse"></div>
-                  <div style={{ width: '60px', height: '10px', borderRadius: '4px', background: 'rgba(255,255,255,0.08)' }} className="skeleton-pulse"></div>
-                </div>
-                {[1, 2, 3].map(i => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '24px' }}>
-                    <div style={{ width: '50px', height: '12px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)' }} className="skeleton-pulse"></div>
-                    <div style={{ width: '70px', height: '12px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)' }} className="skeleton-pulse"></div>
-                    <div style={{ width: '40px', height: '12px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)' }} className="skeleton-pulse"></div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : holdings.length === 0 ? (
+          {holdings.length === 0 ? (
             <div className="glass-card animate-fade-in onboarding-hero-card" style={{ padding: '48px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 32, maxWidth: '1280px', margin: '20px auto', border: '1px dashed rgba(167, 139, 250, 0.25)', boxShadow: '0 0 30px rgba(139, 92, 246, 0.05)', borderRadius: '24px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, textAlign: 'center' }}>
                 <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'rgba(167, 139, 250, 0.05)', border: '1px solid rgba(167, 139, 250, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 20px rgba(167, 139, 250, 0.1)' }}>
@@ -5585,7 +5564,7 @@ export default function App() {
                         Waiting for approval…
                       </span>
                     </p>
-                  ) : (
+                  ) : loginStatus.challenge_issued ? (
                     <input
                       type="text"
                       required
@@ -5597,6 +5576,15 @@ export default function App() {
                       autoFocus
                       style={{ letterSpacing: '0.25em', textAlign: 'center', fontWeight: '800', opacity: loading ? 0.6 : 1, cursor: loading ? 'not-allowed' : 'default' }}
                     />
+                  ) : (
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center', margin: '8px 0', lineHeight: 1.6 }}>
+                      Robinhood is sending your {loginStatus.challenge_type} code…
+                      <br />
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, color: '#fbbf24' }}>
+                        <RefreshCw className="animate-spin" style={{ width: 12, height: 12 }} />
+                        Waiting for code…
+                      </span>
+                    </p>
                   )}
                 </div>
               )}
@@ -5627,7 +5615,13 @@ export default function App() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={
+                  loading
+                  || (loginStatus.status === "mfa_required" && loginStatus.challenge_type === "prompt")
+                  || (loginStatus.status === "mfa_required"
+                    && ["sms", "email"].includes(loginStatus.challenge_type)
+                    && !loginStatus.challenge_issued)
+                }
                 className="btn-primary"
                 style={{ 
                   width: '100%', 
@@ -5642,7 +5636,9 @@ export default function App() {
               >
                 {loading && <RefreshCw className="animate-spin" style={{ width: 14, height: 14 }} />}
                 {loginStatus.status === "mfa_required"
-                  ? (loginStatus.challenge_type === "prompt" ? "Confirm Approval" : "Verify Code & Link")
+                  ? (loginStatus.challenge_type === "prompt"
+                    ? "Waiting for App Approval…"
+                    : (loginStatus.challenge_issued ? "Verify Code & Link" : "Waiting for Code…"))
                   : (loading ? "Linking Account..." : "Initiate Login")}
               </button>
 

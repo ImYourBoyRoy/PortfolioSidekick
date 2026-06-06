@@ -1,8 +1,8 @@
 // ./frontend/src/serverless/robinhoodAuthCore.js
 /**
- * Embedded Robinhood HTTP primitives ported from the open-source robin_stocks package
- * (MIT, jmfernandes/robin_stocks). Used on all platforms via fetch / Capacitor native
- * HTTP — no PyPI robin_stocks dependency at runtime.
+ * Embedded Robinhood HTTP primitives ported from robin_stocks (MIT).
+ * Desktop Tauri uses @tauri-apps/plugin-http (native reqwest) because WebView
+ * fetch can silently fail against api.robinhood.com.
  *
  * Created by: Roy Dawson IV
  */
@@ -35,6 +35,7 @@ export function generateDeviceToken() {
 
 const FETCH_TIMEOUT_MS = 45000;
 
+/** robin_stocks SESSION.headers from globals.py */
 const BASE_HEADERS = {
   Accept: '*/*',
   'Accept-Encoding': 'gzip,deflate,br',
@@ -44,11 +45,34 @@ const BASE_HEADERS = {
   'User-Agent': '*',
 };
 
+let cachedFetchImpl = null;
+
+async function isTauriRuntime() {
+  try {
+    const { isTauri } = await import('@tauri-apps/api/core');
+    return isTauri();
+  } catch {
+    return false;
+  }
+}
+
+async function getFetchImpl() {
+  if (cachedFetchImpl) return cachedFetchImpl;
+  if (await isTauriRuntime()) {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+    cachedFetchImpl = tauriFetch;
+    return tauriFetch;
+  }
+  cachedFetchImpl = globalThis.fetch.bind(globalThis);
+  return cachedFetchImpl;
+}
+
 async function fetchWithTimeout(url, options = {}) {
+  const fetchImpl = await getFetchImpl();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await fetchImpl(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -78,27 +102,48 @@ async function parseJsonResponse(res) {
   }
 }
 
+async function appendAuthLog(line) {
+  const entry = `${new Date().toISOString()} ${line}\n`;
+  console.info(`[RobinhoodAuth] ${line}`);
+  try {
+    if (await isTauriRuntime()) {
+      const { readStorageFile, writeStorageFile } = await import('./storagePaths.js');
+      const existing = await readStorageFile('auth.log');
+      const prev = existing ? new TextDecoder().decode(existing) : '';
+      const payload = new TextEncoder().encode(prev + entry);
+      if (payload.length > 128000) {
+        await writeStorageFile('auth.log', new TextEncoder().encode(entry));
+      } else {
+        await writeStorageFile('auth.log', payload);
+      }
+    }
+  } catch {
+    // Logging must never break auth.
+  }
+}
+
 /** Mirrors robin_stocks helper.request_get for jsonify_data=true */
 export async function requestGet(url, auth = null) {
   const headers = { ...BASE_HEADERS };
   if (auth) headers.Authorization = auth;
   try {
     const res = await fetchWithTimeout(url, { method: 'GET', headers });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      await appendAuthLog(`GET ${url} → HTTP ${res.status}`);
+      return null;
+    }
     return parseJsonResponse(res);
   } catch (err) {
     if (err?.name === 'AbortError') {
       throw new Error('Robinhood request timed out. Check your internet connection and try again.', { cause: err });
     }
+    await appendAuthLog(`GET ${url} failed: ${err?.message || err}`);
     return null;
   }
 }
 
 /**
- * Mirrors robin_stocks helper.request_post.
- * @param {string} url
- * @param {object} payload
- * @param {{ json?: boolean, auth?: string }} options
+ * Mirrors robin_stocks helper.request_post (timeout default 16s in Python; we use 45s).
  */
 export async function requestPost(url, payload, options = {}) {
   const { json = false, auth = null } = options;
@@ -117,6 +162,7 @@ export async function requestPost(url, payload, options = {}) {
   try {
     const res = await fetchWithTimeout(url, { method: 'POST', headers, body });
     if (![200, 201, 202, 204, 301, 302, 303, 304, 307, 400, 401, 402, 403].includes(res.status)) {
+      await appendAuthLog(`POST ${url} → HTTP ${res.status}`);
       return null;
     }
     return parseJsonResponse(res);
@@ -124,6 +170,7 @@ export async function requestPost(url, payload, options = {}) {
     if (err?.name === 'AbortError') {
       throw new Error('Robinhood request timed out. Check your internet connection and try again.', { cause: err });
     }
+    await appendAuthLog(`POST ${url} failed: ${err?.message || err}`);
     return null;
   }
 }
