@@ -1,0 +1,49 @@
+[[permission]]
+identifier = "allow-auth-log-append"
+description = "Append Robinhood auth diagnostics to portable auth.log"
+commands.allow = ["auth_log_append"]
+
+[[permission]]
+identifier = "allow-portable-data-path"
+description = "Resolve portable data directory beside the executable"
+commands.allow = ["portable_data_path"]
+
+[[permission]]
+identifier = "allow-portable-write-file"
+description = "Write portable data files beside the executable"
+commands.allow = ["portable_write_file"]
+
+[[permission]]
+identifier = "allow-portable-read-file"
+description = "Read portable data files beside the executable"
+commands.allow = ["portable_read_file"]
+
+[[permission]]
+identifier = "allow-portable-file-exists"
+description = "Check portable data file existence beside the executable"
+commands.allow = ["portable_file_exists"]
+
+[[permission]]
+identifier = "allow-rh-desktop-ready"
+description = "Probe Tauri desktop Robinhood native auth availability"
+commands.allow = ["rh_desktop_ready"]
+
+[[permission]]
+identifier = "allow-rh-robinhood-login"
+description = "Run full Robinhood login and MFA flow in native Rust"
+commands.allow = ["rh_robinhood_login"]
+
+[[permission]]
+identifier = "allow-rh-http-request"
+description = "Authenticated Robinhood API HTTP via native Rust client"
+commands.allow = ["rh_http_request"]
+
+[[permission]]
+identifier = "allow-vault-read"
+description = "Read AES-256-GCM encrypted Robinhood session vault"
+commands.allow = ["vault_read"]
+
+[[permission]]
+identifier = "allow-vault-write"
+description = "Write AES-256-GCM encrypted Robinhood session vault"
+commands.allow = ["vault_write"]

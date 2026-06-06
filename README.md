@@ -23,7 +23,7 @@ Your peace of mind and data security are the highest priority. **Portfolio Sidek
 
 * **Zero Cross-Device Sync:** Android and desktop are **completely independent**. Robinhood sessions, tokens, and profiles **never sync** between your phone and PC. Use either platform on its own.
 * **No Companion / LAN Mode:** There is no pairing, no shared backend URL, and no `HOST=0.0.0.0` network exposure. All platforms route `/api/*` through the **embedded JS serverless layer** — no Python FastAPI or `robin_stocks` at runtime.
-* **Encrypted Session Vaults:** Robinhood OAuth tokens are stored in encrypted vaults (Android: EncryptedSharedPreferences; desktop/dev: vault plugin + localStorage until Tauri keychain). Passwords are **never persisted**.
+* **Encrypted Session Vaults:** Robinhood OAuth tokens only — passwords are **never persisted**. **Windows/macOS/Linux (Tauri):** AES-256-GCM file `robinhood_vault.enc` + local key `.vault_key` in `<exe>/data/` (or AppData when not portable). **Android (experimental):** EncryptedSharedPreferences via the Capacitor vault plugin.
 * **Sync is 100% Optional:** Sandbox mode, paste import, and manual holdings work without any Robinhood connection.
 * **True Local Isolation (Zero Cloud):** No cloud databases, telemetry, or third-party relay servers.
 
@@ -51,18 +51,21 @@ The toolkit is designed to be fully portable and compiled into standalone execut
 | **Windows** | `PortfolioSidekick-Windows.exe` | Tauri 2 native executable (NSIS installer or portable EXE) | x64 |
 | **macOS** | `PortfolioSidekick-MacOS.zip` | Tauri `.app` bundle | ARM64 / Universal |
 | **Linux (Ubuntu)** | `PortfolioSidekick-Linux.tar.gz` | Tauri AppImage or binary tarball | x64 |
-| **Android** | `PortfolioSidekick-Android.apk` | Capacitor APK (launcher label: **Sidekick**) | ARM64 |
+| **Android** *(experimental)* | `PortfolioSidekick-Android.apk` | Capacitor APK (launcher label: **Sidekick**) — JS auth path; not validated on physical devices in v1.7.7 | ARM64 |
 
 ### Automated Compilations on GitHub
 Every release tag (`v*`) triggers CI: **Tauri** desktop builds (Windows/macOS/Linux) + **Capacitor** Android APK. No Python or PyInstaller.
 
-### Security model (v1.7+)
+### Security model (v1.7.7+)
 | Asset | Storage | Notes |
 |-------|---------|-------|
-| Portfolio data | SQLite (`portfolio_sidekick.db`) | App-private dir: Tauri AppData / Android DATA / IndexedDB (dev) |
-| Robinhood OAuth tokens | Vault plugin only | **Never** in SQLite; Android uses EncryptedSharedPreferences |
+| Portfolio data | SQLite (`portfolio_sidekick.db`) | Tauri portable `<exe>/data/`, AppData, or IndexedDB (browser dev) |
+| Robinhood OAuth tokens | Per-platform vault | **Never** in SQLite. Desktop: Rust `vault_read`/`vault_write` → AES-256-GCM `robinhood_vault.enc`. Android: EncryptedSharedPreferences (experimental) |
+| Auth diagnostics | `auth.log` | Desktop portable data dir — login, refresh, sync steps |
 | Network | Allowlist | `api.robinhood.com`, Yahoo Finance only (CSP + Android network security config) |
-| Backups | Disabled | `allowBackup=false` on Android; no cloud sync | 
+| Backups | Disabled | `allowBackup=false` on Android; no cloud sync |
+
+> **Desktop is the supported path.** Run `frontend\src-tauri\target\release\portfolio-sidekick.exe` (or `PortfolioSidekick-Windows.exe` from releases). Browser `npm run dev` does not support Robinhood login. 
 
 ---
 
@@ -74,7 +77,8 @@ If you prefer running the development server locally:
 
 #### Prerequisites
 * **Node.js**: 24+ (LTS recommended)
-* **Python**: 3.12+ — **optional**, only for legacy desktop EXE packaging (`compile_windows.ps1`) until Tauri migration completes
+* **Rust**: 1.88+ ([rustup.rs](https://rustup.rs)) — required for Tauri desktop builds
+* **Python**: 3.12+ — **optional**, legacy `backend/` reference and `verify_toolkit.py` only (not used at runtime in v1.7.7)
 
 #### Installation & Execution
 1. **Clone and Enter Workspace**:
@@ -102,7 +106,7 @@ If you prefer running the development server locally:
    npm run build
    npx cap sync android
    ```
-   *Robinhood auth + sync run in embedded JS; Kotlin plugin stores encrypted sessions only.*
+   ***Experimental:** Robinhood auth uses embedded JS + CapacitorHttp; Kotlin plugin stores encrypted sessions. Prefer desktop Tauri for production Robinhood sync until Android is validated on a physical device.*
 
 ---
 
@@ -128,7 +132,7 @@ Production desktop builds do not expose HTTP.
 
 ## 4. Sample Walkthrough & Visuals
 
-**Portfolio Sidekick** runs as a **standalone app per platform**: desktop via PyWebView + Python IPC, Android via Capacitor + native Robinhood plugin. Portfolio data is stored locally (SQLite on desktop, `localStorage` on Android). Robinhood sessions never leave the device they were created on.
+**Portfolio Sidekick** runs as a **standalone app per platform**: desktop via **Tauri 2 + Rust** (native Robinhood HTTP + encrypted vault), Android via Capacitor *(experimental)*. Portfolio data is stored locally (SQLite). Robinhood OAuth tokens never leave the device they were created on; Android and desktop vaults do **not** sync with each other.
 
 Below is an authentic visual walkthrough of the real, running application:
 

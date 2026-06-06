@@ -67,18 +67,16 @@ if ($tauriExit -eq 0) {
     Write-Host "==========================================================" -ForegroundColor Green
     $releaseDir = Join-Path $RepoRoot "frontend\src-tauri\target\release"
     $portableExe = Join-Path $releaseDir "portfolio-sidekick.exe"
-    $authScripts = @("rh_auth_bridge.py", "robinhood_client.py", "session_vault.py", "portable_paths.py")
-    foreach ($script in $authScripts) {
-        Copy-Item (Join-Path $RepoRoot "backend\$script") -Destination $releaseDir -Force
-    }
-    Write-Host "Portable EXE:" -ForegroundColor Green
+    $aliasExe = Join-Path $RepoRoot "PortfolioSidekick-Windows.exe"
+    Copy-Item -Force $portableExe $aliasExe
+    Write-Host "Portable EXE (run this):" -ForegroundColor Green
     Write-Host "  $portableExe" -ForegroundColor Green
-    Write-Host "Robinhood Python auth (robin_stocks) — copy with EXE:" -ForegroundColor Green
-    foreach ($script in $authScripts) {
-        Write-Host "  $releaseDir\$script" -ForegroundColor Green
-    }
-    Write-Host "Portable data folder (created on first run):" -ForegroundColor Green
+    Write-Host "Copied alias:" -ForegroundColor Green
+    Write-Host "  $aliasExe" -ForegroundColor Green
+    Write-Host "Portable data folder (auth.log must appear here on first launch):" -ForegroundColor Green
     Write-Host "  $releaseDir\data\" -ForegroundColor Green
+    Write-Host "Robinhood auth: native Rust HTTP in Tauri (no Python)." -ForegroundColor Green
+    Write-Host "If login hangs and auth.log is missing, you are NOT running the exe above." -ForegroundColor Yellow
     Write-Host "Optional bundles (if enabled):" -ForegroundColor Gray
     Write-Host "  $bundleDir" -ForegroundColor Gray
 } else {

@@ -8,7 +8,7 @@
  */
 
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
-import { isTauriShellSync } from './storagePaths.js';
+import { isTauriShellSync, readStorageFile, writeStorageFile } from './storagePaths.js';
 
 export const RH_CLIENT_ID = 'c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS';
 
@@ -86,6 +86,9 @@ let rhHttpSession = new RobinhoodHttpSession();
 export function resetAuthHttpSession() {
   rhHttpSession.reset();
   cachedTransport = null;
+  if (isTauriShellSync()) {
+    void import('@tauri-apps/api/core').then(({ invoke }) => invoke('rh_http_reset')).catch(() => {});
+  }
 }
 
 async function isTauriRuntime() {
@@ -161,9 +164,14 @@ export function toFormObject(payload) {
 
 async function resolveTransport() {
   if (cachedTransport) return cachedTransport;
-  if (await isTauriRuntime()) {
-    cachedTransport = 'tauri';
-    return cachedTransport;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    if ((await invoke('rh_desktop_ready')) === true) {
+      cachedTransport = 'tauri-rust';
+      return cachedTransport;
+    }
+  } catch {
+    // Not Tauri desktop — fall through.
   }
   if (Capacitor.isNativePlatform()) {
     cachedTransport = 'capacitor';
@@ -177,12 +185,12 @@ export async function getAuthTransport() {
   return resolveTransport();
 }
 
-export async function appendAuthLog(line) {
+export function appendAuthLog(line) {
   const entry = `${new Date().toISOString()} ${line}\n`;
   console.info(`[RobinhoodAuth] ${line}`);
-  try {
-    if (isTauriShellSync()) {
-      const { readStorageFile, writeStorageFile } = await import('./storagePaths.js');
+  if (!isTauriShellSync()) return;
+  void (async () => {
+    try {
       const existing = await readStorageFile('auth.log');
       const prev = existing ? new TextDecoder().decode(existing) : '';
       const payload = new TextEncoder().encode(prev + entry);
@@ -191,10 +199,10 @@ export async function appendAuthLog(line) {
       } else {
         await writeStorageFile('auth.log', payload);
       }
+    } catch {
+      // Best effort — never block Robinhood HTTP on log I/O.
     }
-  } catch {
-    // Best effort.
-  }
+  })();
 }
 
 function withTimeout(promise, ms, label) {
@@ -231,24 +239,37 @@ async function httpRequest(
 ) {
   const transport = await resolveTransport();
   const mergedHeaders = { ...BASE_HEADERS, ...headers };
-  const cookie = rhHttpSession.cookieHeader();
-  if (cookie) mergedHeaders.Cookie = cookie;
+  const useManualCookies = transport !== 'tauri-rust';
+  if (useManualCookies) {
+    const cookie = rhHttpSession.cookieHeader();
+    if (cookie) mergedHeaders.Cookie = cookie;
+  }
 
-  await appendAuthLog(`${method} ${url} via ${transport}${cookie ? ' (cookies=yes)' : ''}`);
+  await appendAuthLog(`${method} ${url} via ${transport}`);
 
-  if (transport === 'tauri') {
-    let tauriFetch;
-    try {
-      ({ fetch: tauriFetch } = await import('@tauri-apps/plugin-http'));
-    } catch (err) {
-      throw new Error(`Tauri HTTP plugin unavailable: ${err?.message || err}. Rebuild the desktop app.`, { cause: err });
+  if (transport === 'tauri-rust') {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const headerObj = {};
+    for (const [key, value] of Object.entries(mergedHeaders)) {
+      if (key.toLowerCase() === 'cookie') continue;
+      headerObj[key] = value;
     }
-    const init = { method, headers: mergedHeaders, connectTimeout: timeoutMs };
-    if (body !== null) init.body = body;
-    const res = await withTimeout(tauriFetch(url, init), timeoutMs + 3000, method);
-    rhHttpSession.ingestHeaders(res.headers);
-    const text = await res.text().catch(() => '');
-    return { ok: res.ok, status: res.status, data: parseJsonText(text), text, transport };
+    const result = await withTimeout(
+      invoke('rh_http_request', {
+        method,
+        url,
+        headers: headerObj,
+        body: jsonPayload === null ? body : null,
+        jsonBody: jsonPayload,
+      }),
+      timeoutMs + 2000,
+      method
+    );
+    const text = result?.body || '';
+    const data = parseJsonText(text);
+    const status = result?.status || 0;
+    const ok = RH_ALLOWED_STATUSES.has(status) || (status >= 200 && status < 300);
+    return { ok, status, data, text, transport };
   }
 
   if (transport === 'capacitor') {
@@ -265,7 +286,7 @@ async function httpRequest(
     else if (formPayload !== null) options.data = toFormObject(formPayload);
 
     const res = await withTimeout(CapacitorHttp.request(options), timeoutMs + 3000, method);
-    rhHttpSession.ingestHeaders(res.headers);
+    if (useManualCookies) rhHttpSession.ingestHeaders(res.headers);
     let data = res.data;
     if (typeof data === 'string') data = parseJsonText(data);
     const ok = RH_ALLOWED_STATUSES.has(res.status) || (res.status >= 200 && res.status < 300);
@@ -276,7 +297,7 @@ async function httpRequest(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { method, headers: mergedHeaders, body, signal: controller.signal });
-    rhHttpSession.ingestHeaders(res.headers);
+    if (useManualCookies) rhHttpSession.ingestHeaders(res.headers);
     const text = await res.text();
     return { ok: res.ok, status: res.status, data: parseJsonText(text), text, transport };
   } finally {

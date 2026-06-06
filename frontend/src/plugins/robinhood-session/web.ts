@@ -1,5 +1,6 @@
 // ./frontend/src/plugins/robinhood-session/web.ts
 import { WebPlugin } from '@capacitor/core';
+import { readStorageFile, writeStorageFile } from '../../serverless/storagePaths.js';
 import type { RobinhoodSessionPlugin } from './index';
 
 const challengeKey = (profileId: number) => `rh_challenge_${profileId}`;
@@ -31,7 +32,6 @@ async function isTauriRuntime() {
 
 async function readVaultFile(): Promise<VaultFile> {
   if (await isTauriRuntime()) {
-    const { readStorageFile } = await import('../../serverless/storagePaths.js');
     const raw = await readStorageFile(VAULT_FILENAME);
     if (!raw) return { sessions: {}, challenges: {}, usernames: {} };
     try {
@@ -54,7 +54,6 @@ async function writeVaultFile(vault: VaultFile) {
   const payload = JSON.stringify(vault);
   if (await isTauriRuntime()) {
     try {
-      const { writeStorageFile } = await import('../../serverless/storagePaths.js');
       await writeStorageFile(VAULT_FILENAME, new TextEncoder().encode(payload));
       return;
     } catch (err) {

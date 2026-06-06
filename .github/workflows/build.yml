@@ -72,13 +72,7 @@ jobs:
             if (-not $exe) { throw "No portable Windows EXE found at target/release/portfolio-sidekick.exe" }
             $portableExe = $exe.FullName
           }
-          foreach ($script in @("rh_auth_bridge.py", "robinhood_client.py", "session_vault.py", "portable_paths.py")) {
-            Copy-Item "backend/$script" "$releaseDir/$script" -Force
-          }
           Copy-Item $portableExe ./PortfolioSidekick-Windows.exe
-          Copy-Item "$releaseDir/rh_auth_bridge.py" ./rh_auth_bridge.py
-          Copy-Item "$releaseDir/robinhood_client.py" ./robinhood_client.py
-          Copy-Item "$releaseDir/session_vault.py" ./session_vault.py
 
       - name: Package macOS App Bundle
         if: matrix.os == 'macos-latest'

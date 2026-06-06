@@ -75,6 +75,7 @@ import {
 } from './serverless';
 import { sidekickFetch } from './sidekickClient';
 import { APP_VERSION } from './appVersion';
+import { probeDesktopAuth, desktopAuthReadyMessage } from './serverless/desktopAuthProbe';
 
 const formatCurrency = (val) => {
   if (val === undefined || val === null || isNaN(val)) return "$0.00";
@@ -195,6 +196,19 @@ export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [loginForm, setLoginForm] = useState({ username: "", password: "", mfa_code: "" });
   const [loginStatus, setLoginStatus] = useState({ status: "", message: "" });
+  const [desktopAuthProbe, setDesktopAuthProbe] = useState(null);
+  const loginSucceededRef = useRef(false);
+  const mfaPollInFlightRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void probeDesktopAuth().then((probe) => {
+      if (!cancelled) setDesktopAuthProbe(probe);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [clipboardText, setClipboardText] = useState("");
@@ -1476,32 +1490,29 @@ export default function App() {
     const targetSandbox = overrideSandbox !== null ? overrideSandbox : isSandbox;
     try {
       const data = await robinhoodClient.syncHoldings(activeProfile.id, targetSandbox);
-      
-      // Concurrently await all critical profile and portfolio metrics to load from the backend
-      // before closing the syncing loading screen, completely eliminating the jarring
-      // fallback to empty/onboarding states!
-      await Promise.all([
+
+      if (data.synced_count > 0) {
+        showToast(`Successfully synced ${data.synced_count} active positions from Robinhood!`, "success");
+      } else {
+        showToast("Sync completed: 0 active stock holdings found. Options and crypto are not imported — add stocks manually or paste a holdings list.", "warning", 7000);
+      }
+
+      // Close the fullscreen overlay as soon as Robinhood holdings are fetched.
+      setSyncing(false);
+      setSyncStepIndex(0);
+
+      void Promise.all([
         fetchPortfolio(),
         fetchGuesses(),
         fetchAnalytics(),
         fetchWatchlist(),
         fetchShadowCoachData(Date.now()),
-        fetchMarketStrength()
+        fetchMarketStrength(),
+        selectedTicker ? fetchStockHistoryAndAdvisor() : Promise.resolve(),
       ]);
-      
-      if (selectedTicker) {
-        await fetchStockHistoryAndAdvisor();
-      }
-      
-      if (data.synced_count > 0) {
-        showToast(`Successfully synced ${data.synced_count} active positions from Robinhood!`, "success");
-      } else {
-        showToast("Sync Completed: 0 active stock holdings found. If this is an offline sandbox profile, you can manually seed AMD, NVDA, and PLTR mock positions or use clipboard paste import!", "warning", 7000);
-      }
     } catch (err) {
       console.error("Sync error:", err);
       showToast(err.message || "Error linking with Robinhood client.", "error");
-    } finally {
       setSyncing(false);
       setSyncStepIndex(0);
     }
@@ -1570,13 +1581,19 @@ export default function App() {
   };
 
   const applyLoginResult = (data) => {
+    if (loginSucceededRef.current && data.status !== "success") {
+      return;
+    }
     if (data.status === "success") {
+      loginSucceededRef.current = true;
+      mfaPollInFlightRef.current = false;
       const newSandbox = data.mode === "sandbox";
       setIsSandbox(newSandbox);
       setIsLoginOpen(false);
       setLoginForm({ username: "", password: "", mfa_code: "" });
       setLoginStatus({ status: "", message: "" });
       setLoading(false);
+      showToast(data.message || "Connected to Robinhood! Syncing holdings…", "success");
       triggerSync(newSandbox);
       return;
     }
@@ -1597,6 +1614,17 @@ export default function App() {
   // Robinhood Secure Login — Phase 1 only; MFA completion is handled by the poll loop below.
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (
+      loginStatus.status !== "mfa_required" &&
+      desktopAuthProbe?.isTauri &&
+      !(desktopAuthProbe.rustAuth && desktopAuthProbe.authLogExists)
+    ) {
+      setLoginStatus({
+        status: "error",
+        message: desktopAuthReadyMessage(desktopAuthProbe),
+      });
+      return;
+    }
     if (loginStatus.status === "mfa_required") {
       const needsCode = ["sms", "email"].includes(loginStatus.challenge_type);
       if (needsCode && loginStatus.challenge_issued) {
@@ -1625,12 +1653,14 @@ export default function App() {
       return;
     }
 
+    loginSucceededRef.current = false;
+    mfaPollInFlightRef.current = false;
     setLoading(true);
-    setLoginStatus({ status: "processing", message: "Contacting Robinhood API..." });
+    setLoginStatus({ status: "processing", message: "Contacting Robinhood API (native Rust)..." });
     const slowTimer = setTimeout(() => {
       setLoginStatus((prev) => (
         prev.status === "processing"
-          ? { ...prev, message: "Still contacting Robinhood (native HTTP, up to 16s)..." }
+          ? { ...prev, message: "Still contacting Robinhood (native Rust HTTP, up to 45s). Check auth.log for the latest step." }
           : prev
       ));
     }, 4000);
@@ -1644,8 +1674,8 @@ export default function App() {
       );
       applyLoginResult(data);
     } catch (err) {
-      const hint = err.message?.includes("timed out")
-        ? " Desktop: check dist/data/auth.log for transport lines (via tauri / capacitor / fetch)."
+      const hint = err.message?.includes("timed out") || err.message?.includes("auth.log")
+        ? " Open <exe>/data/auth.log and share the last 5 lines."
         : "";
       setLoginStatus({
         status: "error",
@@ -1664,7 +1694,8 @@ export default function App() {
     let cancelled = false;
 
     const pollMfa = async () => {
-      if (cancelled) return;
+      if (cancelled || loginSucceededRef.current || mfaPollInFlightRef.current) return;
+      mfaPollInFlightRef.current = true;
       try {
         const needsCode = ["sms", "email"].includes(loginStatus.challenge_type);
         const code = needsCode && loginStatus.challenge_issued
@@ -1677,17 +1708,19 @@ export default function App() {
           code,
           { continueMfa: true }
         );
-        if (cancelled) return;
+        if (cancelled || loginSucceededRef.current) return;
         applyLoginResult(data);
       } catch {
         // Transient network blip during polling; keep waiting.
+      } finally {
+        mfaPollInFlightRef.current = false;
       }
     };
 
     void pollMfa();
     const interval = setInterval(() => {
       void pollMfa();
-    }, 5000);
+    }, 2500);
 
     return () => {
       cancelled = true;
@@ -2303,7 +2336,7 @@ export default function App() {
                   <span style={{ fontSize: '9px', color: '#34d399', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pathway 1 — Recommended</span>
                   <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '850', color: '#fff' }}>Robinhood Local Sync</h4>
                   <p style={{ margin: 0, fontSize: '10.5px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-                    🔒 100% private handshake. Your credentials stay encrypted on your device and are never sent to any cloud.
+                    🔒 100% private handshake. OAuth tokens are stored in an AES-256 encrypted vault beside the executable; passwords are never saved.
                   </p>
                 </div>
 
@@ -5528,8 +5561,31 @@ export default function App() {
                 🔒 100% Optional &amp; Local Isolation
               </p>
               <p className="modal-subtitle" style={{ fontSize: '10.5px', lineHeight: '1.5', margin: '0 8px' }}>
-                Connecting your account is entirely optional! All planning, predicting, and rebalancing tools are fully operational offline. If you choose to sync, credentials are encrypted and stored only locally on this machine — never sent to any third-party cloud.
+                Connecting your account is entirely optional! All planning, predicting, and rebalancing tools work offline. If you sync, Robinhood OAuth tokens are stored in an AES-256 encrypted vault file in the data folder beside this executable — passwords are never persisted.
               </p>
+              {desktopAuthProbe && (
+                <p
+                  className="modal-subtitle"
+                  style={{
+                    fontSize: '10px',
+                    lineHeight: '1.45',
+                    margin: '10px 8px 0',
+                    padding: '8px 10px',
+                    borderRadius: '8px',
+                    border: desktopAuthProbe.rustAuth && desktopAuthProbe.authLogExists
+                      ? '1px solid rgba(16, 185, 129, 0.35)'
+                      : '1px solid rgba(251, 191, 36, 0.45)',
+                    color: desktopAuthProbe.rustAuth && desktopAuthProbe.authLogExists
+                      ? 'var(--color-buy)'
+                      : '#fbbf24',
+                    background: desktopAuthProbe.rustAuth && desktopAuthProbe.authLogExists
+                      ? 'rgba(16, 185, 129, 0.08)'
+                      : 'rgba(251, 191, 36, 0.08)',
+                  }}
+                >
+                  {desktopAuthReadyMessage(desktopAuthProbe)}
+                </p>
+              )}
             </div>
 
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

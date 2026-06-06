@@ -1,16 +1,16 @@
 // ./frontend/src/serverless/robinhoodAuth.js
 /**
- * Two-phase Robinhood auth matching backend/robinhood_client.py (fast Phase 1)
- * and robin_stocks authentication.py challenge completion semantics (Phase 2).
+ * Two-phase Robinhood auth ported from robin_stocks (authentication.py + helper.py).
+ * Runs entirely in embedded JS — Tauri native HTTP on desktop, CapacitorHttp on Android.
  *
- * Phase 1: detect challenge type quickly → return mfa_required to UI immediately.
- * Phase 2: push poll / SMS code / workflow / re-login (same as Python client).
+ * Phase 1: POST credentials → pathfinder → poll inquiries for challenge type.
+ * Phase 2: push poll / SMS-email code / workflow advance / re-login.
  *
  * Created by: Roy Dawson IV
  */
 
+import { APP_VERSION } from '../appVersion';
 import {
-  appendAuthLog,
   authHeader,
   buildLoginPayload,
   buildRefreshPayload,
@@ -22,50 +22,49 @@ import {
   resetAuthHttpSession,
   sessionPayload,
 } from './robinhoodAuthCore';
-import { isTauriShellSync } from './storagePaths.js';
+import {
+  getPortableDataDirectory,
+  isPortableDesktop,
+  readStorageFile,
+  writeStorageFile,
+} from './storagePaths';
+
+const VAULT_FILENAME = 'robinhood_vault.json';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** robin_stocks push + workflow polling */
-const WORKFLOW_POLL_ATTEMPTS = 5;
-const WORKFLOW_POLL_INTERVAL_MS = 2000;
-
-const memoryChallenges = new Map();
-
-/** Desktop: use proven robin_stocks Python bridge when available (user-verified MFA path). */
-async function tryPythonRobinhoodLogin(profileId, username, password, mfaCode) {
-  if (!isTauriShellSync()) return null;
+async function authLog(line) {
+  console.info(`[RobinhoodAuth] ${line}`);
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    const raw = await invoke('rh_python_login', {
-      username,
-      password,
-      mfaCode: mfaCode || null,
-      profileName: String(profileId),
-    });
-    if (!raw || typeof raw !== 'string') return null;
-    const parsed = JSON.parse(raw.trim());
-    console.info('[RobinhoodAuth] Python robin_stocks bridge:', parsed.status, parsed.challenge_type || '');
-    await appendAuthLog(
-      `python_bridge profile=${profileId} status=${parsed.status} challenge=${parsed.challenge_type || 'none'}`
-    );
-    return parsed;
-  } catch (err) {
-    console.warn('[RobinhoodAuth] Python bridge unavailable:', err?.message || err);
-    return null;
+    await invoke('auth_log_append', { line });
+  } catch {
+    // Best effort.
   }
 }
 
-function mapPythonLoginResult(py) {
-  return {
-    status: py.status,
-    mode: py.mode || 'live',
-    message: py.message,
-    challenge_type: py.challenge_type,
-    challenge_issued: py.challenge_type === 'sms' || py.challenge_type === 'email',
-    session: py.session,
-    device_token: py.session?.device_token,
-  };
+function withInvokeTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    sleep(ms).then(() => {
+      throw new Error(`${label} timed out after ${Math.round(ms / 1000)}s. Open auth.log beside portfolio-sidekick.exe for the last step.`);
+    }),
+  ]);
+}
+
+/** robin_stocks push + workflow polling */
+const WORKFLOW_POLL_ATTEMPTS = 5;
+const WORKFLOW_POLL_INTERVAL_MS = 5000;
+const memoryChallenges = new Map();
+
+/** True when Tauri desktop Rust auth commands are available (not pywebview / browser). */
+async function isDesktopRustAuth() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return (await invoke('rh_desktop_ready')) === true;
+  } catch {
+    return false;
+  }
 }
 
 async function getVaultPlugin() {
@@ -101,6 +100,93 @@ async function clearChallengeSafe(vault, profileId) {
   } catch {
     // Best effort.
   }
+}
+
+async function readPortableVault() {
+  if (await isDesktopRustAuth()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const json = await invoke('vault_read');
+      return JSON.parse(json);
+    } catch (err) {
+      await authLog(`vault read failed: ${err?.message || err}`);
+      return { sessions: {}, challenges: {}, usernames: {} };
+    }
+  }
+  const raw = await readStorageFile(VAULT_FILENAME);
+  if (!raw) return { sessions: {}, challenges: {}, usernames: {} };
+  try {
+    return JSON.parse(new TextDecoder().decode(raw));
+  } catch {
+    return { sessions: {}, challenges: {}, usernames: {} };
+  }
+}
+
+async function writePortableVault(vault) {
+  const payload = JSON.stringify(vault);
+  if (await isDesktopRustAuth()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('vault_write', { json: payload });
+    return;
+  }
+  await writeStorageFile(VAULT_FILENAME, new TextEncoder().encode(payload));
+}
+
+function normalizeSession(raw) {
+  if (!raw) return null;
+  const access = raw.access_token || raw.accessToken;
+  if (!access) return null;
+  return {
+    token_type: raw.token_type || raw.tokenType || 'Bearer',
+    access_token: access,
+    refresh_token: raw.refresh_token || raw.refreshToken || '',
+    device_token: raw.device_token || raw.deviceToken || '',
+  };
+}
+
+async function loadSessionPortable(profileId) {
+  const vault = await readPortableVault();
+  const raw = vault.sessions[String(profileId)];
+  if (!raw) return null;
+  try {
+    return normalizeSession(typeof raw === 'string' ? JSON.parse(raw) : raw);
+  } catch {
+    return null;
+  }
+}
+
+async function loadUsernamePortable(profileId) {
+  const vault = await readPortableVault();
+  return vault.usernames[String(profileId)] || null;
+}
+
+async function wipeSessionPortable(profileId) {
+  const vault = await readPortableVault();
+  delete vault.sessions[String(profileId)];
+  delete vault.usernames[String(profileId)];
+  delete vault.challenges[String(profileId)];
+  await writePortableVault(vault);
+}
+
+async function saveSessionPortable(profileId, session, username) {
+  const normalized = normalizeSession(session);
+  if (!normalized) return;
+  const vault = await readPortableVault();
+  vault.sessions[String(profileId)] = JSON.stringify(normalized);
+  if (username) vault.usernames[String(profileId)] = username;
+  delete vault.challenges[String(profileId)];
+  await writePortableVault(vault);
+}
+
+function persistSessionBackground(profileId, session, username) {
+  void (async () => {
+    try {
+      await saveSessionPortable(profileId, session, username);
+      await authLog(`session saved profile=${profileId}`);
+    } catch (err) {
+      await authLog(`session save failed: ${err?.message || err}`);
+    }
+  })();
 }
 
 async function saveSessionSafe(vault, profileId, session, username) {
@@ -192,8 +278,7 @@ async function initiateChallenge(loginResponse, deviceToken, loginPayload, urls)
   const machineId = machineData.id;
   const inquiriesUrl = urls.inquiries(machineId);
 
-  // Phase 1 returns immediately — robin_stocks blocks for minutes; our Python client
-  // returned mfa_required instantly and let Phase 2 poll dynamically.
+  // Return immediately — Phase 2 polls inquiries (robin_stocks sleeps 5s in a loop).
   const pending = {
     device_token: deviceToken,
     login_payload: loginPayload,
@@ -205,14 +290,14 @@ async function initiateChallenge(loginResponse, deviceToken, loginPayload, urls)
     inquiries_url: inquiriesUrl,
   };
 
-  console.info('[RobinhoodAuth] Phase 1 complete — returning mfa_required (prompt default).');
+  console.info('[RobinhoodAuth] Phase 1 complete — pathfinder started, MFA polling in Phase 2.');
 
   return {
     status: 'mfa_required',
     mode: 'live',
     challenge_type: 'prompt',
     challenge_issued: false,
-    message: mfaUserMessage('prompt', null),
+    message: 'Check your Robinhood app for a login approval request. We detect approval automatically.',
     pending,
   };
 }
@@ -260,6 +345,7 @@ async function finalizeLogin(loginPayload, deviceToken, urls) {
  * Phase 2 — mirrors backend _complete_challenge + robin_stocks push polling.
  */
 async function completeChallenge(pending, mfaCode, urls) {
+  // One inquiries GET per poll tick (App.jsx polls every 5s — same cadence as robin_stocks).
   let active = await refreshPendingFromInquiries(pending);
   const challengeType = active.challenge_type;
 
@@ -270,7 +356,7 @@ async function completeChallenge(pending, mfaCode, urls) {
         mode: 'live',
         challenge_type: 'prompt',
         challenge_issued: false,
-        message: 'Waiting for Robinhood to send the app push notification. Keep the Robinhood app open.',
+        message: 'Still waiting for Robinhood to issue the app push. Keep the Robinhood app open and connected.',
         pending: active,
       };
     }
@@ -282,7 +368,7 @@ async function completeChallenge(pending, mfaCode, urls) {
         mode: 'live',
         challenge_type: 'prompt',
         challenge_issued: false,
-        message: 'Push not yet approved. Open your Robinhood app and approve the login.',
+        message: 'Push sent — approve the login in your Robinhood app. Waiting for approval…',
         pending: active,
       };
     }
@@ -361,10 +447,33 @@ async function validateSession(session, urls) {
 async function refreshSession(session, urls) {
   const refreshToken = session?.refresh_token;
   const deviceToken = session?.device_token || '';
-  if (!refreshToken) return null;
-  const data = await requestPost(urls.login, buildRefreshPayload(refreshToken, deviceToken));
-  if (!data?.access_token) return null;
-  return sessionPayload(data, deviceToken);
+  if (!refreshToken) {
+    await authLog('token refresh skipped — no refresh_token');
+    return null;
+  }
+  try {
+    await authLog('token refresh POST oauth2/token');
+    const data = await requestPost(urls.login, buildRefreshPayload(refreshToken, deviceToken));
+    if (!data?.access_token) {
+      await authLog(`token refresh failed — no access_token (detail=${data?.detail || 'none'})`);
+      return null;
+    }
+    await authLog('token refresh succeeded');
+    return sessionPayload(data, deviceToken);
+  } catch (err) {
+    await authLog(`token refresh error: ${err?.message || err}`);
+    return null;
+  }
+}
+
+async function mapPool(items, mapper, concurrency = 8) {
+  const results = [];
+  for (let i = 0; i < items.length; i += concurrency) {
+    const chunk = items.slice(i, i + concurrency);
+    const chunkResults = await Promise.all(chunk.map(mapper));
+    results.push(...chunkResults);
+  }
+  return results;
 }
 
 export async function robinhoodLogin(profileId, username, password, mfaCode = null, options = {}) {
@@ -376,30 +485,66 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
     };
   }
 
-  const vault = await getVaultPlugin();
+  if (await isPortableDesktop()) {
+    await authLog(`login start profile=${profileId} continueMfa=${options.continueMfa === true}`);
 
-  const pyResult = await tryPythonRobinhoodLogin(profileId, username, password, mfaCode);
-  if (pyResult?.status) {
-    const mapped = mapPythonLoginResult(pyResult);
-    if (mapped.status === 'success' && mapped.mode === 'live' && mapped.session) {
-      await saveSessionSafe(
-        vault,
-        profileId,
-        sessionPayload(mapped.session, mapped.device_token || mapped.session.device_token),
-        username
-      );
-      await clearChallengeSafe(vault, profileId);
-    } else if (mapped.status === 'error') {
-      await clearChallengeSafe(vault, profileId);
+    if (!(await isDesktopRustAuth())) {
+      const dataDir = await getPortableDataDirectory();
+      return {
+        status: 'error',
+        mode: 'live',
+        message:
+          `Native Robinhood auth is unavailable on this executable (need v${APP_VERSION}+). ` +
+          'Rebuild with .\\compile_windows.ps1, then run frontend\\src-tauri\\target\\release\\portfolio-sidekick.exe — ' +
+          `not PortfolioSidekick.exe or an old GitHub download. Expected auth.log in ${dataDir || '<exe>\\data'}.`,
+      };
     }
-    return {
-      status: mapped.status,
-      mode: mapped.mode,
-      message: mapped.message,
-      challenge_type: mapped.challenge_type,
-      challenge_issued: mapped.challenge_issued ?? false,
-    };
+
+    const { invoke } = await import('@tauri-apps/api/core');
+    try {
+      await authLog('invoking rh_robinhood_login');
+      const result = await withInvokeTimeout(
+        invoke('rh_robinhood_login', {
+          payload: {
+            profileId: Number(profileId),
+            username,
+            password,
+            mfaCode: mfaCode || null,
+            continueMfa: options.continueMfa === true,
+          },
+        }),
+        45000,
+        'Native Robinhood login'
+      );
+      await authLog(`rh_robinhood_login returned status=${result?.status || 'unknown'}`);
+
+      const normalized = {
+        status: result?.status || 'error',
+        mode: result?.mode || 'live',
+        message: result?.message || 'Robinhood login failed.',
+        challenge_type: result?.challenge_type ?? result?.challengeType,
+        challenge_issued: result?.challenge_issued ?? result?.challengeIssued,
+        session: result?.session,
+      };
+
+      if (normalized.status === 'success' && normalized.session) {
+        memoryChallenges.delete(profileId);
+        const session = normalizeSession(normalized.session);
+        if (session) persistSessionBackground(profileId, session, username);
+      }
+
+      return normalized;
+    } catch (err) {
+      await authLog(`rh_robinhood_login error: ${err?.message || err}`);
+      return {
+        status: 'error',
+        mode: 'live',
+        message: err?.message || String(err),
+      };
+    }
   }
+
+  const vault = await getVaultPlugin();
 
   const urls = await buildRhUrls();
   const continueMfa = options.continueMfa === true || Boolean(mfaCode);
@@ -480,23 +625,48 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
 }
 
 export async function robinhoodLogout(profileId) {
-  const vault = await getVaultPlugin();
-  await clearChallengeSafe(vault, profileId);
-  await vault.wipe({ profileId }).catch(() => {});
+  memoryChallenges.delete(profileId);
+  if (await isPortableDesktop()) {
+    await authLog(`logout profile=${profileId}`);
+    await wipeSessionPortable(profileId);
+  } else {
+    const vault = await getVaultPlugin();
+    await clearChallengeSafe(vault, profileId);
+    await vault.wipe({ profileId }).catch(() => {});
+  }
   return {
     status: 'success',
     message: 'Successfully logged out and wiped session from this device.',
   };
 }
 
+async function loadStoredSession(profileId) {
+  if (await isPortableDesktop()) {
+    const session = await loadSessionPortable(profileId);
+    const username = await loadUsernamePortable(profileId);
+    return { session, username };
+  }
+  const vault = await getVaultPlugin();
+  const username = (await vault.getUsername({ profileId }))?.username || null;
+  const session = normalizeSession((await vault.loadSession({ profileId }))?.session);
+  return { session, username };
+}
+
+async function persistRefreshedSession(profileId, session, username) {
+  if (await isPortableDesktop()) {
+    await saveSessionPortable(profileId, session, username || '');
+    return;
+  }
+  const vault = await getVaultPlugin();
+  await saveSessionSafe(vault, profileId, session, username || '');
+}
+
 export async function robinhoodStatus(profileId) {
   const urls = await buildRhUrls();
-  const vault = await getVaultPlugin();
   let username;
   let session;
   try {
-    username = (await vault.getUsername({ profileId }))?.username || null;
-    session = (await vault.loadSession({ profileId }))?.session || null;
+    ({ session, username } = await loadStoredSession(profileId));
   } catch {
     return { authenticated: false };
   }
@@ -505,10 +675,14 @@ export async function robinhoodStatus(profileId) {
 
   let valid = await validateSession(session, urls);
   if (!valid) {
+    await authLog('status session invalid — attempting refresh');
     const refreshed = await refreshSession(session, urls);
     if (refreshed) {
-      await saveSessionSafe(vault, profileId, refreshed, username);
+      await persistRefreshedSession(profileId, refreshed, username);
       valid = await validateSession(refreshed, urls);
+      if (!valid) await authLog('status still invalid after refresh');
+    } else {
+      await authLog('status refresh failed — not authenticated');
     }
   }
 
@@ -517,52 +691,73 @@ export async function robinhoodStatus(profileId) {
 
 export async function robinhoodSyncHoldings(profileId) {
   const urls = await buildRhUrls();
-  const vault = await getVaultPlugin();
+  await authLog(`sync start profile=${profileId}`);
+
   let session;
+  let username;
   try {
-    session = (await vault.loadSession({ profileId }))?.session || null;
-  } catch {
+    ({ session, username } = await loadStoredSession(profileId));
+  } catch (err) {
+    await authLog(`sync session load failed: ${err?.message || err}`);
+    throw new Error('Not authenticated. Please sign in first.', { cause: err });
+  }
+
+  if (!session) {
+    await authLog('sync aborted — no session in vault');
     throw new Error('Not authenticated. Please sign in first.');
   }
 
-  if (!session) throw new Error('Not authenticated. Please sign in first.');
-
   let active = session;
   if (!(await validateSession(active, urls))) {
+    await authLog('sync session validate failed — trying refresh');
     const refreshed = await refreshSession(active, urls);
     if (refreshed) {
-      const username = (await vault.getUsername({ profileId }))?.username || '';
-      await saveSessionSafe(vault, profileId, refreshed, username);
+      await persistRefreshedSession(profileId, refreshed, username || '');
       active = refreshed;
+    } else {
+      await authLog('sync refresh failed');
     }
   }
 
   if (!(await validateSession(active, urls))) {
+    await authLog('sync aborted — session expired');
     throw new Error('Robinhood session expired. Please sign in again.');
   }
 
   const auth = authHeader(active);
+  await authLog('sync fetching positions');
   const positions = await requestGet(urls.positions, auth);
-  const results = positions?.results || [];
-  const holdings = [];
-
-  for (const pos of results) {
-    const qty = parseFloat(pos.quantity || '0');
-    if (qty <= 0) continue;
-    const instrument = await requestGet(pos.instrument, auth);
-    const symbol = instrument?.symbol;
-    if (!symbol) continue;
-    const avgBuy = parseFloat(pos.average_buy_price || '0');
-    let price = avgBuy;
-    const quote = await requestGet(urls.quotes(symbol), auth);
-    if (quote?.last_trade_price) price = parseFloat(quote.last_trade_price);
-    holdings.push({
-      ticker: symbol,
-      shares: qty,
-      avg_buy_price: avgBuy,
-      current_price: price,
-    });
+  if (!positions?.results) {
+    await authLog('sync positions request failed or empty');
+    throw new Error('Could not load Robinhood positions. Check auth.log and try signing in again.');
   }
+  const eligible = positions.results.filter((pos) => parseFloat(pos.quantity || '0') > 0);
+  await authLog(`sync positions count=${eligible.length}`);
 
+  const holdings = (
+    await mapPool(eligible, async (pos) => {
+      const qty = parseFloat(pos.quantity || '0');
+      try {
+        const instrument = await requestGet(pos.instrument, auth);
+        const symbol = instrument?.symbol;
+        if (!symbol) return null;
+        const avgBuy = parseFloat(pos.average_buy_price || '0');
+        let price = avgBuy;
+        const quote = await requestGet(urls.quotes(symbol), auth);
+        if (quote?.last_trade_price) price = parseFloat(quote.last_trade_price);
+        return {
+          ticker: symbol,
+          shares: qty,
+          avg_buy_price: avgBuy,
+          current_price: price,
+        };
+      } catch (err) {
+        await authLog(`sync position failed ${pos.instrument}: ${err?.message || err}`);
+        return null;
+      }
+    }, 8)
+  ).filter(Boolean);
+
+  await authLog(`sync complete holdings=${holdings.length}`);
   return { status: 'success', synced_count: holdings.length, holdings };
 }

@@ -8,6 +8,12 @@
  */
 
 import { ensureDatabaseReady, queryAll, queryOne, run } from './db/sqliteEngine.js';
+import {
+  getPortableDataDirectory,
+  isPortableDesktop,
+  waitForPortableStorageReady,
+  writeStorageFile,
+} from './storagePaths.js';
 
 export { ensureDatabaseReady, initDatabase } from './db/sqliteEngine.js';
 
@@ -64,11 +70,9 @@ const seedInitialData = () => {
 };
 
 export async function bootstrapDatabase() {
-  const { waitForPortableStorageReady } = await import('./storagePaths.js');
   await waitForPortableStorageReady();
   await ensureDatabaseReady();
   try {
-    const { isPortableDesktop, getPortableDataDirectory, writeStorageFile } = await import('./storagePaths.js');
     if (await isPortableDesktop()) {
       const dir = await getPortableDataDirectory();
       const marker = JSON.stringify({ boot: new Date().toISOString(), path: dir });

@@ -49,6 +49,13 @@ frontend/ios/
 stock_toolkit.db
 portfolio_sidekick.db
 
+# Portable Robinhood vault (desktop data dir — never commit)
+robinhood_vault.json
+robinhood_vault.enc
+.vault_key
+**/data/robinhood_vault.*
+**/data/.vault_key
+
 
 # OS & Agent Files
 .DS_Store
