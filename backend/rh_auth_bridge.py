@@ -41,6 +41,14 @@ def main() -> int:
             mfa_code=args.mfa_code,
             profile_name=args.profile,
         )
+        if result.get("status") == "success" and result.get("mode") == "live":
+            try:
+                from session_vault import load_session
+                session = load_session(args.profile)
+                if session:
+                    result["session"] = session
+            except Exception:
+                pass
     else:
         robinhood_client.logout(args.profile)
         result = {"status": "success", "message": f"Logged out profile {args.profile}"}

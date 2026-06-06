@@ -8,6 +8,7 @@
  */
 
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { isTauriShellSync } from './storagePaths.js';
 
 export const RH_CLIENT_ID = 'c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS';
 
@@ -85,11 +86,6 @@ let rhHttpSession = new RobinhoodHttpSession();
 export function resetAuthHttpSession() {
   rhHttpSession.reset();
   cachedTransport = null;
-}
-
-function isTauriShellSync() {
-  if (typeof window === 'undefined') return false;
-  return '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
 }
 
 async function isTauriRuntime() {
@@ -181,11 +177,11 @@ export async function getAuthTransport() {
   return resolveTransport();
 }
 
-async function appendAuthLog(line) {
+export async function appendAuthLog(line) {
   const entry = `${new Date().toISOString()} ${line}\n`;
   console.info(`[RobinhoodAuth] ${line}`);
   try {
-    if (await isTauriRuntime()) {
+    if (isTauriShellSync()) {
       const { readStorageFile, writeStorageFile } = await import('./storagePaths.js');
       const existing = await readStorageFile('auth.log');
       const prev = existing ? new TextDecoder().decode(existing) : '';

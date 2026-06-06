@@ -65,11 +65,20 @@ if ($tauriExit -eq 0) {
     Write-Host "`n==========================================================" -ForegroundColor Green
     Write-Host "     [SUCCESS] TAURI BUILD COMPLETED!" -ForegroundColor Green
     Write-Host "==========================================================" -ForegroundColor Green
-    $portableExe = Join-Path $RepoRoot "frontend\src-tauri\target\release\portfolio-sidekick.exe"
+    $releaseDir = Join-Path $RepoRoot "frontend\src-tauri\target\release"
+    $portableExe = Join-Path $releaseDir "portfolio-sidekick.exe"
+    $authScripts = @("rh_auth_bridge.py", "robinhood_client.py", "session_vault.py", "portable_paths.py")
+    foreach ($script in $authScripts) {
+        Copy-Item (Join-Path $RepoRoot "backend\$script") -Destination $releaseDir -Force
+    }
     Write-Host "Portable EXE:" -ForegroundColor Green
     Write-Host "  $portableExe" -ForegroundColor Green
+    Write-Host "Robinhood Python auth (robin_stocks) — copy with EXE:" -ForegroundColor Green
+    foreach ($script in $authScripts) {
+        Write-Host "  $releaseDir\$script" -ForegroundColor Green
+    }
     Write-Host "Portable data folder (created on first run):" -ForegroundColor Green
-    Write-Host "  <same folder as EXE>\data\" -ForegroundColor Green
+    Write-Host "  $releaseDir\data\" -ForegroundColor Green
     Write-Host "Optional bundles (if enabled):" -ForegroundColor Gray
     Write-Host "  $bundleDir" -ForegroundColor Gray
 } else {

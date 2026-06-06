@@ -14,7 +14,13 @@ type VaultFile = {
   usernames: Record<string, string>;
 };
 
+function isTauriShellSync() {
+  if (typeof window === 'undefined') return false;
+  return '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
+}
+
 async function isTauriRuntime() {
+  if (isTauriShellSync()) return true;
   try {
     const { isTauri } = await import('@tauri-apps/api/core');
     return isTauri();

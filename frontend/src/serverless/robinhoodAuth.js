@@ -10,6 +10,7 @@
  */
 
 import {
+  appendAuthLog,
   authHeader,
   buildLoginPayload,
   buildRefreshPayload,
@@ -21,6 +22,7 @@ import {
   resetAuthHttpSession,
   sessionPayload,
 } from './robinhoodAuthCore';
+import { isTauriShellSync } from './storagePaths.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -29,6 +31,42 @@ const WORKFLOW_POLL_ATTEMPTS = 5;
 const WORKFLOW_POLL_INTERVAL_MS = 2000;
 
 const memoryChallenges = new Map();
+
+/** Desktop: use proven robin_stocks Python bridge when available (user-verified MFA path). */
+async function tryPythonRobinhoodLogin(profileId, username, password, mfaCode) {
+  if (!isTauriShellSync()) return null;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const raw = await invoke('rh_python_login', {
+      username,
+      password,
+      mfaCode: mfaCode || null,
+      profileName: String(profileId),
+    });
+    if (!raw || typeof raw !== 'string') return null;
+    const parsed = JSON.parse(raw.trim());
+    console.info('[RobinhoodAuth] Python robin_stocks bridge:', parsed.status, parsed.challenge_type || '');
+    await appendAuthLog(
+      `python_bridge profile=${profileId} status=${parsed.status} challenge=${parsed.challenge_type || 'none'}`
+    );
+    return parsed;
+  } catch (err) {
+    console.warn('[RobinhoodAuth] Python bridge unavailable:', err?.message || err);
+    return null;
+  }
+}
+
+function mapPythonLoginResult(py) {
+  return {
+    status: py.status,
+    mode: py.mode || 'live',
+    message: py.message,
+    challenge_type: py.challenge_type,
+    challenge_issued: py.challenge_type === 'sms' || py.challenge_type === 'email',
+    session: py.session,
+    device_token: py.session?.device_token,
+  };
+}
 
 async function getVaultPlugin() {
   const { RobinhoodSession } = await import('../plugins/robinhood-session');
@@ -338,8 +376,32 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
     };
   }
 
-  const urls = await buildRhUrls();
   const vault = await getVaultPlugin();
+
+  const pyResult = await tryPythonRobinhoodLogin(profileId, username, password, mfaCode);
+  if (pyResult?.status) {
+    const mapped = mapPythonLoginResult(pyResult);
+    if (mapped.status === 'success' && mapped.mode === 'live' && mapped.session) {
+      await saveSessionSafe(
+        vault,
+        profileId,
+        sessionPayload(mapped.session, mapped.device_token || mapped.session.device_token),
+        username
+      );
+      await clearChallengeSafe(vault, profileId);
+    } else if (mapped.status === 'error') {
+      await clearChallengeSafe(vault, profileId);
+    }
+    return {
+      status: mapped.status,
+      mode: mapped.mode,
+      message: mapped.message,
+      challenge_type: mapped.challenge_type,
+      challenge_issued: mapped.challenge_issued ?? false,
+    };
+  }
+
+  const urls = await buildRhUrls();
   const continueMfa = options.continueMfa === true || Boolean(mfaCode);
   let pending = continueMfa ? await loadChallengeState(vault, profileId) : null;
   let result;

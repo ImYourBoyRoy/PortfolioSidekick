@@ -30,13 +30,10 @@ from session_vault import load_session, save_session, wipe_session as vault_wipe
 
 logger = logging.getLogger(__name__)
 
-# Determine backend directory path for portable data storage
-if getattr(sys, 'frozen', False):
-    # Running inside PyInstaller bundled executable - use directory of the executable
-    BACKEND_DIR = os.path.dirname(sys.executable)
-else:
-    # Running locally in development
-    BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+from portable_paths import portable_data_dir, portable_sessions_dir
+
+# Portable data root (backend/ in dev, <exe>/data/ when scripts sit beside the EXE)
+BACKEND_DIR = portable_data_dir()
 
 # Attempt to import robin_stocks internal helpers for direct API control
 ROBIN_STOCKS_AVAILABLE = False
@@ -117,7 +114,7 @@ class RobinhoodClient:
 
     def _get_session_dir(self, profile_name: str) -> str:
         """Returns (and creates) the isolated session directory for a profile."""
-        session_dir = os.path.join(BACKEND_DIR, "sessions", profile_name.lower())
+        session_dir = os.path.join(portable_sessions_dir(), profile_name.lower())
         os.makedirs(session_dir, exist_ok=True)
         return session_dir
 

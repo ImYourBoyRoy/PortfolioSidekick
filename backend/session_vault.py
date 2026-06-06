@@ -14,10 +14,9 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-if getattr(sys, "frozen", False):
-    _BASE_DIR = os.path.join(os.path.dirname(sys.executable), "sessions")
-else:
-    _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
+from portable_paths import portable_sessions_dir
+
+_BASE_DIR = portable_sessions_dir()
 
 _VAULT_SUFFIX = ".vault"
 

@@ -64,7 +64,19 @@ const seedInitialData = () => {
 };
 
 export async function bootstrapDatabase() {
+  const { waitForPortableStorageReady } = await import('./storagePaths.js');
+  await waitForPortableStorageReady();
   await ensureDatabaseReady();
+  try {
+    const { isPortableDesktop, getPortableDataDirectory, writeStorageFile } = await import('./storagePaths.js');
+    if (await isPortableDesktop()) {
+      const dir = await getPortableDataDirectory();
+      const marker = JSON.stringify({ boot: new Date().toISOString(), path: dir });
+      await writeStorageFile('storage_ready.json', new TextEncoder().encode(marker));
+    }
+  } catch (err) {
+    console.warn('[SQLite] Portable storage marker write failed:', err);
+  }
   if (typeof localStorage !== 'undefined' && localStorage.getItem('portfolio_sidekick_seed_visuals') === 'true') {
     seedInitialData();
   }

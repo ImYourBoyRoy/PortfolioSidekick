@@ -1,8 +1,8 @@
 // ./frontend/src/serverless/storagePaths.js
 /**
- * Resolves where Portfolio Sidekick stores on-device data.
- * Desktop (Tauri) portable mode: `data/` beside the executable ($EXE/data).
- * Android uses Capacitor internal storage; dev uses IndexedDB/localStorage.
+ * Portable storage beside the Tauri executable ($EXE/data).
+ * Desktop writes use Rust IPC (reliable on Windows); plugin-fs is fallback.
+ * Android uses Capacitor; dev browser uses IndexedDB.
  */
 
 import { Capacitor } from '@capacitor/core';
@@ -12,8 +12,16 @@ const INSTALLED_MARKER = 'portfolio_sidekick.installed';
 
 let cachedLayout = null;
 let cachedPortableDir = null;
+let rustStorageChecked = false;
+let rustStorageAvailable = false;
+
+export function isTauriShellSync() {
+  if (typeof window === 'undefined') return false;
+  return '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
+}
 
 async function isTauriRuntime() {
+  if (isTauriShellSync()) return true;
   try {
     const { isTauri } = await import('@tauri-apps/api/core');
     return isTauri();
@@ -22,9 +30,49 @@ async function isTauriRuntime() {
   }
 }
 
-async function getExecutableBaseDir() {
-  const { BaseDirectory } = await import('@tauri-apps/plugin-fs');
-  return BaseDirectory.Executable;
+/** Definitive desktop signal: Rust portable_data_path succeeds. */
+async function probeRustPortableStorage() {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const path = await invoke('portable_data_path');
+    if (path) {
+      cachedPortableDir = path;
+      rustStorageAvailable = true;
+      rustStorageChecked = true;
+      return path;
+    }
+  } catch {
+    // Not Tauri or command unavailable.
+  }
+  rustStorageChecked = true;
+  rustStorageAvailable = false;
+  return null;
+}
+
+async function canUseRustStorage() {
+  if (rustStorageChecked) return rustStorageAvailable;
+  await probeRustPortableStorage();
+  return rustStorageAvailable;
+}
+
+/**
+ * Wait until Tauri portable storage is reachable (or give up after retries).
+ * Prevents caching browser/IndexedDB layout before the WebView bridge is ready.
+ */
+export async function waitForPortableStorageReady(maxAttempts = 30) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const path = await probeRustPortableStorage();
+    if (path) {
+      cachedLayout = 'tauri-portable';
+      return path;
+    }
+    if (await isTauriRuntime()) {
+      cachedLayout = 'tauri-portable';
+      return null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return null;
 }
 
 /**
@@ -33,14 +81,19 @@ async function getExecutableBaseDir() {
 export async function getStorageLayout() {
   if (cachedLayout) return cachedLayout;
 
+  const rustPath = await probeRustPortableStorage();
+  if (rustPath) {
+    cachedLayout = 'tauri-portable';
+    return cachedLayout;
+  }
+
   if (await isTauriRuntime()) {
-    const { exists } = await import('@tauri-apps/plugin-fs');
-    const baseDir = await getExecutableBaseDir();
-    let useAppData;
+    const { exists, BaseDirectory } = await import('@tauri-apps/plugin-fs');
+    let useAppData = false;
     try {
-      useAppData = await exists(INSTALLED_MARKER, { baseDir });
+      useAppData = await exists(INSTALLED_MARKER, { baseDir: BaseDirectory.Executable });
     } catch {
-      useAppData = false;
+      // Default to portable layout beside the executable.
     }
     cachedLayout = useAppData ? 'tauri-appdata' : 'tauri-portable';
     return cachedLayout;
@@ -59,11 +112,11 @@ export async function isPortableDesktop() {
   return (await getStorageLayout()) === 'tauri-portable';
 }
 
-/** Human-readable portable data directory for UI/debug (desktop only). */
 export async function getPortableDataDirectory() {
   if (cachedPortableDir) return cachedPortableDir;
+  const rustPath = await probeRustPortableStorage();
+  if (rustPath) return rustPath;
   if (!(await isTauriRuntime())) return null;
-
   try {
     const { executableDir, join } = await import('@tauri-apps/api/path');
     const exeDir = await executableDir();
@@ -74,12 +127,9 @@ export async function getPortableDataDirectory() {
   }
 }
 
-/**
- * Relative path under the active storage root (includes `data/` on portable desktop).
- */
 export async function resolveDataPath(filename) {
   const layout = await getStorageLayout();
-  if (layout === 'tauri-portable') {
+  if (layout === 'tauri-portable' && !(await canUseRustStorage())) {
     return `${DATA_SUBDIR}/${filename}`;
   }
   return filename;
@@ -97,8 +147,25 @@ async function resolveBaseDir() {
   return null;
 }
 
+async function rustWrite(filename, data) {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const bytes = data instanceof Uint8Array ? Array.from(data) : Array.from(new Uint8Array(data));
+  await invoke('portable_write_file', { filename, contents: bytes });
+}
+
+async function rustRead(filename) {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const bytes = await invoke('portable_read_file', { filename });
+  return new Uint8Array(bytes);
+}
+
 export async function ensureStorageDirectory() {
   const layout = await getStorageLayout();
+
+  if (layout === 'tauri-portable' && (await canUseRustStorage())) {
+    await getPortableDataDirectory();
+    return { kind: layout, rust: true };
+  }
 
   if (layout === 'tauri-portable' || layout === 'tauri-appdata') {
     const { mkdir } = await import('@tauri-apps/plugin-fs');
@@ -128,6 +195,14 @@ export async function ensureStorageDirectory() {
 
 export async function readStorageFile(filename) {
   const layout = await getStorageLayout();
+
+  if (layout === 'tauri-portable' && (await canUseRustStorage())) {
+    try {
+      return await rustRead(filename);
+    } catch {
+      return null;
+    }
+  }
 
   if (layout === 'tauri-portable' || layout === 'tauri-appdata') {
     const { readFile } = await import('@tauri-apps/plugin-fs');
@@ -162,6 +237,11 @@ export async function readStorageFile(filename) {
 export async function writeStorageFile(filename, data) {
   const layout = await getStorageLayout();
 
+  if (layout === 'tauri-portable' && (await canUseRustStorage())) {
+    await rustWrite(filename, data);
+    return;
+  }
+
   if (layout === 'tauri-portable' || layout === 'tauri-appdata') {
     await ensureStorageDirectory();
     const { writeFile } = await import('@tauri-apps/plugin-fs');
@@ -187,7 +267,10 @@ export async function writeStorageFile(filename, data) {
       directory: Directory.Data,
       recursive: true,
     });
+    return;
   }
+
+  console.warn(`[Storage] writeStorageFile skipped for "${filename}" (layout=${layout})`);
 }
 
 export async function deleteStorageFile(filename) {
