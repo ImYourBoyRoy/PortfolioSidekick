@@ -5,6 +5,7 @@
  */
 
 import initSqlJs from 'sql.js';
+import sqlWasmUrl from 'sql.js/dist/sql-wasm-browser.wasm?url';
 import { SCHEMA_SQL } from './schema.js';
 import { loadDatabaseBlob, saveDatabaseBlob } from './persist.js';
 import { ensureStorageDirectory, getPortableDataDirectory } from '../storagePaths.js';
@@ -33,7 +34,7 @@ function applySchema(db) {
 
 export async function initDatabase() {
   if (sqlDb) return sqlDb;
-  const SQL = await initSqlJs({ locateFile: () => '/sql-wasm.wasm' });
+  const SQL = await initSqlJs({ locateFile: () => sqlWasmUrl });
   const blob = await loadDatabaseBlob();
   sqlDb = blob ? new SQL.Database(blob) : new SQL.Database();
   applySchema(sqlDb);

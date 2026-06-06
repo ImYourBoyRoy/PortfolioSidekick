@@ -15,8 +15,10 @@ import {
   buildRefreshPayload,
   buildRhUrls,
   generateDeviceToken,
+  getAuthTransport,
   requestGet,
   requestPost,
+  resetAuthHttpSession,
   sessionPayload,
 } from './robinhoodAuthCore';
 
@@ -354,9 +356,11 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
     };
   } else {
     await clearChallengeSafe(vault, profileId);
+    resetAuthHttpSession();
     const deviceToken = generateDeviceToken();
     const loginPayload = buildLoginPayload(username, password, deviceToken);
-    console.info(`[RobinhoodAuth] Phase 1: POST login for profile ${profileId}`);
+    const transport = await getAuthTransport();
+    console.info(`[RobinhoodAuth] Phase 1: POST login for profile ${profileId} (transport=${transport})`);
     const data = await requestPost(urls.login, loginPayload);
 
     if (!data) {

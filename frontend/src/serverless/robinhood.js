@@ -9,6 +9,7 @@
 
 import { localDb } from './database';
 import { sidekickFetch, isServerlessBackend } from '../sidekickClient';
+import { robinhoodLogin, robinhoodLogout as rhLogout } from './robinhoodAuth';
 
 // ─────────────────────────────────────────────────────────────
 // Public Yahoo Finance (HTTPS only)
@@ -115,21 +116,32 @@ export const robinhoodClient = {
     }
 
     try {
-      const res = await sidekickFetch("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({
-          profile_id: parseInt(profileId),
+      let data;
+      if (isServerlessBackend()) {
+        data = await robinhoodLogin(
+          parseInt(profileId, 10),
           username,
           password,
-          mfa_code: mfaCode || null,
-          continue_mfa: options.continueMfa === true,
-        })
-      });
-      if (!res.ok) {
-        const errObj = await res.json().catch(() => ({}));
-        throw new Error(errObj.detail || errObj.message || "Authentication failed.");
+          mfaCode || null,
+          { continueMfa: options.continueMfa === true }
+        );
+      } else {
+        const res = await sidekickFetch("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            profile_id: parseInt(profileId),
+            username,
+            password,
+            mfa_code: mfaCode || null,
+            continue_mfa: options.continueMfa === true,
+          })
+        });
+        if (!res.ok) {
+          const errObj = await res.json().catch(() => ({}));
+          throw new Error(errObj.detail || errObj.message || "Authentication failed.");
+        }
+        data = await res.json();
       }
-      const data = await res.json();
       if (data.status === "success" && isServerlessBackend()) {
         localDb.setRobinhoodUsername(parseInt(profileId, 10), username);
       }
@@ -184,12 +196,17 @@ export const robinhoodClient = {
       return { status: "success", message: "Successfully logged out of Sandbox Profile locally." };
     }
     try {
-      const res = await sidekickFetch("/auth/logout", {
-        method: "POST",
-        body: JSON.stringify({ profile_id: parseInt(profileId) })
-      });
-      if (!res.ok) throw new Error("Logout failed.");
-      const data = await res.json();
+      let data;
+      if (isServerlessBackend()) {
+        data = await rhLogout(parseInt(profileId, 10));
+      } else {
+        const res = await sidekickFetch("/auth/logout", {
+          method: "POST",
+          body: JSON.stringify({ profile_id: parseInt(profileId) })
+        });
+        if (!res.ok) throw new Error("Logout failed.");
+        data = await res.json();
+      }
       if (isServerlessBackend()) {
         localDb.clearRobinhoodUsername(parseInt(profileId, 10));
       }

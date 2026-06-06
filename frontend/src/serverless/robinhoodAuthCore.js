@@ -1,7 +1,8 @@
 // ./frontend/src/serverless/robinhoodAuthCore.js
 /**
- * Robinhood HTTP primitives aligned with robin_stocks helper.py + globals.py.
- * Uses native HTTP per platform (Tauri reqwest, Capacitor native, Vite dev proxy).
+ * Robinhood HTTP session aligned with robin_stocks globals.SESSION (requests.Session).
+ * Keeps cookies across login → pathfinder → inquiries → push/challenge calls.
+ * Uses Tauri native HTTP, CapacitorHttp, or Vite dev proxy.
  *
  * Created by: Roy Dawson IV
  */
@@ -10,9 +11,10 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 export const RH_CLIENT_ID = 'c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS';
 
-/** robin_stocks helper.request_post default timeout */
 const RH_POST_TIMEOUT_MS = 16000;
 const RH_GET_TIMEOUT_MS = 16000;
+
+const RH_ALLOWED_STATUSES = new Set([200, 201, 202, 204, 301, 302, 303, 304, 307, 400, 401, 402, 403]);
 
 /** robin_stocks SESSION.headers from globals.py */
 const BASE_HEADERS = {
@@ -26,7 +28,72 @@ const BASE_HEADERS = {
 
 let cachedTransport = null;
 
+/**
+ * Mirrors requests.Session cookie jar — Robinhood ties workflow to session cookies.
+ */
+class RobinhoodHttpSession {
+  constructor() {
+    this.cookies = new Map();
+  }
+
+  reset() {
+    this.cookies.clear();
+  }
+
+  ingestSetCookie(raw) {
+    if (!raw) return;
+    const first = String(raw).split(';')[0];
+    const eq = first.indexOf('=');
+    if (eq <= 0) return;
+    this.cookies.set(first.slice(0, eq).trim(), first.slice(eq + 1).trim());
+  }
+
+  ingestHeaders(headers) {
+    if (!headers) return;
+    if (typeof headers.getSetCookie === 'function') {
+      for (const cookie of headers.getSetCookie()) this.ingestSetCookie(cookie);
+      return;
+    }
+    if (typeof headers.forEach === 'function') {
+      headers.forEach((value, key) => {
+        if (key.toLowerCase() === 'set-cookie') this.ingestSetCookie(value);
+      });
+      return;
+    }
+    if (Array.isArray(headers)) {
+      for (const [key, value] of headers) {
+        if (String(key).toLowerCase() === 'set-cookie') this.ingestSetCookie(value);
+      }
+      return;
+    }
+    if (typeof headers === 'object') {
+      for (const [key, value] of Object.entries(headers)) {
+        if (key.toLowerCase() === 'set-cookie') this.ingestSetCookie(value);
+      }
+    }
+  }
+
+  cookieHeader() {
+    if (this.cookies.size === 0) return '';
+    return [...this.cookies.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+  }
+}
+
+let rhHttpSession = new RobinhoodHttpSession();
+
+/** Reset session cookies on fresh credential login (robin_stocks starts a new Session). */
+export function resetAuthHttpSession() {
+  rhHttpSession.reset();
+  cachedTransport = null;
+}
+
+function isTauriShellSync() {
+  if (typeof window === 'undefined') return false;
+  return '__TAURI_INTERNALS__' in window || '__TAURI__' in window;
+}
+
 async function isTauriRuntime() {
+  if (isTauriShellSync()) return true;
   try {
     const { isTauri } = await import('@tauri-apps/api/core');
     return isTauri();
@@ -35,7 +102,6 @@ async function isTauriRuntime() {
   }
 }
 
-/** Dev browser uses Vite proxy to avoid CORS blocks against api.robinhood.com */
 async function resolveApiBase() {
   if (await isTauriRuntime()) return 'https://api.robinhood.com';
   if (Capacitor.isNativePlatform()) return 'https://api.robinhood.com';
@@ -63,7 +129,6 @@ export async function buildRhUrls() {
   };
 }
 
-/** Legacy sync accessors — prefer buildRhUrls() in async auth paths */
 export const RH_URLS = {
   login: 'https://api.robinhood.com/oauth2/token/',
   pathfinder: 'https://api.robinhood.com/pathfinder/user_machine/',
@@ -75,7 +140,6 @@ export const RH_URLS = {
   quotes: (symbol) => `https://api.robinhood.com/quotes/${symbol}/`,
 };
 
-/** Mirrors robin_stocks.robinhood.authentication.generate_device_token */
 export function generateDeviceToken() {
   const rands = new Uint8Array(16);
   crypto.getRandomValues(rands);
@@ -88,10 +152,7 @@ export function generateDeviceToken() {
   return token;
 }
 
-/**
- * robin_stocks passes dict payloads to requests.post(data=payload).
- * Booleans become "True"/"False" strings in form bodies.
- */
+/** robin_stocks: requests.post(url, data=payload) — bools encode as True/False */
 export function toFormObject(payload) {
   const out = {};
   for (const [key, value] of Object.entries(payload || {})) {
@@ -136,7 +197,7 @@ async function appendAuthLog(line) {
       }
     }
   } catch {
-    // Logging must never break auth.
+    // Best effort.
   }
 }
 
@@ -158,6 +219,15 @@ function withTimeout(promise, ms, label) {
   });
 }
 
+function parseJsonText(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 async function httpRequest(
   method,
   url,
@@ -165,27 +235,24 @@ async function httpRequest(
 ) {
   const transport = await resolveTransport();
   const mergedHeaders = { ...BASE_HEADERS, ...headers };
-  await appendAuthLog(`${method} ${url} via ${transport}`);
+  const cookie = rhHttpSession.cookieHeader();
+  if (cookie) mergedHeaders.Cookie = cookie;
+
+  await appendAuthLog(`${method} ${url} via ${transport}${cookie ? ' (cookies=yes)' : ''}`);
 
   if (transport === 'tauri') {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-    const init = {
-      method,
-      headers: mergedHeaders,
-      connectTimeout: timeoutMs,
-    };
-    if (body !== null) init.body = body;
-    const res = await withTimeout(tauriFetch(url, init), timeoutMs + 2000, method);
-    const text = await res.text().catch(() => '');
-    let data = null;
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = null;
-      }
+    let tauriFetch;
+    try {
+      ({ fetch: tauriFetch } = await import('@tauri-apps/plugin-http'));
+    } catch (err) {
+      throw new Error(`Tauri HTTP plugin unavailable: ${err?.message || err}. Rebuild the desktop app.`, { cause: err });
     }
-    return { ok: res.ok, status: res.status, data, text };
+    const init = { method, headers: mergedHeaders, connectTimeout: timeoutMs };
+    if (body !== null) init.body = body;
+    const res = await withTimeout(tauriFetch(url, init), timeoutMs + 3000, method);
+    rhHttpSession.ingestHeaders(res.headers);
+    const text = await res.text().catch(() => '');
+    return { ok: res.ok, status: res.status, data: parseJsonText(text), text, transport };
   }
 
   if (transport === 'capacitor') {
@@ -196,72 +263,48 @@ async function httpRequest(
       connectTimeout: timeoutMs,
       readTimeout: timeoutMs,
       responseType: 'json',
+      shouldEncodeUrlParams: true,
     };
-    if (jsonPayload !== null) {
-      options.data = jsonPayload;
-    } else if (formPayload !== null) {
-      options.data = toFormObject(formPayload);
-    }
-    const res = await withTimeout(CapacitorHttp.request(options), timeoutMs + 2000, method);
+    if (jsonPayload !== null) options.data = jsonPayload;
+    else if (formPayload !== null) options.data = toFormObject(formPayload);
+
+    const res = await withTimeout(CapacitorHttp.request(options), timeoutMs + 3000, method);
+    rhHttpSession.ingestHeaders(res.headers);
     let data = res.data;
-    if (typeof data === 'string') {
-      try {
-        data = JSON.parse(data);
-      } catch {
-        data = null;
-      }
-    }
-    const ok = RH_ALLOWED_POST_STATUSES.has(res.status) || (res.status >= 200 && res.status < 300);
-    return { ok, status: res.status, data, text: '' };
+    if (typeof data === 'string') data = parseJsonText(data);
+    const ok = RH_ALLOWED_STATUSES.has(res.status) || (res.status >= 200 && res.status < 300);
+    return { ok, status: res.status, data, text: '', transport };
   }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
-      method,
-      headers: mergedHeaders,
-      body,
-      signal: controller.signal,
-    });
+    const res = await fetch(url, { method, headers: mergedHeaders, body, signal: controller.signal });
+    rhHttpSession.ingestHeaders(res.headers);
     const text = await res.text();
-    let data = null;
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = null;
-      }
-    }
-    return { ok: res.ok, status: res.status, data, text };
+    return { ok: res.ok, status: res.status, data: parseJsonText(text), text, transport };
   } finally {
     clearTimeout(timer);
   }
 }
 
-const RH_ALLOWED_POST_STATUSES = new Set([200, 201, 202, 204, 301, 302, 303, 304, 307, 400, 401, 402, 403]);
-
-/** Mirrors robin_stocks helper.request_get for jsonify_data=true */
 export async function requestGet(url, auth = null) {
   const headers = {};
   if (auth) headers.Authorization = auth;
   try {
     const res = await httpRequest('GET', url, { headers, timeoutMs: RH_GET_TIMEOUT_MS });
-    if (!res.ok) {
+    if (!res.ok && res.status !== 400) {
       await appendAuthLog(`GET ${url} → HTTP ${res.status}`);
       return null;
     }
     return res.data;
   } catch (err) {
-    if (err?.name === 'AbortError') {
-      throw new Error('Robinhood request timed out. Check your internet connection and try again.', { cause: err });
-    }
     await appendAuthLog(`GET ${url} failed: ${err?.message || err}`);
     throw err;
   }
 }
 
-/** Mirrors robin_stocks helper.request_post (16s timeout, allows 4xx bodies) */
+/** Mirrors robin_stocks helper.request_post */
 export async function requestPost(url, payload, options = {}) {
   const { json = false, auth = null } = options;
   const headers = {};
@@ -284,15 +327,13 @@ export async function requestPost(url, payload, options = {}) {
       formPayload: json ? null : payload,
       timeoutMs: RH_POST_TIMEOUT_MS,
     });
-    if (!RH_ALLOWED_POST_STATUSES.has(res.status)) {
-      await appendAuthLog(`POST ${url} → HTTP ${res.status}`);
+    if (!RH_ALLOWED_STATUSES.has(res.status)) {
+      await appendAuthLog(`POST ${url} → HTTP ${res.status} body=${res.text?.slice(0, 200) || ''}`);
       return null;
     }
+    await appendAuthLog(`POST ${url} → HTTP ${res.status} via ${res.transport}`);
     return res.data;
   } catch (err) {
-    if (err?.name === 'AbortError') {
-      throw new Error('Robinhood request timed out. Check your internet connection and try again.', { cause: err });
-    }
     await appendAuthLog(`POST ${url} failed: ${err?.message || err}`);
     throw err;
   }

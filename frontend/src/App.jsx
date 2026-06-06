@@ -1644,7 +1644,13 @@ export default function App() {
       );
       applyLoginResult(data);
     } catch (err) {
-      setLoginStatus({ status: "error", message: err.message || "Robinhood sign-in failed. Check credentials or stay offline." });
+      const hint = err.message?.includes("timed out")
+        ? " Desktop: check dist/data/auth.log for transport lines (via tauri / capacitor / fetch)."
+        : "";
+      setLoginStatus({
+        status: "error",
+        message: (err.message || "Robinhood sign-in failed. Check credentials or stay offline.") + hint,
+      });
       setLoading(false);
     } finally {
       clearTimeout(slowTimer);
