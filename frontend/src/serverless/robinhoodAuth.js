@@ -10,10 +10,10 @@
  */
 
 import {
-  RH_URLS,
   authHeader,
   buildLoginPayload,
   buildRefreshPayload,
+  buildRhUrls,
   generateDeviceToken,
   requestGet,
   requestPost,
@@ -132,11 +132,11 @@ async function refreshPendingFromInquiries(pending) {
   return updated;
 }
 
-async function initiateChallenge(loginResponse, deviceToken, loginPayload) {
+async function initiateChallenge(loginResponse, deviceToken, loginPayload, urls) {
   const workflowId = loginResponse.verification_workflow.id;
 
   const machineData = await requestPost(
-    RH_URLS.pathfinder,
+    urls.pathfinder,
     { device_id: deviceToken, flow: 'suv', input: { workflow_id: workflowId } },
     { json: true }
   );
@@ -150,7 +150,7 @@ async function initiateChallenge(loginResponse, deviceToken, loginPayload) {
   }
 
   const machineId = machineData.id;
-  const inquiriesUrl = RH_URLS.inquiries(machineId);
+  const inquiriesUrl = urls.inquiries(machineId);
 
   // Phase 1 returns immediately — robin_stocks blocks for minutes; our Python client
   // returned mfa_required instantly and let Phase 2 poll dynamically.
@@ -191,8 +191,8 @@ async function pollWorkflowApproval(inquiriesUrl) {
   return false;
 }
 
-async function finalizeLogin(loginPayload, deviceToken) {
-  const data = await requestPost(RH_URLS.login, loginPayload);
+async function finalizeLogin(loginPayload, deviceToken, urls) {
+  const data = await requestPost(urls.login, loginPayload);
   if (data?.access_token) {
     return {
       status: 'success',
@@ -219,7 +219,7 @@ async function finalizeLogin(loginPayload, deviceToken) {
 /**
  * Phase 2 — mirrors backend _complete_challenge + robin_stocks push polling.
  */
-async function completeChallenge(pending, mfaCode) {
+async function completeChallenge(pending, mfaCode, urls) {
   let active = await refreshPendingFromInquiries(pending);
   const challengeType = active.challenge_type;
 
@@ -235,7 +235,7 @@ async function completeChallenge(pending, mfaCode) {
       };
     }
 
-    const pushStatus = await requestGet(RH_URLS.pushStatus(active.challenge_id));
+    const pushStatus = await requestGet(urls.pushStatus(active.challenge_id));
     if (!pushStatus || pushStatus.challenge_status !== 'validated') {
       return {
         status: 'mfa_required',
@@ -286,7 +286,7 @@ async function completeChallenge(pending, mfaCode) {
     }
 
     const challengeResp = await requestPost(
-      RH_URLS.challengeRespond(active.challenge_id),
+      urls.challengeRespond(active.challenge_id),
       { response: mfaCode }
     );
     if (!challengeResp) {
@@ -310,24 +310,24 @@ async function completeChallenge(pending, mfaCode) {
   }
 
   await pollWorkflowApproval(active.inquiries_url);
-  return finalizeLogin(active.login_payload, active.device_token);
+  return finalizeLogin(active.login_payload, active.device_token, urls);
 }
 
-async function validateSession(session) {
-  const data = await requestGet(RH_URLS.positions, authHeader(session));
+async function validateSession(session, urls) {
+  const data = await requestGet(urls.positions, authHeader(session));
   return Boolean(data?.results);
 }
 
-async function refreshSession(session) {
+async function refreshSession(session, urls) {
   const refreshToken = session?.refresh_token;
   const deviceToken = session?.device_token || '';
   if (!refreshToken) return null;
-  const data = await requestPost(RH_URLS.login, buildRefreshPayload(refreshToken, deviceToken));
+  const data = await requestPost(urls.login, buildRefreshPayload(refreshToken, deviceToken));
   if (!data?.access_token) return null;
   return sessionPayload(data, deviceToken);
 }
 
-export async function robinhoodLogin(profileId, username, password, mfaCode = null) {
+export async function robinhoodLogin(profileId, username, password, mfaCode = null, options = {}) {
   if (isSandboxUsername(username)) {
     return {
       status: 'success',
@@ -336,19 +336,28 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
     };
   }
 
+  const urls = await buildRhUrls();
   const vault = await getVaultPlugin();
-  let pending = await loadChallengeState(vault, profileId);
+  const continueMfa = options.continueMfa === true || Boolean(mfaCode);
+  let pending = continueMfa ? await loadChallengeState(vault, profileId) : null;
   let result;
 
-  if (pending) {
+  if (continueMfa && pending) {
     console.info(`[RobinhoodAuth] Phase 2: completing ${pending.challenge_type || 'unknown'} challenge for profile ${profileId}`);
-    result = await completeChallenge(pending, mfaCode);
+    result = await completeChallenge(pending, mfaCode, urls);
     if (result.pending) await saveChallengeSafe(vault, profileId, result.pending);
+  } else if (continueMfa) {
+    return {
+      status: 'error',
+      mode: 'live',
+      message: 'MFA session expired. Close this dialog and start login again.',
+    };
   } else {
     await clearChallengeSafe(vault, profileId);
     const deviceToken = generateDeviceToken();
     const loginPayload = buildLoginPayload(username, password, deviceToken);
-    const data = await requestPost(RH_URLS.login, loginPayload);
+    console.info(`[RobinhoodAuth] Phase 1: POST login for profile ${profileId}`);
+    const data = await requestPost(urls.login, loginPayload);
 
     if (!data) {
       return {
@@ -367,7 +376,7 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
         device_token: deviceToken,
       };
     } else if (data.verification_workflow) {
-      result = await initiateChallenge(data, deviceToken, loginPayload);
+      result = await initiateChallenge(data, deviceToken, loginPayload, urls);
     } else {
       result = {
         status: 'error',
@@ -415,6 +424,7 @@ export async function robinhoodLogout(profileId) {
 }
 
 export async function robinhoodStatus(profileId) {
+  const urls = await buildRhUrls();
   const vault = await getVaultPlugin();
   let username;
   let session;
@@ -427,12 +437,12 @@ export async function robinhoodStatus(profileId) {
 
   if (!username || !session) return { authenticated: false };
 
-  let valid = await validateSession(session);
+  let valid = await validateSession(session, urls);
   if (!valid) {
-    const refreshed = await refreshSession(session);
+    const refreshed = await refreshSession(session, urls);
     if (refreshed) {
       await saveSessionSafe(vault, profileId, refreshed, username);
-      valid = await validateSession(refreshed);
+      valid = await validateSession(refreshed, urls);
     }
   }
 
@@ -440,6 +450,7 @@ export async function robinhoodStatus(profileId) {
 }
 
 export async function robinhoodSyncHoldings(profileId) {
+  const urls = await buildRhUrls();
   const vault = await getVaultPlugin();
   let session;
   try {
@@ -451,8 +462,8 @@ export async function robinhoodSyncHoldings(profileId) {
   if (!session) throw new Error('Not authenticated. Please sign in first.');
 
   let active = session;
-  if (!(await validateSession(active))) {
-    const refreshed = await refreshSession(active);
+  if (!(await validateSession(active, urls))) {
+    const refreshed = await refreshSession(active, urls);
     if (refreshed) {
       const username = (await vault.getUsername({ profileId }))?.username || '';
       await saveSessionSafe(vault, profileId, refreshed, username);
@@ -460,12 +471,12 @@ export async function robinhoodSyncHoldings(profileId) {
     }
   }
 
-  if (!(await validateSession(active))) {
+  if (!(await validateSession(active, urls))) {
     throw new Error('Robinhood session expired. Please sign in again.');
   }
 
   const auth = authHeader(active);
-  const positions = await requestGet(RH_URLS.positions, auth);
+  const positions = await requestGet(urls.positions, auth);
   const results = positions?.results || [];
   const holdings = [];
 
@@ -477,7 +488,7 @@ export async function robinhoodSyncHoldings(profileId) {
     if (!symbol) continue;
     const avgBuy = parseFloat(pos.average_buy_price || '0');
     let price = avgBuy;
-    const quote = await requestGet(RH_URLS.quotes(symbol), auth);
+    const quote = await requestGet(urls.quotes(symbol), auth);
     if (quote?.last_trade_price) price = parseFloat(quote.last_trade_price);
     holdings.push({
       ticker: symbol,

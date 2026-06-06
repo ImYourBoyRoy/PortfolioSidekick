@@ -5,4 +5,14 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: './',
+  server: {
+    proxy: {
+      '/robinhood-api': {
+        target: 'https://api.robinhood.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/robinhood-api/, ''),
+      },
+    },
+  },
 })

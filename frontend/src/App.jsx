@@ -1613,7 +1613,8 @@ export default function App() {
             activeProfile.id,
             loginForm.username,
             loginForm.password,
-            loginForm.mfa_code.trim()
+            loginForm.mfa_code.trim(),
+            { continueMfa: true }
           );
           applyLoginResult(data);
         } catch (err) {
@@ -1626,6 +1627,13 @@ export default function App() {
 
     setLoading(true);
     setLoginStatus({ status: "processing", message: "Contacting Robinhood API..." });
+    const slowTimer = setTimeout(() => {
+      setLoginStatus((prev) => (
+        prev.status === "processing"
+          ? { ...prev, message: "Still contacting Robinhood (native HTTP, up to 16s)..." }
+          : prev
+      ));
+    }, 4000);
 
     try {
       const data = await robinhoodClient.login(
@@ -1638,6 +1646,8 @@ export default function App() {
     } catch (err) {
       setLoginStatus({ status: "error", message: err.message || "Robinhood sign-in failed. Check credentials or stay offline." });
       setLoading(false);
+    } finally {
+      clearTimeout(slowTimer);
     }
   };
 
@@ -1658,7 +1668,8 @@ export default function App() {
           activeProfile.id,
           loginForm.username,
           loginForm.password,
-          code
+          code,
+          { continueMfa: true }
         );
         if (cancelled) return;
         applyLoginResult(data);

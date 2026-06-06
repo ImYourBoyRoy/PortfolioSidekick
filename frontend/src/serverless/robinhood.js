@@ -105,7 +105,7 @@ export const fetchPublicHistoricalPrices = async (ticker, span = "year") => {
 // ─────────────────────────────────────────────────────────────
 
 export const robinhoodClient = {
-  login: async (profileId, username, password, mfaCode = null) => {
+  login: async (profileId, username, password, mfaCode = null, options = {}) => {
     if (username.toLowerCase() === "sandbox" || username.toLowerCase() === "example" || username.toLowerCase().includes("test")) {
       return {
         status: "success",
@@ -121,7 +121,8 @@ export const robinhoodClient = {
           profile_id: parseInt(profileId),
           username,
           password,
-          mfa_code: mfaCode || null
+          mfa_code: mfaCode || null,
+          continue_mfa: options.continueMfa === true,
         })
       });
       if (!res.ok) {

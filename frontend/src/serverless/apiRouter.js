@@ -44,7 +44,8 @@ export async function serverlessApiFetch(path, options = {}) {
         body.profile_id,
         body.username,
         body.password,
-        body.mfa_code || null
+        body.mfa_code || null,
+        { continueMfa: body.continue_mfa === true }
       );
     } catch (e) {
       data = { status: 'error', mode: 'live', message: pluginErrorMessage(e, 'Robinhood login failed.') };

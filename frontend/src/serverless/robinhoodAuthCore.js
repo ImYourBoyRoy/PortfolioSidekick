@@ -1,14 +1,69 @@
 // ./frontend/src/serverless/robinhoodAuthCore.js
 /**
- * Embedded Robinhood HTTP primitives ported from robin_stocks (MIT).
- * Desktop Tauri uses @tauri-apps/plugin-http (native reqwest) because WebView
- * fetch can silently fail against api.robinhood.com.
+ * Robinhood HTTP primitives aligned with robin_stocks helper.py + globals.py.
+ * Uses native HTTP per platform (Tauri reqwest, Capacitor native, Vite dev proxy).
  *
  * Created by: Roy Dawson IV
  */
 
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
+
 export const RH_CLIENT_ID = 'c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS';
 
+/** robin_stocks helper.request_post default timeout */
+const RH_POST_TIMEOUT_MS = 16000;
+const RH_GET_TIMEOUT_MS = 16000;
+
+/** robin_stocks SESSION.headers from globals.py */
+const BASE_HEADERS = {
+  Accept: '*/*',
+  'Accept-Encoding': 'gzip,deflate,br',
+  'Accept-Language': 'en-US,en;q=1',
+  'X-Robinhood-API-Version': '1.431.4',
+  Connection: 'keep-alive',
+  'User-Agent': '*',
+};
+
+let cachedTransport = null;
+
+async function isTauriRuntime() {
+  try {
+    const { isTauri } = await import('@tauri-apps/api/core');
+    return isTauri();
+  } catch {
+    return false;
+  }
+}
+
+/** Dev browser uses Vite proxy to avoid CORS blocks against api.robinhood.com */
+async function resolveApiBase() {
+  if (await isTauriRuntime()) return 'https://api.robinhood.com';
+  if (Capacitor.isNativePlatform()) return 'https://api.robinhood.com';
+  if (import.meta.env?.DEV) return '/robinhood-api';
+  return 'https://api.robinhood.com';
+}
+
+let apiBasePromise = null;
+export async function getRobinhoodApiBase() {
+  if (!apiBasePromise) apiBasePromise = resolveApiBase();
+  return apiBasePromise;
+}
+
+export async function buildRhUrls() {
+  const base = await getRobinhoodApiBase();
+  return {
+    login: `${base}/oauth2/token/`,
+    pathfinder: `${base}/pathfinder/user_machine/`,
+    challengeRespond: (id) => `${base}/challenge/${id}/respond/`,
+    inquiries: (machineId) => `${base}/pathfinder/inquiries/${machineId}/user_view/`,
+    pushStatus: (id) => `${base}/push/${id}/get_prompts_status/`,
+    positions: `${base}/positions/?nonzero=true`,
+    instruments: `${base}/instruments/`,
+    quotes: (symbol) => `${base}/quotes/${symbol}/`,
+  };
+}
+
+/** Legacy sync accessors — prefer buildRhUrls() in async auth paths */
 export const RH_URLS = {
   login: 'https://api.robinhood.com/oauth2/token/',
   pathfinder: 'https://api.robinhood.com/pathfinder/user_machine/',
@@ -33,73 +88,36 @@ export function generateDeviceToken() {
   return token;
 }
 
-const FETCH_TIMEOUT_MS = 45000;
-
-/** robin_stocks SESSION.headers from globals.py */
-const BASE_HEADERS = {
-  Accept: '*/*',
-  'Accept-Encoding': 'gzip,deflate,br',
-  'Accept-Language': 'en-US,en;q=1',
-  'X-Robinhood-API-Version': '1.431.4',
-  Connection: 'keep-alive',
-  'User-Agent': '*',
-};
-
-let cachedFetchImpl = null;
-
-async function isTauriRuntime() {
-  try {
-    const { isTauri } = await import('@tauri-apps/api/core');
-    return isTauri();
-  } catch {
-    return false;
-  }
-}
-
-async function getFetchImpl() {
-  if (cachedFetchImpl) return cachedFetchImpl;
-  if (await isTauriRuntime()) {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-    cachedFetchImpl = tauriFetch;
-    return tauriFetch;
-  }
-  cachedFetchImpl = globalThis.fetch.bind(globalThis);
-  return cachedFetchImpl;
-}
-
-async function fetchWithTimeout(url, options = {}) {
-  const fetchImpl = await getFetchImpl();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetchImpl(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function formEncodeValue(value) {
-  if (typeof value === 'boolean') return value ? 'True' : 'False';
-  return String(value);
-}
-
-function toFormBody(payload) {
-  const params = new URLSearchParams();
+/**
+ * robin_stocks passes dict payloads to requests.post(data=payload).
+ * Booleans become "True"/"False" strings in form bodies.
+ */
+export function toFormObject(payload) {
+  const out = {};
   for (const [key, value] of Object.entries(payload || {})) {
     if (value === undefined || value === null) continue;
-    params.append(key, formEncodeValue(value));
+    if (typeof value === 'boolean') out[key] = value ? 'True' : 'False';
+    else out[key] = String(value);
   }
-  return params.toString();
+  return out;
 }
 
-async function parseJsonResponse(res) {
-  const text = await res.text();
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
+async function resolveTransport() {
+  if (cachedTransport) return cachedTransport;
+  if (await isTauriRuntime()) {
+    cachedTransport = 'tauri';
+    return cachedTransport;
   }
+  if (Capacitor.isNativePlatform()) {
+    cachedTransport = 'capacitor';
+    return cachedTransport;
+  }
+  cachedTransport = 'fetch';
+  return cachedTransport;
+}
+
+export async function getAuthTransport() {
+  return resolveTransport();
 }
 
 async function appendAuthLog(line) {
@@ -122,32 +140,131 @@ async function appendAuthLog(line) {
   }
 }
 
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s. Check your internet connection and try again.`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+async function httpRequest(
+  method,
+  url,
+  { headers = {}, body = null, jsonPayload = null, formPayload = null, timeoutMs = RH_POST_TIMEOUT_MS } = {}
+) {
+  const transport = await resolveTransport();
+  const mergedHeaders = { ...BASE_HEADERS, ...headers };
+  await appendAuthLog(`${method} ${url} via ${transport}`);
+
+  if (transport === 'tauri') {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+    const init = {
+      method,
+      headers: mergedHeaders,
+      connectTimeout: timeoutMs,
+    };
+    if (body !== null) init.body = body;
+    const res = await withTimeout(tauriFetch(url, init), timeoutMs + 2000, method);
+    const text = await res.text().catch(() => '');
+    let data = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+    }
+    return { ok: res.ok, status: res.status, data, text };
+  }
+
+  if (transport === 'capacitor') {
+    const options = {
+      url,
+      method,
+      headers: mergedHeaders,
+      connectTimeout: timeoutMs,
+      readTimeout: timeoutMs,
+      responseType: 'json',
+    };
+    if (jsonPayload !== null) {
+      options.data = jsonPayload;
+    } else if (formPayload !== null) {
+      options.data = toFormObject(formPayload);
+    }
+    const res = await withTimeout(CapacitorHttp.request(options), timeoutMs + 2000, method);
+    let data = res.data;
+    if (typeof data === 'string') {
+      try {
+        data = JSON.parse(data);
+      } catch {
+        data = null;
+      }
+    }
+    const ok = RH_ALLOWED_POST_STATUSES.has(res.status) || (res.status >= 200 && res.status < 300);
+    return { ok, status: res.status, data, text: '' };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: mergedHeaders,
+      body,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let data = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+    }
+    return { ok: res.ok, status: res.status, data, text };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const RH_ALLOWED_POST_STATUSES = new Set([200, 201, 202, 204, 301, 302, 303, 304, 307, 400, 401, 402, 403]);
+
 /** Mirrors robin_stocks helper.request_get for jsonify_data=true */
 export async function requestGet(url, auth = null) {
-  const headers = { ...BASE_HEADERS };
+  const headers = {};
   if (auth) headers.Authorization = auth;
   try {
-    const res = await fetchWithTimeout(url, { method: 'GET', headers });
+    const res = await httpRequest('GET', url, { headers, timeoutMs: RH_GET_TIMEOUT_MS });
     if (!res.ok) {
       await appendAuthLog(`GET ${url} → HTTP ${res.status}`);
       return null;
     }
-    return parseJsonResponse(res);
+    return res.data;
   } catch (err) {
     if (err?.name === 'AbortError') {
       throw new Error('Robinhood request timed out. Check your internet connection and try again.', { cause: err });
     }
     await appendAuthLog(`GET ${url} failed: ${err?.message || err}`);
-    return null;
+    throw err;
   }
 }
 
-/**
- * Mirrors robin_stocks helper.request_post (timeout default 16s in Python; we use 45s).
- */
+/** Mirrors robin_stocks helper.request_post (16s timeout, allows 4xx bodies) */
 export async function requestPost(url, payload, options = {}) {
   const { json = false, auth = null } = options;
-  const headers = { ...BASE_HEADERS };
+  const headers = {};
   if (auth) headers.Authorization = auth;
 
   let body;
@@ -156,22 +273,28 @@ export async function requestPost(url, payload, options = {}) {
     body = JSON.stringify(payload);
   } else {
     headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=utf-8';
-    body = toFormBody(payload);
+    body = new URLSearchParams(toFormObject(payload)).toString();
   }
 
   try {
-    const res = await fetchWithTimeout(url, { method: 'POST', headers, body });
-    if (![200, 201, 202, 204, 301, 302, 303, 304, 307, 400, 401, 402, 403].includes(res.status)) {
+    const res = await httpRequest('POST', url, {
+      headers,
+      body,
+      jsonPayload: json ? payload : null,
+      formPayload: json ? null : payload,
+      timeoutMs: RH_POST_TIMEOUT_MS,
+    });
+    if (!RH_ALLOWED_POST_STATUSES.has(res.status)) {
       await appendAuthLog(`POST ${url} → HTTP ${res.status}`);
       return null;
     }
-    return parseJsonResponse(res);
+    return res.data;
   } catch (err) {
     if (err?.name === 'AbortError') {
       throw new Error('Robinhood request timed out. Check your internet connection and try again.', { cause: err });
     }
     await appendAuthLog(`POST ${url} failed: ${err?.message || err}`);
-    return null;
+    throw err;
   }
 }
 
