@@ -9,9 +9,6 @@ on:
 permissions:
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build-desktop:
     name: Build Desktop Release (Tauri)
@@ -23,12 +20,15 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version-file: frontend/.node-version
+          check-latest: true
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install Linux Tauri Dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -52,7 +52,7 @@ jobs:
       - name: Install Frontend Dependencies & Build
         run: |
           cd frontend
-          npm install
+          npm ci
           npm run lint
           npm run build
 
@@ -77,12 +77,26 @@ jobs:
       - name: Package macOS App Bundle
         if: matrix.os == 'macos-latest'
         run: |
-          if [ -d "frontend/src-tauri/target/release/bundle/macos/Portfolio Sidekick.app" ]; then
-            zip -r ./PortfolioSidekick-MacOS.zip "frontend/src-tauri/target/release/bundle/macos/Portfolio Sidekick.app"
-          else
-            APP=$(find frontend/src-tauri/target/release/bundle -name "*.app" | head -1)
-            zip -r ./PortfolioSidekick-MacOS.zip "$APP"
+          set -euo pipefail
+          BUNDLE_DIR="frontend/src-tauri/target/release/bundle"
+          APP_DIR="$BUNDLE_DIR/macos/Portfolio Sidekick.app"
+          if [ -d "$APP_DIR" ]; then
+            zip -r ./PortfolioSidekick-MacOS.zip "$APP_DIR"
+            exit 0
           fi
+          APP=$(find "$BUNDLE_DIR" -type d -name "*.app" | head -1)
+          if [ -n "$APP" ]; then
+            zip -r ./PortfolioSidekick-MacOS.zip "$APP"
+            exit 0
+          fi
+          DMG=$(find "$BUNDLE_DIR" -maxdepth 2 -type f -name "*.dmg" | head -1)
+          if [ -n "$DMG" ]; then
+            cp "$DMG" ./PortfolioSidekick-MacOS.dmg
+            exit 0
+          fi
+          echo "No macOS .app or .dmg bundle found under $BUNDLE_DIR"
+          find "$BUNDLE_DIR" -maxdepth 3 || true
+          exit 1
 
       - name: Package Linux Binary
         if: matrix.os == 'ubuntu-latest'
@@ -96,21 +110,24 @@ jobs:
 
       - name: Upload Windows Artifact
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: desktop-windows-latest
           path: PortfolioSidekick-Windows.exe
 
       - name: Upload macOS Artifact
         if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: desktop-macos-latest
-          path: PortfolioSidekick-MacOS.zip
+          path: |
+            PortfolioSidekick-MacOS.zip
+            PortfolioSidekick-MacOS.dmg
+          if-no-files-found: error
 
       - name: Upload Linux Artifact
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: desktop-ubuntu-latest
           path: PortfolioSidekick-Linux.tar.gz
@@ -120,10 +137,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Java JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
           java-version: '21'
@@ -132,14 +149,17 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version-file: frontend/.node-version
+          check-latest: true
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install Frontend Dependencies & Build React App
         run: |
           cd frontend
-          npm install
+          npm ci
           npm run lint
           npm run build
 
@@ -213,7 +233,7 @@ jobs:
           cp frontend/android/app/build/outputs/apk/debug/app-debug.apk ./PortfolioSidekick-Android.apk
 
       - name: Upload Mobile APK Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: mobile-apk
           path: PortfolioSidekick-Android.apk
@@ -225,7 +245,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: release-assets
           merge-multiple: true
@@ -236,8 +256,10 @@ jobs:
           files: |
             release-assets/PortfolioSidekick-Windows.exe
             release-assets/PortfolioSidekick-MacOS.zip
+            release-assets/PortfolioSidekick-MacOS.dmg
             release-assets/PortfolioSidekick-Linux.tar.gz
             release-assets/PortfolioSidekick-Android.apk
+          fail_on_unmatched_files: false
           name: Portfolio Sidekick Release ${{ github.ref_name }}
           tag_name: ${{ github.ref }}
           draft: false
