@@ -15,6 +15,10 @@ import {
 } from './advisor';
 import { calculateMarketStrength } from './strength';
 import { fetchPublicHistoricalPrices, fetchPublicQuote } from './robinhood';
+import { refreshPortfolioPrices } from './liveQuotes';
+import { buildPortfolioDiagnostics, persistEquityDebugDump } from './portfolioDiagnostics';
+import { buildGuessAnalytics } from './guessAnalytics';
+import { coerceLivePrice, isQuoteUnsupportedSymbol } from './dataIntegrity';
 import {
   robinhoodLogin,
   robinhoodLogout,
@@ -50,9 +54,6 @@ export async function serverlessApiFetch(path, options = {}) {
     } catch (e) {
       data = { status: 'error', mode: 'live', message: pluginErrorMessage(e, 'Robinhood login failed.') };
     }
-    if (data.status === 'success' && data.mode !== 'sandbox') {
-      localDb.setRobinhoodUsername(body.profile_id, body.username);
-    }
     return { ok: true, status: 200, json: async () => data };
   }
 
@@ -84,7 +85,24 @@ export async function serverlessApiFetch(path, options = {}) {
       const data = await robinhoodSyncHoldings(body.profile_id);
       if (data.holdings && Array.isArray(data.holdings)) {
         for (const h of data.holdings) {
-          localDb.updateHolding(body.profile_id, h.ticker, h.shares, h.avg_buy_price, h.current_price);
+          const livePrice = h.price_stale ? null : h.current_price;
+          localDb.updateHolding(
+            body.profile_id,
+            h.ticker,
+            h.shares,
+            h.avg_buy_price,
+            livePrice,
+            { replacePrice: true },
+          );
+        }
+      }
+      const settings = localDb.getSettings();
+      const autoHideWarrants = settings.autoHideWarrants !== false;
+      if (autoHideWarrants && Array.isArray(data.holdings)) {
+        for (const h of data.holdings) {
+          if (isQuoteUnsupportedSymbol(h.ticker)) {
+            localDb.hideTicker(body.profile_id, h.ticker);
+          }
         }
       }
       return {
@@ -128,57 +146,88 @@ export async function serverlessApiFetch(path, options = {}) {
 
   if (base === '/api/portfolio/holdings' && method === 'GET') {
     const profileId = parseInt(params.get('profile_id') || '0', 10);
-    const rows = localDb.getHoldings(profileId);
-    let totalEquity = 0;
-    let totalCost = 0;
-    const portfolio = [];
-    for (const h of rows) {
-      let price = h.current_price;
-      try {
-        price = await fetchPublicQuote(h.ticker);
-        localDb.updateHolding(profileId, h.ticker, h.shares, h.avg_buy_price, price);
-      } catch {
-        // Keep last known price when live quote fetch fails.
+    const payload = await refreshPortfolioPrices(profileId);
+    return { ok: true, status: 200, json: async () => payload };
+  }
+
+  if (base === '/api/portfolio/diagnostics' && method === 'GET') {
+    const profileId = parseInt(params.get('profile_id') || '0', 10);
+    const save = params.get('save') === '1' || params.get('save') === 'true';
+    try {
+      if (save) {
+        const dump = await persistEquityDebugDump(profileId);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            status: 'success',
+            saved_to: dump.hint,
+            filename: dump.filename,
+            report: dump.report,
+          }),
+        };
       }
-      const value = h.shares * price;
-      const cost = h.shares * h.avg_buy_price;
-      totalEquity += value;
-      totalCost += cost;
-      portfolio.push({
-        ticker: h.ticker,
-        shares: h.shares,
-        avg_buy_price: h.avg_buy_price,
-        current_price: price,
-        total_value: Math.round(value * 100) / 100,
-        total_cost: Math.round(cost * 100) / 100,
-        pnl: Math.round((value - cost) * 100) / 100,
-        pnl_pct: cost > 0 ? Math.round(((value - cost) / cost) * 10000) / 100 : 0,
-        advisor_score: 50,
-        advisor_action: 'HOLD',
-        sector: 'Other/Speculative',
-      });
+      const report = await buildPortfolioDiagnostics(profileId);
+      return { ok: true, status: 200, json: async () => ({ status: 'success', report }) };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({ status: 'error', detail: err?.message || String(err) }),
+      };
     }
-    const status = await robinhoodStatus(profileId);
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({
-        holdings: portfolio,
-        total_equity: Math.round(totalEquity * 100) / 100,
-        total_cost: Math.round(totalCost * 100) / 100,
-        overall_pnl: Math.round((totalEquity - totalCost) * 100) / 100,
-        overall_pnl_pct: totalCost > 0 ? Math.round(((totalEquity - totalCost) / totalCost) * 10000) / 100 : 0,
-        sector_concentrations: {},
-        mode: status.authenticated ? 'live' : 'sandbox',
-      }),
-    };
   }
 
   if (base === '/api/portfolio/holdings' && method === 'POST') {
     const body = JSON.parse(options.body || '{}');
-    const price = body.current_price || body.avg_buy_price;
+    let price = body.current_price;
+    if (!(Number(price) > 0)) {
+      const quoted = await fetchPublicQuote(body.ticker);
+      price = quoted;
+    }
+    if (!(Number(price) > 0)) {
+      return {
+        ok: false,
+        status: 422,
+        json: async () => ({
+          status: 'error',
+          detail: `Live quote required for ${body.ticker}. Cost basis cannot be used as market price.`,
+        }),
+      };
+    }
     localDb.updateHolding(body.profile_id, body.ticker, body.shares, body.avg_buy_price, price);
     return { ok: true, status: 200, json: async () => ({ status: 'success', ticker: body.ticker }) };
+  }
+
+  if (base === '/api/portfolio/holdings/hide' && method === 'POST') {
+    const body = JSON.parse(options.body || '{}');
+    const profileId = parseInt(body.profile_id || '0', 10);
+    const ticker = String(body.ticker || '').toUpperCase().trim();
+    if (!profileId || !ticker) {
+      return { ok: false, status: 400, json: async () => ({ detail: 'profile_id and ticker required' }) };
+    }
+    const hidden = localDb.hideTicker(profileId, ticker);
+    return { ok: true, status: 200, json: async () => ({ status: 'success', hidden }) };
+  }
+
+  if (base === '/api/portfolio/holdings/unhide' && method === 'POST') {
+    const body = JSON.parse(options.body || '{}');
+    const profileId = parseInt(body.profile_id || '0', 10);
+    const ticker = String(body.ticker || '').toUpperCase().trim();
+    if (!profileId || !ticker) {
+      return { ok: false, status: 400, json: async () => ({ detail: 'profile_id and ticker required' }) };
+    }
+    const hidden = localDb.unhideTicker(profileId, ticker);
+    return { ok: true, status: 200, json: async () => ({ status: 'success', hidden }) };
+  }
+
+  if (base === '/api/portfolio/holdings/hidden' && method === 'GET') {
+    const profileId = parseInt(params.get('profile_id') || '0', 10);
+    if (!profileId) {
+      return { ok: false, status: 400, json: async () => ({ detail: 'profile_id required' }) };
+    }
+    const hidden = localDb.getHiddenTickers(profileId);
+    return { ok: true, status: 200, json: async () => ({ hidden }) };
   }
 
   if (base === '/api/portfolio/holdings/clear' && method === 'POST') {
@@ -205,8 +254,26 @@ export async function serverlessApiFetch(path, options = {}) {
 
   if (base === '/api/advisor/recommendation' && method === 'GET') {
     const profileId = parseInt(params.get('profile_id') || '1', 10);
-    const ticker = params.get('ticker');
-    const price = await fetchPublicQuote(ticker);
+    const ticker = String(params.get('ticker') || '').toUpperCase();
+    const holding = localDb.getHoldings(profileId).find((h) => h.ticker.toUpperCase() === ticker);
+    const quotePrice = await fetchPublicQuote(ticker);
+    let price = coerceLivePrice(quotePrice, holding?.avg_buy_price);
+    if (price == null && holding?.current_price > 0 && !holding?.price_stale) {
+      price = coerceLivePrice(holding.current_price, holding.avg_buy_price);
+    }
+    if (!(Number(price) > 0)) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ticker,
+          insufficient_data: true,
+          action: null,
+          score: null,
+          message: 'Live quote required before advisor scoring.',
+        }),
+      };
+    }
     const history = await fetchPublicHistoricalPrices(ticker, 'year');
     const rec = generateRecommendation(profileId, ticker, history, price);
     return { ok: true, status: 200, json: async () => rec };
@@ -263,32 +330,10 @@ export async function serverlessApiFetch(path, options = {}) {
 
   if (base === '/api/guesses/analytics' && method === 'GET') {
     const profileId = parseInt(params.get('profile_id') || '0', 10);
-    const { completed } = localDb.getGuesses(profileId);
-    if (!completed.length) {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          overall_accuracy: 50.0,
-          completed_count: 0,
-          archetype: 'Oracle Apprentice',
-          archetype_desc: 'No resolved price guesses yet.',
-          details: { short_term: 50.0, long_term: 50.0 },
-        }),
-      };
-    }
-    const hits = completed.filter((g) => g.status === 'hit').length;
-    const overall = (hits / completed.length) * 100;
     return {
       ok: true,
       status: 200,
-      json: async () => ({
-        overall_accuracy: Math.round(overall * 10) / 10,
-        completed_count: completed.length,
-        archetype: overall > 65 ? 'Tactical Value Seeker' : 'Oracle Apprentice',
-        archetype_desc: 'Analytics derived from on-device guess history.',
-        details: { short_term: Math.round(overall * 10) / 10, long_term: Math.round(overall * 10) / 10 },
-      }),
+      json: async () => buildGuessAnalytics(localDb.getGuesses(profileId)),
     };
   }
 
@@ -302,13 +347,37 @@ export async function serverlessApiFetch(path, options = {}) {
     return { ok: true, status: 200, json: async () => localDb.getActions(profileId) };
   }
 
+  if (base === '/api/shadow-coach/actions' && method === 'POST') {
+    const body = JSON.parse(options.body || '{}');
+    const row = localDb.logAction(
+      body.profile_id,
+      body.action_type,
+      body.ticker,
+      body.shares,
+      body.price,
+      { notes: body.notes, source: body.source || 'api' }
+    );
+    return { ok: true, status: 200, json: async () => ({ status: 'success', action: row }) };
+  }
+
   if (base === '/api/strategy/brackets' && method === 'GET') {
     const profileId = parseInt(params.get('profile_id') || '0', 10);
     const ticker = params.get('ticker');
-    const price = await fetchPublicQuote(ticker);
+    const holdings = localDb.getHoldings(profileId).find((h) => h.ticker === ticker.toUpperCase());
+    const quoted = await fetchPublicQuote(ticker);
+    const price = quoted != null && quoted > 0 ? quoted : (holdings?.current_price > 0 ? holdings.current_price : null);
+    if (!(Number(price) > 0)) {
+      return {
+        ok: false,
+        status: 422,
+        json: async () => ({
+          status: 'error',
+          detail: `Live quote required for ${ticker} before strategy brackets can be computed.`,
+        }),
+      };
+    }
     const history = await fetchPublicHistoricalPrices(ticker, 'year');
     const rec = generateRecommendation(profileId, ticker, history, price);
-    const holdings = localDb.getHoldings(profileId).find((h) => h.ticker === ticker.toUpperCase());
     return {
       ok: true,
       status: 200,
@@ -317,15 +386,17 @@ export async function serverlessApiFetch(path, options = {}) {
         current_price: price,
         owned_shares: holdings?.shares || 0,
         avg_buy_price: holdings?.avg_buy_price || 0,
-        advisor_score: rec.score,
-        advisor_action: rec.action,
+        advisor_score: rec.insufficient_data ? null : rec.score,
+        advisor_action: rec.insufficient_data ? null : rec.action,
+        advisor_is_estimate: false,
         scale_out_profit_blueprint: [],
         scale_in_dca_blueprint: [],
         stop_loss_price: Math.round(price * 0.9 * 100) / 100,
         risk_to_reward_ratio: 1.5,
         is_asymmetric_risk: false,
-        regime_status: 'BULLISH',
-        vix_value: 15,
+        regime_status: rec.regime_status || null,
+        regime_is_estimate: rec.regime_is_estimate === true,
+        vix_value: rec.vix_value,
         atr: 0,
         buy_threshold: 65,
         sell_threshold: 35,

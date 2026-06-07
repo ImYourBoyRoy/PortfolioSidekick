@@ -8,6 +8,8 @@
  */
 
 import { ensureDatabaseReady, queryAll, queryOne, run } from './db/sqliteEngine.js';
+import { DEMO_HOLDINGS_SEED } from './portfolioConstants.js';
+import { buildGuessAnalytics } from './guessAnalytics.js';
 import {
   getPortableDataDirectory,
   isPortableDesktop,
@@ -24,19 +26,7 @@ const seedInitialData = () => {
   run('INSERT INTO profiles (name, created_at) VALUES (?, ?)', ['Example', new Date().toISOString()]);
   const profileId = queryOne('SELECT id FROM profiles WHERE name = ?', ['Example']).id;
 
-  const holdings = [
-    ['NVDA', 120, 110.5, 122.45],
-    ['AMD', 60, 145.0, 150.2],
-    ['PLTR', 250, 21.0, 34.5],
-    ['MSFT', 35, 380.0, 415.0],
-    ['AAPL', 45, 170.0, 190.0],
-    ['AMZN', 80, 150.0, 180.0],
-    ['TSLA', 50, 190.0, 175.0],
-    ['QBTS', 100, 12.0, 15.5],
-    ['RGTI', 80, 14.0, 16.8],
-    ['NUKZ', 200, 2.5, 2.8],
-  ];
-  for (const [ticker, shares, avg, price] of holdings) {
+  for (const { ticker, shares, avg_buy_price: avg, default_price: price } of DEMO_HOLDINGS_SEED) {
     run(
       'INSERT INTO holdings (profile_id, ticker, shares, avg_buy_price, current_price) VALUES (?, ?, ?, ?, ?)',
       [profileId, ticker, shares, avg, price]
@@ -81,7 +71,8 @@ export async function bootstrapDatabase() {
   } catch (err) {
     console.warn('[SQLite] Portable storage marker write failed:', err);
   }
-  if (typeof localStorage !== 'undefined' && localStorage.getItem('portfolio_sidekick_seed_visuals') === 'true') {
+  // Demo seed only in explicit dev mode — never auto-inject fake holdings in production builds.
+  if (import.meta.env?.DEV && typeof localStorage !== 'undefined' && localStorage.getItem('portfolio_sidekick_seed_visuals') === 'true') {
     seedInitialData();
   }
 }
@@ -112,25 +103,63 @@ export const localDb = {
       [profileId]
     ),
 
-  updateHolding: (profileId, ticker, shares, avgBuyPrice, currentPrice = null) => {
+  getHiddenTickers: (profileId) => {
+    const settings = localDb.getSettings();
+    const map = settings.hiddenHoldingsByProfile || {};
+    return (map[profileId] || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean);
+  },
+
+  hideTicker: (profileId, ticker) => {
+    const formatted = String(ticker || '').toUpperCase().trim();
+    if (!formatted) return [];
+    const settings = localDb.getSettings();
+    const map = { ...(settings.hiddenHoldingsByProfile || {}) };
+    const hidden = new Set((map[profileId] || []).map((t) => String(t).toUpperCase().trim()));
+    hidden.add(formatted);
+    map[profileId] = [...hidden];
+    localDb.saveSettings({ hiddenHoldingsByProfile: map });
+    localDb.updateHolding(profileId, formatted, 0, 0, null);
+    return [...hidden];
+  },
+
+  unhideTicker: (profileId, ticker) => {
+    const formatted = String(ticker || '').toUpperCase().trim();
+    const settings = localDb.getSettings();
+    const map = { ...(settings.hiddenHoldingsByProfile || {}) };
+    map[profileId] = (map[profileId] || []).filter((t) => String(t).toUpperCase().trim() !== formatted);
+    localDb.saveSettings({ hiddenHoldingsByProfile: map });
+    return map[profileId] || [];
+  },
+
+  updateHolding: (profileId, ticker, shares, avgBuyPrice, currentPrice = null, options = {}) => {
     const formattedTicker = ticker.toUpperCase().trim();
     const qty = parseFloat(shares);
+    const replacePrice = options.replacePrice === true;
+    const parsedPrice = currentPrice !== null && currentPrice !== undefined
+      ? parseFloat(currentPrice)
+      : null;
     const existing = queryOne('SELECT id FROM holdings WHERE profile_id = ? AND ticker = ?', [profileId, formattedTicker]);
 
     if (existing) {
       if (qty <= 0) {
         run('DELETE FROM holdings WHERE profile_id = ? AND ticker = ?', [profileId, formattedTicker]);
+      } else if (replacePrice) {
+        run(
+          `UPDATE holdings SET shares = ?, avg_buy_price = ?, current_price = ?, synced_at = ?
+           WHERE profile_id = ? AND ticker = ?`,
+          [qty, parseFloat(avgBuyPrice), parsedPrice, new Date().toISOString(), profileId, formattedTicker]
+        );
       } else {
         run(
           `UPDATE holdings SET shares = ?, avg_buy_price = ?, current_price = COALESCE(?, current_price), synced_at = ?
            WHERE profile_id = ? AND ticker = ?`,
-          [qty, parseFloat(avgBuyPrice), currentPrice !== null ? parseFloat(currentPrice) : null, new Date().toISOString(), profileId, formattedTicker]
+          [qty, parseFloat(avgBuyPrice), parsedPrice, new Date().toISOString(), profileId, formattedTicker]
         );
       }
     } else if (qty > 0) {
       run(
         'INSERT INTO holdings (profile_id, ticker, shares, avg_buy_price, current_price) VALUES (?, ?, ?, ?, ?)',
-        [profileId, formattedTicker, qty, parseFloat(avgBuyPrice), currentPrice !== null ? parseFloat(currentPrice) : parseFloat(avgBuyPrice)]
+        [profileId, formattedTicker, qty, parseFloat(avgBuyPrice), parsedPrice]
       );
     }
   },
@@ -377,25 +406,5 @@ export const localDb = {
     return merged;
   },
 
-  getAnalytics: (profileId) => {
-    const { completed } = localDb.getGuesses(profileId);
-    if (!completed.length) {
-      return {
-        overall_accuracy: 50.0,
-        completed_count: 0,
-        archetype: 'Oracle Apprentice',
-        archetype_desc: 'No resolved price guesses yet.',
-        details: { short_term: 50.0, long_term: 50.0 },
-      };
-    }
-    const hits = completed.filter((g) => g.status === 'hit').length;
-    const overall = (hits / completed.length) * 100;
-    return {
-      overall_accuracy: Math.round(overall * 10) / 10,
-      completed_count: completed.length,
-      archetype: overall > 65 ? 'Tactical Value Seeker' : 'Oracle Apprentice',
-      archetype_desc: 'Analytics derived from on-device guess history.',
-      details: { short_term: Math.round(overall * 10) / 10, long_term: Math.round(overall * 10) / 10 },
-    };
-  },
+  getAnalytics: (profileId) => buildGuessAnalytics(localDb.getGuesses(profileId)),
 };

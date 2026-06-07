@@ -123,8 +123,13 @@ export async function buildRhUrls() {
     inquiries: (machineId) => `${base}/pathfinder/inquiries/${machineId}/user_view/`,
     pushStatus: (id) => `${base}/push/${id}/get_prompts_status/`,
     positions: `${base}/positions/?nonzero=true`,
+    accounts: `${base}/accounts/?default_to_all_accounts=true`,
+    portfolios: `${base}/portfolios/`,
     instruments: `${base}/instruments/`,
     quotes: (symbol) => `${base}/quotes/${symbol}/`,
+    quotesBatch: (symbols) => `${base}/quotes/?symbols=${symbols.join(',')}`,
+    portfolioByAccount: (accountNumber) => `${base}/portfolios/${accountNumber}/`,
+    dividends: `${base}/dividends/`,
   };
 }
 
@@ -135,8 +140,13 @@ export const RH_URLS = {
   inquiries: (machineId) => `https://api.robinhood.com/pathfinder/inquiries/${machineId}/user_view/`,
   pushStatus: (id) => `https://api.robinhood.com/push/${id}/get_prompts_status/`,
   positions: 'https://api.robinhood.com/positions/?nonzero=true',
+  accounts: 'https://api.robinhood.com/accounts/?default_to_all_accounts=true',
+  portfolios: 'https://api.robinhood.com/portfolios/',
   instruments: 'https://api.robinhood.com/instruments/',
   quotes: (symbol) => `https://api.robinhood.com/quotes/${symbol}/`,
+  quotesBatch: (symbols) => `https://api.robinhood.com/quotes/?symbols=${symbols.join(',')}`,
+  portfolioByAccount: (accountNumber) => `https://api.robinhood.com/portfolios/${accountNumber}/`,
+  dividends: 'https://api.robinhood.com/dividends/',
 };
 
 export function generateDeviceToken() {

@@ -308,12 +308,12 @@ export const getGutScore = (profileId, ticker, currentPrice) => {
 // ─── Market Regime Filter (Fast, Safe Fallback Mock for Offline Client) ───
 
 export const detectMarketRegime = () => {
-  // Offline mock client default
   return {
-    regime: "BULLISH",
-    vix: 14.85,
-    spy_above_200: true,
-    qqq_above_200: true
+    regime: null,
+    vix: null,
+    spy_above_200: null,
+    qqq_above_200: null,
+    regime_is_estimate: true,
   };
 };
 
@@ -322,25 +322,54 @@ export const detectMarketRegime = () => {
 export const generateRecommendation = (profileId, ticker, historyData, currentPrice) => {
   const formattedTicker = ticker.toUpperCase().trim();
 
+  const livePrice = Number(currentPrice);
+  if (!Number.isFinite(livePrice) || livePrice <= 0) {
+    return {
+      ticker: formattedTicker,
+      insufficient_data: true,
+      action: null,
+      score: null,
+      message: 'Live quote required before advisor scoring.',
+      metrics: {},
+      scores: {},
+      weights: {},
+      regime_status: null,
+      regime_is_estimate: true,
+      vix_value: null,
+      spy_above_200: null,
+      qqq_above_200: null,
+      atr: null,
+      stop_loss_price: null,
+      target_price: null,
+      risk_to_reward_ratio: null,
+      is_asymmetric_risk: false,
+      buy_threshold: 65.0,
+      sell_threshold: 35.0,
+    };
+  }
+
   if (!historyData || historyData.length < 5) {
     return {
       ticker: formattedTicker,
-      action: "HOLD",
-      score: 50.0,
-      metrics: { rsi: 50.0, macd: 0.0, macd_signal: 0.0, upper_bb: currentPrice, lower_bb: currentPrice },
-      scores: { rsi_score: 50.0, macd_score: 50.0, trend_score: 50.0, bb_score: 50.0, gut_score: 50.0 },
-      weights: { rsi_weight: 0.25, macd_weight: 0.25, trend_weight: 0.25, gut_weight: 0.25 },
-      regime_status: "BULLISH",
-      vix_value: 15.0,
-      spy_above_200: true,
-      qqq_above_200: true,
-      atr: 0.0,
-      stop_loss_price: Math.round(currentPrice * 0.90 * 100) / 100,
-      target_price: Math.round(currentPrice * 1.15 * 100) / 100,
-      risk_to_reward_ratio: 1.5,
+      insufficient_data: true,
+      action: null,
+      score: null,
+      message: 'Insufficient price history — advisor score withheld until live data is available.',
+      metrics: {},
+      scores: {},
+      weights: {},
+      regime_status: null,
+      regime_is_estimate: true,
+      vix_value: null,
+      spy_above_200: null,
+      qqq_above_200: null,
+      atr: null,
+      stop_loss_price: null,
+      target_price: null,
+      risk_to_reward_ratio: null,
       is_asymmetric_risk: false,
       buy_threshold: 65.0,
-      sell_threshold: 35.0
+      sell_threshold: 35.0,
     };
   }
 
@@ -446,6 +475,7 @@ export const generateRecommendation = (profileId, ticker, historyData, currentPr
       gut_weight: Math.round(wGut * 100) / 100
     },
     regime_status: regime.regime,
+    regime_is_estimate: regime.regime_is_estimate === true,
     vix_value: regime.vix,
     spy_above_200: regime.spy_above_200,
     qqq_above_200: regime.qqq_above_200,

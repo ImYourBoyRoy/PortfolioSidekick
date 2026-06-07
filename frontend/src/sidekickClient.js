@@ -27,11 +27,6 @@ export function getRuntimeMode() {
   return 'dev';
 }
 
-/** True when the app uses the embedded JS backend (all current runtimes). */
-export function isServerlessBackend() {
-  return true;
-}
-
 export function isAndroidNative() {
   return getRuntimeMode() === 'android-native';
 }
@@ -39,11 +34,6 @@ export function isAndroidNative() {
 /** Tauri 2 desktop shell. */
 export function isDesktopShell() {
   return getRuntimeMode() === 'desktop-shell';
-}
-
-/** @deprecated Use isDesktopShell */
-export function isDesktopIpc() {
-  return isDesktopShell();
 }
 
 /**

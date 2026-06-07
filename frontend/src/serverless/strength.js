@@ -151,7 +151,9 @@ export const calculateMarketStrength = (timeframe = "day", sector = "all") => {
   return {
     timeframe: tf,
     sector: sec,
+    data_synthetic: true,
+    disclaimer: 'Simulated strength deck — not live market data. Use for exploration only.',
     top_gainers: gainersSorted.slice(0, 15),
-    worst_decliners: declinersSorted.slice(0, 15)
+    worst_decliners: declinersSorted.slice(0, 15),
   };
 };

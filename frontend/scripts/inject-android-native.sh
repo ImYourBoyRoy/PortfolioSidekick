@@ -45,18 +45,10 @@ public class MainActivity extends BridgeActivity {
 }
 JAVA
 
-python3 - <<PY
-import pathlib
-p = pathlib.Path("$ROOT/android/app/src/main/AndroidManifest.xml")
-text = p.read_text()
-text = text.replace('android:allowBackup="true"', 'android:allowBackup="false"')
-if 'networkSecurityConfig' not in text:
-    text = text.replace(
-        "<application",
-        '<application android:networkSecurityConfig="@xml/network_security_config" android:fullBackupContent="false"',
-        1,
-    )
-p.write_text(text)
-PY
+MANIFEST="$ROOT/android/app/src/main/AndroidManifest.xml"
+sed -i 's/android:allowBackup="true"/android:allowBackup="false"/' "$MANIFEST"
+if ! grep -q 'networkSecurityConfig' "$MANIFEST"; then
+  sed -i '0,/<application/s|<application|<application android:networkSecurityConfig="@xml/network_security_config" android:fullBackupContent="false"|' "$MANIFEST"
+fi
 
 echo "Android native plugin injected (Kotlin ${KOTLIN_VERSION})."

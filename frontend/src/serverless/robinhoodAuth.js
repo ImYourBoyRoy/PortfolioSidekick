@@ -22,12 +22,25 @@ import {
   resetAuthHttpSession,
   sessionPayload,
 } from './robinhoodAuthCore';
+import { isSandboxUsername } from './authUtils';
 import {
   getPortableDataDirectory,
   isPortableDesktop,
   readStorageFile,
   writeStorageFile,
 } from './storagePaths';
+import { localDb } from './database';
+import { isQuoteUnsupportedSymbol } from './dataIntegrity';
+import {
+  accountNumberFromRecord,
+  buildRobinhoodCashBreakdown,
+  extractPortfolioCash,
+  extractReportedNetEquity,
+  extractReportedNetEquityFromPortfolio,
+  selectPrimaryPortfolio,
+  selectPrimaryRobinhoodAccount,
+} from './robinhoodAccount.js';
+import { extractRobinhoodQuotePrice, parseRobinhoodBatchQuotes } from './quotePrice';
 
 const VAULT_FILENAME = 'robinhood_vault.json';
 
@@ -178,15 +191,28 @@ async function saveSessionPortable(profileId, session, username) {
   await writePortableVault(vault);
 }
 
-function persistSessionBackground(profileId, session, username) {
-  void (async () => {
-    try {
-      await saveSessionPortable(profileId, session, username);
-      await authLog(`session saved profile=${profileId}`);
-    } catch (err) {
-      await authLog(`session save failed: ${err?.message || err}`);
-    }
-  })();
+async function persistSession(profileId, session, username) {
+  const normalized = normalizeSession(session);
+  if (!normalized) return false;
+  try {
+    await saveSessionPortable(profileId, normalized, username);
+    if (username) localDb.setRobinhoodUsername(profileId, username);
+    await authLog(`session saved profile=${profileId}`);
+    return true;
+  } catch (err) {
+    await authLog(`session save failed: ${err?.message || err}`);
+    return false;
+  }
+}
+
+/** Poll until vault session validates — covers async encrypt write after login. */
+export async function waitForRobinhoodSession(profileId, maxAttempts = 20, delayMs = 250) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const { authenticated } = await resolveActiveRobinhoodSession(profileId);
+    if (authenticated) return true;
+    await sleep(delayMs);
+  }
+  return false;
 }
 
 async function saveSessionSafe(vault, profileId, session, username) {
@@ -196,11 +222,6 @@ async function saveSessionSafe(vault, profileId, session, username) {
     console.warn('[RobinhoodAuth] Vault session save failed:', err);
     throw err;
   }
-}
-
-function isSandboxUsername(username) {
-  const u = (username || '').toLowerCase();
-  return u === 'sandbox' || u === 'example' || u.includes('test');
 }
 
 function workflowApproved(inqResp) {
@@ -527,10 +548,13 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
         session: result?.session,
       };
 
-      if (normalized.status === 'success' && normalized.session) {
+      if (normalized.status === 'success') {
         memoryChallenges.delete(profileId);
-        const session = normalizeSession(normalized.session);
-        if (session) persistSessionBackground(profileId, session, username);
+        if (normalized.session) {
+          await persistSession(profileId, normalized.session, username);
+        } else if (options.continueMfa) {
+          await waitForRobinhoodSession(profileId, 8, 150);
+        }
       }
 
       return normalized;
@@ -661,70 +685,73 @@ async function persistRefreshedSession(profileId, session, username) {
   await saveSessionSafe(vault, profileId, session, username || '');
 }
 
-export async function robinhoodStatus(profileId) {
+/** Load vault session, refresh if needed, and reconcile username with the SQLite profile. */
+export async function resolveActiveRobinhoodSession(profileId) {
   const urls = await buildRhUrls();
   let username;
   let session;
   try {
     ({ session, username } = await loadStoredSession(profileId));
   } catch {
-    return { authenticated: false };
+    return { session: null, username: null, authenticated: false };
   }
 
-  if (!username || !session) return { authenticated: false };
+  if (!username) {
+    const profile = localDb.getProfiles().find((p) => p.id === profileId);
+    username = profile?.robinhood_username || null;
+  }
 
-  let valid = await validateSession(session, urls);
+  if (!session) {
+    return { session: null, username, authenticated: false };
+  }
+
+  let active = session;
+  let valid = await validateSession(active, urls);
   if (!valid) {
     await authLog('status session invalid — attempting refresh');
-    const refreshed = await refreshSession(session, urls);
+    const refreshed = await refreshSession(active, urls);
     if (refreshed) {
-      await persistRefreshedSession(profileId, refreshed, username);
-      valid = await validateSession(refreshed, urls);
+      await persistRefreshedSession(profileId, refreshed, username || '');
+      active = refreshed;
+      valid = await validateSession(active, urls);
       if (!valid) await authLog('status still invalid after refresh');
     } else {
       await authLog('status refresh failed — not authenticated');
     }
   }
 
-  return valid ? { authenticated: true, username } : { authenticated: false };
+  if (valid && username) {
+    const profile = localDb.getProfiles().find((p) => p.id === profileId);
+    if (profile && !profile.robinhood_username) {
+      localDb.setRobinhoodUsername(profileId, username);
+    }
+  }
+
+  return {
+    session: valid ? active : null,
+    username,
+    authenticated: valid,
+  };
+}
+
+export async function robinhoodStatus(profileId) {
+  const { username, authenticated } = await resolveActiveRobinhoodSession(profileId);
+  return authenticated
+    ? { authenticated: true, username }
+    : { authenticated: false, username: username || null };
 }
 
 export async function robinhoodSyncHoldings(profileId) {
   const urls = await buildRhUrls();
   await authLog(`sync start profile=${profileId}`);
 
-  let session;
-  let username;
-  try {
-    ({ session, username } = await loadStoredSession(profileId));
-  } catch (err) {
-    await authLog(`sync session load failed: ${err?.message || err}`);
-    throw new Error('Not authenticated. Please sign in first.', { cause: err });
-  }
-
-  if (!session) {
-    await authLog('sync aborted — no session in vault');
+  const { session, authenticated } = await resolveActiveRobinhoodSession(profileId);
+  if (!session || !authenticated) {
+    await authLog('sync aborted — no valid session in vault');
     throw new Error('Not authenticated. Please sign in first.');
   }
 
-  let active = session;
-  if (!(await validateSession(active, urls))) {
-    await authLog('sync session validate failed — trying refresh');
-    const refreshed = await refreshSession(active, urls);
-    if (refreshed) {
-      await persistRefreshedSession(profileId, refreshed, username || '');
-      active = refreshed;
-    } else {
-      await authLog('sync refresh failed');
-    }
-  }
-
-  if (!(await validateSession(active, urls))) {
-    await authLog('sync aborted — session expired');
-    throw new Error('Robinhood session expired. Please sign in again.');
-  }
-
-  const auth = authHeader(active);
+  const auth = authHeader(session);
   await authLog('sync fetching positions');
   const positions = await requestGet(urls.positions, auth);
   if (!positions?.results) {
@@ -734,6 +761,8 @@ export async function robinhoodSyncHoldings(profileId) {
   const eligible = positions.results.filter((pos) => parseFloat(pos.quantity || '0') > 0);
   await authLog(`sync positions count=${eligible.length}`);
 
+  const hiddenTickers = new Set(localDb.getHiddenTickers(profileId));
+
   const holdings = (
     await mapPool(eligible, async (pos) => {
       const qty = parseFloat(pos.quantity || '0');
@@ -741,15 +770,57 @@ export async function robinhoodSyncHoldings(profileId) {
         const instrument = await requestGet(pos.instrument, auth);
         const symbol = instrument?.symbol;
         if (!symbol) return null;
+        if (hiddenTickers.has(String(symbol).toUpperCase())) return null;
         const avgBuy = parseFloat(pos.average_buy_price || '0');
-        let price = avgBuy;
-        const quote = await requestGet(urls.quotes(symbol), auth);
-        if (quote?.last_trade_price) price = parseFloat(quote.last_trade_price);
+        let price = null;
+        let priceStale = false;
+        let quoteStatus = 'live';
+        if (isQuoteUnsupportedSymbol(symbol)) {
+          const positionEquity = parseFloat(pos.equity || pos.market_value || '0');
+          if (positionEquity > 0 && qty > 0) {
+            price = positionEquity / qty;
+            quoteStatus = 'position_equity';
+            priceStale = false;
+          } else {
+            priceStale = true;
+            quoteStatus = 'non_quotable';
+          }
+        } else {
+          let positionEquity = parseFloat(pos.equity || pos.market_value || '0');
+          if (!(positionEquity > 0) && pos.url) {
+            try {
+              const detail = await requestGet(pos.url, auth);
+              positionEquity = parseFloat(detail?.equity || detail?.market_value || '0');
+            } catch {
+              // Fall through to quote price.
+            }
+          }
+          if (positionEquity > 0 && qty > 0) {
+            price = positionEquity / qty;
+            quoteStatus = 'position_equity';
+            priceStale = false;
+          } else {
+          const rhPrice = extractRobinhoodQuotePrice(await requestGet(urls.quotes(symbol), auth));
+          if (rhPrice != null) {
+            price = rhPrice;
+          } else {
+            try {
+              const { fetchPublicQuote } = await import('./robinhood.js');
+              price = await fetchPublicQuote(symbol);
+            } catch {
+              // Yahoo fallback is best-effort during sync.
+            }
+          }
+          priceStale = price == null;
+          }
+        }
         return {
           ticker: symbol,
           shares: qty,
           avg_buy_price: avgBuy,
           current_price: price,
+          price_stale: priceStale,
+          quote_status: quoteStatus,
         };
       } catch (err) {
         await authLog(`sync position failed ${pos.instrument}: ${err?.message || err}`);
@@ -760,4 +831,264 @@ export async function robinhoodSyncHoldings(profileId) {
 
   await authLog(`sync complete holdings=${holdings.length}`);
   return { status: 'success', synced_count: holdings.length, holdings };
+}
+
+/**
+ * Per-position equity marks from Robinhood (matches app position values better than quote × shares).
+ */
+export async function fetchRobinhoodPositionMarks(profileId, hiddenTickers = new Set()) {
+  const { session, authenticated } = await resolveActiveRobinhoodSession(profileId);
+  if (!session || !authenticated) return { bySymbol: {}, totalEquity: 0 };
+
+  const urls = await buildRhUrls();
+  const auth = authHeader(session);
+  const positions = await requestGet(urls.positions, auth);
+  const eligible = (positions?.results || []).filter((pos) => parseFloat(pos.quantity || '0') > 0);
+  const bySymbol = {};
+  let totalEquity = 0;
+
+  const rows = await mapPool(eligible, async (pos) => {
+    const qty = parseFloat(pos.quantity || '0');
+    let equity = parseFloat(pos.equity || pos.market_value || '0');
+    if (!(equity > 0) && pos.url) {
+      try {
+        const detail = await requestGet(pos.url, auth);
+        equity = parseFloat(detail?.equity || detail?.market_value || '0');
+      } catch {
+        // Best-effort position detail.
+      }
+    }
+    let symbol;
+    try {
+      const instrument = await requestGet(pos.instrument, auth);
+      symbol = instrument?.symbol;
+    } catch {
+      return null;
+    }
+    if (!symbol || hiddenTickers.has(String(symbol).toUpperCase())) return null;
+    if (!(equity > 0)) return null;
+    return {
+      symbol: String(symbol).toUpperCase(),
+      equity,
+      impliedPrice: qty > 0 ? equity / qty : null,
+      quantity: qty,
+    };
+  }, 8);
+
+  for (const row of rows) {
+    if (!row?.symbol) continue;
+    bySymbol[row.symbol] = {
+      equity: row.equity,
+      implied_price: row.impliedPrice,
+      quantity: row.quantity,
+    };
+    totalEquity += row.equity;
+  }
+
+  return { bySymbol, totalEquity: Math.round(totalEquity * 100) / 100 };
+}
+
+/** Batch quote fetch — one Robinhood request for many symbols (rate-limit friendly). */
+export async function fetchRobinhoodBatchQuotes(profileId, symbols) {
+  const unique = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))];
+  if (unique.length === 0) return {};
+
+  const { session, authenticated } = await resolveActiveRobinhoodSession(profileId);
+  if (!session || !authenticated) {
+    await authLog('batch quotes skipped — no valid Robinhood session');
+    return null;
+  }
+
+  const urls = await buildRhUrls();
+  const auth = authHeader(session);
+  const prices = {};
+  const chunkSize = 40;
+
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const chunk = unique.slice(i, i + chunkSize);
+    try {
+      const data = await requestGet(urls.quotesBatch(chunk), auth);
+      const resultCount = Array.isArray(data?.results) ? data.results.length : 0;
+      if (!data || resultCount === 0) {
+        await authLog(`batch quotes empty chunk=${chunk.join(',')} dataKeys=${data ? Object.keys(data).join(',') : 'null'}`);
+      }
+      let parsed = parseRobinhoodBatchQuotes(data, chunk);
+
+      if (Object.keys(parsed).length === 0 && Array.isArray(data?.results)) {
+        for (let j = 0; j < data.results.length && j < chunk.length; j += 1) {
+          const item = data.results[j];
+          if (!item || typeof item === 'string') continue;
+          const price = extractRobinhoodQuotePrice(item);
+          if (price != null) parsed[chunk[j]] = price;
+        }
+      }
+
+      const halUrls = (data?.results || []).filter(
+        (r) => typeof r === 'string' && r.includes('/quotes/'),
+      );
+      if (halUrls.length > 0) {
+        const halPrices = await mapPool(halUrls, async (url) => {
+          const quote = await requestGet(url, auth);
+          const sym = quote?.symbol;
+          const price = extractRobinhoodQuotePrice(quote);
+          if (!sym || price == null) return null;
+          return { symbol: String(sym).toUpperCase(), price };
+        }, 6);
+        for (const row of halPrices) {
+          if (row?.symbol && row.price != null) parsed[row.symbol] = row.price;
+        }
+      }
+
+      Object.assign(prices, parsed);
+    } catch (err) {
+      await authLog(`batch quotes failed chunk=${chunk.join(',')}: ${err?.message || err}`);
+      return Object.keys(prices).length > 0 ? prices : null;
+    }
+  }
+
+  await authLog(`batch quotes resolved count=${Object.keys(prices).length}/${unique.length}`);
+  return prices;
+}
+
+/**
+ * Robinhood live marks — batch first, then per-symbol /quotes/{symbol}/ (sync-proven path).
+ */
+export async function fetchRobinhoodLiveQuotes(profileId, symbols) {
+  const unique = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))];
+  if (unique.length === 0) return {};
+
+  const batch = await fetchRobinhoodBatchQuotes(profileId, unique);
+  const prices = { ...(batch || {}) };
+  const missing = unique.filter((sym) => prices[sym] == null);
+  if (missing.length === 0) return prices;
+
+  const { session, authenticated } = await resolveActiveRobinhoodSession(profileId);
+  if (!session || !authenticated) return prices;
+
+  const urls = await buildRhUrls();
+  const auth = authHeader(session);
+  await authLog(`batch quotes gap-fill individual count=${missing.length}`);
+
+  const filled = await mapPool(missing, async (symbol) => {
+    try {
+      const quote = await requestGet(urls.quotes(symbol), auth);
+      const price = extractRobinhoodQuotePrice(quote);
+      if (price == null) return null;
+      return { symbol, price };
+    } catch (err) {
+      await authLog(`individual quote failed ${symbol}: ${err?.message || err}`);
+      return null;
+    }
+  }, 6);
+
+  for (const row of filled) {
+    if (row?.symbol && row.price != null) prices[row.symbol] = row.price;
+  }
+
+  await authLog(`live quotes total count=${Object.keys(prices).length}/${unique.length}`);
+  return prices;
+}
+
+/** Robinhood-reported account equity (matches mobile app net equity when linked). */
+export async function fetchRobinhoodAccountSummary(profileId) {
+  const { session, authenticated } = await resolveActiveRobinhoodSession(profileId);
+  if (!session || !authenticated) return null;
+
+  const urls = await buildRhUrls();
+  try {
+    const data = await requestGet(urls.accounts, authHeader(session));
+    const acct = selectPrimaryRobinhoodAccount(data?.results);
+    if (!acct) {
+      await authLog('account summary empty results');
+      return null;
+    }
+    const cash = extractPortfolioCash(acct);
+    let reported = extractReportedNetEquity(acct) || 0;
+    let equitySource = 'accounts';
+    let portfolioSnapshot = null;
+    const auth = authHeader(session);
+    const accountNumber = accountNumberFromRecord(acct);
+
+    if (accountNumber) {
+      try {
+        portfolioSnapshot = await requestGet(urls.portfolioByAccount(accountNumber), auth);
+        const fromDirect = extractReportedNetEquityFromPortfolio(portfolioSnapshot);
+        if (fromDirect != null && fromDirect > 0) {
+          reported = fromDirect;
+          equitySource = 'portfolio-direct';
+        }
+      } catch (err) {
+        await authLog(`direct portfolio fetch failed acct=${accountNumber}: ${err?.message || err}`);
+      }
+    }
+
+    if (!(reported > 0) && acct.portfolio) {
+      try {
+        portfolioSnapshot = await requestGet(acct.portfolio, auth);
+        const fromLinked = extractReportedNetEquityFromPortfolio(portfolioSnapshot);
+        if (fromLinked != null && fromLinked > 0) {
+          reported = fromLinked;
+          equitySource = 'portfolio-linked';
+        }
+      } catch (err) {
+        await authLog(`linked portfolio fetch failed: ${err?.message || err}`);
+      }
+    }
+
+    if (!(reported > 0)) {
+      try {
+        const pfList = await requestGet(urls.portfolios, auth);
+        portfolioSnapshot = selectPrimaryPortfolio(pfList?.results, acct.portfolio) || portfolioSnapshot;
+        const fromList = extractReportedNetEquityFromPortfolio(portfolioSnapshot);
+        if (fromList != null && fromList > 0) {
+          reported = fromList;
+          equitySource = 'portfolios-list';
+        }
+      } catch (err) {
+        await authLog(`portfolios list fetch failed: ${err?.message || err}`);
+      }
+    }
+
+    let pendingDividendTotal = 0;
+    try {
+      const dividends = await requestGet(urls.dividends, auth);
+      for (const row of (dividends?.results || [])) {
+        const state = String(row?.state || '').toLowerCase();
+        if (state && state !== 'pending' && state !== 'confirmed') continue;
+        const amount = parseFloat(row?.amount || row?.cash_amount || '0');
+        if (Number.isFinite(amount) && amount > 0) pendingDividendTotal += amount;
+      }
+      pendingDividendTotal = Math.round(pendingDividendTotal * 100) / 100;
+    } catch (err) {
+      await authLog(`dividends fetch skipped: ${err?.message || err}`);
+    }
+
+    const cashBreakdown = buildRobinhoodCashBreakdown(acct, portfolioSnapshot);
+    if (pendingDividendTotal > 0) cashBreakdown.pending_dividends = pendingDividendTotal;
+
+    await authLog(
+      `account equity profile=${profileId} source=${equitySource} accounts=${Array.isArray(data?.results) ? data.results.length : 0} `
+      + `acct_portfolio_equity=${acct.portfolio_equity} pf_equity=${portfolioSnapshot?.equity} `
+      + `pf_market_value=${portfolioSnapshot?.market_value} picked=${reported} cash=${cash} `
+      + `pending_div=${pendingDividendTotal}`,
+    );
+    return {
+      reported_equity: reported,
+      cash,
+      equity_source: equitySource,
+      cash_breakdown: cashBreakdown,
+      pending_dividends: pendingDividendTotal,
+      portfolio_equity: parseFloat(acct.portfolio_equity) || parseFloat(portfolioSnapshot?.equity) || 0,
+      portfolio_market_value: parseFloat(portfolioSnapshot?.market_value) || 0,
+      extended_hours_portfolio_equity: parseFloat(acct.extended_hours_portfolio_equity)
+        || parseFloat(portfolioSnapshot?.extended_hours_equity) || 0,
+      last_core_portfolio_equity: parseFloat(acct.last_core_portfolio_equity)
+        || parseFloat(portfolioSnapshot?.last_core_equity) || 0,
+      account_count: Array.isArray(data?.results) ? data.results.length : 0,
+      account_number: accountNumber,
+    };
+  } catch (err) {
+    await authLog(`account summary failed: ${err?.message || err}`);
+    return null;
+  }
 }
