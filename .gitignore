@@ -66,9 +66,14 @@ robinhood_vault.enc
 **/data/.vault_key
 
 
+# Legacy PyInstaller / local packaging output
+PortfolioSidekick.exe
+PortfolioSidekick.spec.bak
+
 # OS & Agent Files
 .DS_Store
 Thumbs.db
 MEMORY.md
 scratch/
+.cursor/
 
