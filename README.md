@@ -76,15 +76,15 @@ Every release tag (`v*`) triggers CI: **Tauri** desktop builds (Windows/macOS/Li
 If you prefer running the development server locally:
 
 #### Prerequisites
-* **Node.js**: 24+ — major line in `frontend/.node-version`; CI uses `check-latest` for the newest patch
+* **Node.js**: 26+ — major line in `frontend/.node-version`; CI uses `check-latest` for the newest patch
 * **Rust**: stable / latest via [rustup.rs](https://rustup.rs) (`rust-toolchain.toml` pins `stable`; run `rustup update stable` before builds) — required for Tauri desktop builds
 * **Python**: 3.12+ — **optional**, legacy `backend/` reference and `verify_toolkit.py` only (not used at runtime in v1.7.7)
 
 #### Toolchain policy (floating latest stable)
 | Component | Local | CI |
 |-----------|-------|-----|
-| Node | `frontend/.node-version` + Node 24+ | `setup-node@v6` + `check-latest: true` |
-| Rust / Tauri | `rust-toolchain.toml` → `stable` | `dtolnay/rust-toolchain@master` + `swatinem/rust-cache@master` |
+| Node | `frontend/.node-version` + Node 26+ | `setup-node@v6` + `check-latest: true` |
+| Rust / Tauri | `rust-toolchain.toml` → `stable` | `dtolnay/rust-toolchain@master` + `swatinem/rust-cache@v2` |
 | npm deps | `npm run deps:refresh` when upgrading intentionally | `npm ci` (lockfile pinned) |
 | Audit | `npm run toolchain:check` | same script in desktop CI job |
 

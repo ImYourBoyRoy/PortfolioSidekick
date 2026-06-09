@@ -1,8 +1,8 @@
 # Portfolio Sidekick CI — floating latest-stable toolchain policy
 #
 # GitHub official actions: pin latest major tag (v6/v7/v8) + check-latest where supported.
-# Third-party actions: @master only when the repo publishes a master branch; else latest version tag
-#   (android-actions/setup-android has no master — stay on @v4).
+# Third-party actions: @master when the repo publishes master; else latest major version tag
+#   (swatinem/rust-cache@v2, android-actions/setup-android@v4 — no reliable @master).
 # Node: frontend/.node-version major line + actions/setup-node check-latest:true.
 # Rust: rust-toolchain.toml channel=stable + dtolnay/rust-toolchain@master toolchain:stable.
 # Android deps: upgrade-android-build-deps.mjs (Gradle, AGP, Kotlin, AndroidX, Cordova).

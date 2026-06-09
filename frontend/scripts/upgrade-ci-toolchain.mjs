@@ -6,7 +6,8 @@
  * - Node: frontend/.node-version holds the major line; CI uses setup-node check-latest.
  * - Rust: rust-toolchain.toml channel = stable; CI uses dtolnay/rust-toolchain@master.
  * - GitHub official actions: latest major tag + check-latest where supported.
- * - Third-party actions: @master when the repo has a master branch; else latest version tag.
+ * - Third-party actions: @master when the repo has a master branch; else latest major version tag.
+ *   rust-cache: @v2 (no reliable master pin; explicit workspace target mapping).
  *
  * Usage:
  *   node scripts/upgrade-ci-toolchain.mjs           # report (default)
@@ -34,7 +35,7 @@ const EXPECTED_CI_ACTIONS = [
   { pattern: /check-latest:\s*true/, label: 'setup-node check-latest: true' },
   { pattern: /dtolnay\/rust-toolchain@master\b/, label: 'dtolnay/rust-toolchain@master' },
   { pattern: /toolchain:\s*stable\b/, label: 'rust toolchain: stable' },
-  { pattern: /swatinem\/rust-cache@master\b/, label: 'swatinem/rust-cache@master' },
+  { pattern: /swatinem\/rust-cache@v2\b/, label: 'swatinem/rust-cache@v2' },
   { pattern: /actions\/upload-artifact@v7\b/, label: 'actions/upload-artifact@v7' },
   { pattern: /actions\/download-artifact@v8\b/, label: 'actions/download-artifact@v8' },
   { pattern: /actions\/cache@v5\b/, label: 'actions/cache@v5' },

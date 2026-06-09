@@ -14,15 +14,15 @@ Set-Location $RepoRoot
 Write-Host "Workspace: $RepoRoot" -ForegroundColor Gray
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Error "Node.js is not found on your PATH. Install Node.js 24+."
+    Write-Error "Node.js is not found on your PATH. Install Node.js 26+."
     Exit 1
 }
 
 $nodeVersion = (node -v) -replace 'v', ''
 $nodeMajor = [int]($nodeVersion.Split('.')[0])
 Write-Host "Detected Node.js version $nodeVersion" -ForegroundColor Gray
-if ($nodeMajor -lt 24) {
-    Write-Error "Node.js >= 24 is required (see frontend/.node-version)."
+if ($nodeMajor -lt 26) {
+    Write-Error "Node.js >= 26 is required (see frontend/.node-version)."
     Exit 1
 }
 

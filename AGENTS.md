@@ -7,14 +7,14 @@ This document establishes local execution rules and cutting-edge versioning dire
 We prefer **latest stable at build time** over frozen patch pins, while keeping majors explicit enough to avoid surprise breaking changes.
 
 ### Node.js
-- **Major line:** `frontend/.node-version` (currently `24`).
+- **Major line:** `frontend/.node-version` (currently `26`).
 - **CI:** `actions/setup-node@v6` with `node-version-file` + `check-latest: true` (latest patch of that major).
-- **Local:** Node 24+ required (`package.json` `engines.node`).
+- **Local:** Node 26+ required (`package.json` `engines.node`).
 - **Refresh:** `npm run toolchain:audit` or `node frontend/scripts/upgrade-ci-toolchain.mjs --sync-node` when bumping the major line.
 
 ### Rust / Tauri (desktop)
 - **Channel:** `frontend/src-tauri/rust-toolchain.toml` → `channel = "stable"` (no patch pin).
-- **CI:** `dtolnay/rust-toolchain@master` with `toolchain: stable` + `swatinem/rust-cache@master`.
+- **CI:** `dtolnay/rust-toolchain@master` with `toolchain: stable` + `swatinem/rust-cache@v2`.
 - **Local:** `rustup update stable` before Tauri builds (`compile_windows.ps1` does this).
 - **Crates:** Tauri/npm deps use semver ranges in `Cargo.toml` / `package.json`. Run `npm run deps:refresh` locally when intentionally upgrading; do **not** blind `cargo update` in CI without a green build.
 
@@ -23,7 +23,8 @@ We prefer **latest stable at build time** over frozen patch pins, while keeping 
 |------|------|
 | **Official actions** | Latest major tag (`checkout@v6`, `setup-node@v6`, `upload-artifact@v7`, `download-artifact@v8`, `cache@v5`, `setup-java@v5`) |
 | **check-latest** | Enable on `setup-node` and `setup-java` where supported |
-| **Third-party with `master`** | Pin `@master` (`dtolnay/rust-toolchain`, `swatinem/rust-cache`, `softprops/action-gh-release`) |
+| **Third-party with `master`** | Pin `@master` (`dtolnay/rust-toolchain`, `softprops/action-gh-release`) |
+| **Third-party version majors** | Latest major tag when `@master` is unsafe (`swatinem/rust-cache@v2`, `android-actions/setup-android@v4`) |
 | **Third-party without `master`** | Latest version tag only (`android-actions/setup-android@v4` — `@master` fails) |
 
 ### Linux desktop (ubuntu-latest apt)

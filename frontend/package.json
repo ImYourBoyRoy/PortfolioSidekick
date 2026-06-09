@@ -16,7 +16,7 @@
     "toolchain:check": "node scripts/upgrade-ci-toolchain.mjs --check"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "dependencies": {
     "@capacitor/browser": "^8.0.3",
