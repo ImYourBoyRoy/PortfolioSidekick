@@ -1,6 +1,6 @@
 [package]
 name = "portfolio-sidekick"
-version = "1.7.14"
+version = "1.7.15"
 description = "Portfolio Sidekick — secure local Robinhood portfolio toolkit"
 authors = ["Roy Dawson IV"]
 license = "MIT"
