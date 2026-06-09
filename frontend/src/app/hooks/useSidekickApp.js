@@ -5,11 +5,11 @@ import {
   robinhoodClient, evolveWeights, generateViabilityForecast, calculateMarketStrength,
   calculateAtr, DEFAULT_INDICATORS, RISK_PROFILES, INDICATOR_META, getIndicatorConfig,
   fetchMarketNews, formatNewsTime, fetchCongressTrades, formatCongressTradeDate, formatCongressSyncStatus,
-  STOCK_ACT_MAX_LAG_DAYS, checkForAppUpdate, openUpdateDownload,
+  STOCK_ACT_MAX_LAG_DAYS, checkForAppUpdate, openUpdateDownload, copyUpdateDownloadUrl, getPreferredUpdateUrl,
 } from '../../serverless';
-import { sidekickFetch } from '../../sidekickClient';
+import { sidekickFetch, robinhoodTransportLabel, robinhoodLoginDebugHint } from '../../sidekickClient';
 import { APP_VERSION } from '../../appVersion';
-import { probeDesktopAuth, desktopAuthReadyMessage } from '../../serverless/desktopAuthProbe';
+import { probeDesktopAuth, desktopAuthReadyMessage, authShellIsReady } from '../../serverless/desktopAuthProbe';
 import { getPulseIntervalMs, PULSE_PRESETS, RH_REQUESTS_PER_MINUTE } from '../../serverless/liveQuotes';
 import { waitForRobinhoodSession } from '../../serverless/robinhoodAuth';
 import { DEMO_HOLDINGS_SEED, SHADOW_COACH_SEED_TICKERS } from '../../serverless/portfolioConstants';
@@ -417,15 +417,31 @@ export function useSidekickApp() {
     }
   }, [showToast]);
 
-  const downloadLatestUpdate = useCallback(() => {
-    if (updateInfo?.downloadUrl) {
-      openUpdateDownload(updateInfo.downloadUrl);
+  const downloadLatestUpdate = useCallback(async () => {
+    const url = getPreferredUpdateUrl(updateInfo);
+    if (!url) {
+      showToast('No download URL yet — check for updates first.', 'warning');
       return;
     }
-    if (updateInfo?.releaseUrl) {
-      openUpdateDownload(updateInfo.releaseUrl);
+    const opened = await openUpdateDownload(url);
+    if (!opened) {
+      showToast('Could not open the download link. Use Copy update link instead.', 'warning', 9000);
     }
-  }, [updateInfo]);
+  }, [updateInfo, showToast]);
+
+  const copyLatestUpdateLink = useCallback(async () => {
+    const url = getPreferredUpdateUrl(updateInfo);
+    if (!url) {
+      showToast('No download URL yet — check for updates first.', 'warning');
+      return;
+    }
+    const copied = await copyUpdateDownloadUrl(url);
+    showToast(
+      copied ? 'Update link copied to clipboard.' : 'Copy failed — open Settings again after checking for updates.',
+      copied ? 'success' : 'warning',
+      7000,
+    );
+  }, [updateInfo, showToast]);
 
   const loadCongressTrades = useCallback(async (force = false) => {
     setCongressLoading(true);
@@ -1724,8 +1740,9 @@ export function useSidekickApp() {
     e.preventDefault();
     if (
       loginStatus.status !== "mfa_required" &&
-      desktopAuthProbe?.isTauri &&
-      !(desktopAuthProbe.rustAuth && desktopAuthProbe.authLogExists)
+      desktopAuthProbe &&
+      ['desktop', 'android'].includes(desktopAuthProbe.platform) &&
+      !authShellIsReady(desktopAuthProbe)
     ) {
       setLoginStatus({
         status: "error",
@@ -1765,11 +1782,12 @@ export function useSidekickApp() {
     loginGraceUntilRef.current = 0;
     mfaPollInFlightRef.current = false;
     setLoading(true);
-    setLoginStatus({ status: "processing", message: "Contacting Robinhood API (native Rust)..." });
+    const transport = robinhoodTransportLabel();
+    setLoginStatus({ status: "processing", message: `Contacting Robinhood API (${transport})...` });
     const slowTimer = setTimeout(() => {
       setLoginStatus((prev) => (
         prev.status === "processing"
-          ? { ...prev, message: "Still contacting Robinhood (native Rust HTTP, up to 45s). Check auth.log for the latest step." }
+          ? { ...prev, message: `Still contacting Robinhood (${transport}, up to 45s).${robinhoodLoginDebugHint()}` }
           : prev
       ));
     }, 4000);
@@ -1784,7 +1802,7 @@ export function useSidekickApp() {
       await applyLoginResult(data);
     } catch (err) {
       const hint = err.message?.includes("timed out") || err.message?.includes("auth.log")
-        ? " Open <exe>/data/auth.log and share the last 5 lines."
+        ? robinhoodLoginDebugHint()
         : "";
       setLoginStatus({
         status: "error",
@@ -2037,10 +2055,10 @@ export function useSidekickApp() {
     chartOverlays, setChartOverlays, indicatorSettings, riskProfile, newsData, newsLoading,
     loadMarketNews, congressData, congressLoading, loadCongressTrades, formatCongressTradeDate,
     congressSyncStatus, STOCK_ACT_MAX_LAG_DAYS, formatRelativeTime,
-    openRobinhoodLogin, updateInfo, updateChecking, checkForUpdates, downloadLatestUpdate,
+    openRobinhoodLogin, updateInfo, updateChecking, checkForUpdates, downloadLatestUpdate, copyLatestUpdateLink,
     openNewsLink, isCoachMode, setIsCoachMode, showManualAdjust, setShowManualAdjust,
         guesses, setGuesses, analytics, setAnalytics, isLoginOpen, setIsLoginOpen, loginForm, setLoginForm,
-    loginStatus, setLoginStatus, desktopAuthProbe, desktopAuthReadyMessage, isImportOpen, setIsImportOpen,
+    loginStatus, setLoginStatus, desktopAuthProbe, desktopAuthReadyMessage, authShellIsReady, isImportOpen, setIsImportOpen,
     clipboardText, setClipboardText, guessForm, setGuessForm, holdingForm, setHoldingForm,
     predictionTab, setPredictionTab, viabilityData, setViabilityData, viabilityHorizon, setViabilityHorizon,
     viabilityWeights, setViabilityWeights, isDnaOpen, setIsDnaOpen, watchlist, setWatchlist,

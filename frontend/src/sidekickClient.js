@@ -36,6 +36,24 @@ export function isDesktopShell() {
   return getRuntimeMode() === 'desktop-shell';
 }
 
+/** User-facing label for Robinhood HTTP transport during login. */
+export function robinhoodTransportLabel() {
+  if (isDesktopShell()) return 'native Rust HTTP';
+  if (isAndroidNative()) return 'secure mobile HTTP';
+  return 'embedded HTTP';
+}
+
+/** Short hint when Robinhood login stalls or times out. */
+export function robinhoodLoginDebugHint() {
+  if (isDesktopShell()) {
+    return ' Open <exe>/data/auth.log and share the last 5 lines.';
+  }
+  if (isAndroidNative()) {
+    return ' Try again on Wi‑Fi, approve MFA in the Robinhood app, or reinstall the latest APK from GitHub Releases.';
+  }
+  return '';
+}
+
 /**
  * Drop-in fetch replacement for App.jsx API calls.
  * Path should be like `/profiles` or `/portfolio/holdings?profile_id=1` (with or without /api prefix).

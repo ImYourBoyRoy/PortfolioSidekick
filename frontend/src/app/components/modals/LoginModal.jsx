@@ -37,7 +37,7 @@ export default function LoginModal() {
               <p className="modal-subtitle" style={{ fontSize: '10.5px', lineHeight: '1.5', margin: '0 8px' }}>
                 Connecting your account is entirely optional! All planning, predicting, and rebalancing tools work offline. If you sync, Robinhood OAuth tokens are stored in an encrypted on-device vault — passwords are never persisted.
               </p>
-              {s.desktopAuthProbe && (
+              {s.desktopAuthProbe && s.desktopAuthProbe.platform !== 'dev' && (
                 <p
                   className="modal-subtitle"
                   style={{
@@ -46,13 +46,13 @@ export default function LoginModal() {
                     margin: '10px 8px 0',
                     padding: '8px 10px',
                     borderRadius: '8px',
-                    border: s.desktopAuthProbe.rustAuth && s.desktopAuthProbe.authLogExists
+                    border: s.authShellIsReady(s.desktopAuthProbe)
                       ? '1px solid rgba(16, 185, 129, 0.35)'
                       : '1px solid rgba(251, 191, 36, 0.45)',
-                    color: s.desktopAuthProbe.rustAuth && s.desktopAuthProbe.authLogExists
+                    color: s.authShellIsReady(s.desktopAuthProbe)
                       ? 'var(--color-buy)'
                       : '#fbbf24',
-                    background: s.desktopAuthProbe.rustAuth && s.desktopAuthProbe.authLogExists
+                    background: s.authShellIsReady(s.desktopAuthProbe)
                       ? 'rgba(16, 185, 129, 0.08)'
                       : 'rgba(251, 191, 36, 0.08)',
                   }}

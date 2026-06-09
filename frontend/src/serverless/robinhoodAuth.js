@@ -23,6 +23,7 @@ import {
   sessionPayload,
 } from './robinhoodAuthCore';
 import { isSandboxUsername } from './authUtils';
+import { isAndroidNative, isDesktopShell } from '../sidekickClient';
 import {
   getPortableDataDirectory,
   isPortableDesktop,
@@ -60,7 +61,15 @@ function withInvokeTimeout(promise, ms, label) {
   return Promise.race([
     promise,
     sleep(ms).then(() => {
-      throw new Error(`${label} timed out after ${Math.round(ms / 1000)}s. Open auth.log beside portfolio-sidekick.exe for the last step.`);
+      throw new Error(
+        `${label} timed out after ${Math.round(ms / 1000)}s.${
+          isDesktopShell()
+            ? ' Open auth.log beside portfolio-sidekick.exe for the last step.'
+            : isAndroidNative()
+              ? ' Approve MFA in the Robinhood app or retry on a stable connection.'
+              : ''
+        }`
+      );
     }),
   ]);
 }

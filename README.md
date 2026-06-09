@@ -104,9 +104,17 @@ If you prefer running the development server locally:
    ```bash
    cd frontend
    npm run build
+   npx cap add android   # first time only
    npx cap sync android
+   node scripts/patch-android-build.mjs
    ```
    ***Experimental:** Robinhood auth uses embedded JS + CapacitorHttp; Kotlin plugin stores encrypted sessions. Prefer desktop Tauri for production Robinhood sync until Android is validated on a physical device.*
+
+   **Sideload upgrades (install over existing APK):** Android only allows in-place upgrades when the new APK is signed with the **same key** and has a **higher `versionCode`**. CI patches `versionCode` from `APP_VERSION` (e.g. `1.7.13` → `10713`) and uses either:
+   - **Release keystore** (recommended): add GitHub Actions secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Generate once with `frontend/scripts/generate-android-keystore.sh` (requires JDK `keytool`).
+   - **Cached debug keystore** (fallback): if no release secrets are set, CI caches `~/.android/debug.keystore` so debug APKs keep a stable signature across builds.
+
+   If you installed an older GitHub APK (v1.7.12 or earlier), you may need to **uninstall once** because those builds used ephemeral debug keys. After that, v1.7.13+ APKs from the same signing path should upgrade in place.
 
 ---
 

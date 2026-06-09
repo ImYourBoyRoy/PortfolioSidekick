@@ -222,15 +222,35 @@ jobs:
           chmod +x frontend/scripts/inject-android-native.sh
           frontend/scripts/inject-android-native.sh
 
+      - name: Patch Android versionCode and signing config
+        run: node frontend/scripts/patch-android-build.mjs
+
+      - name: Cache Android debug keystore (consistent sideload signature fallback)
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: sidekick-android-debug-keystore-v1
+
       - name: Compile Android APK via Gradle
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SIDEKICK_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SIDEKICK_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SIDEKICK_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           cd frontend/android
           chmod +x gradlew
-          ./gradlew assembleDebug
-
-      - name: Copy & Name APK
-        run: |
-          cp frontend/android/app/build/outputs/apk/debug/app-debug.apk ./PortfolioSidekick-Android.apk
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            mkdir -p keystore
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > keystore/sidekick-release.jks
+            export SIDEKICK_ANDROID_KEYSTORE="$(pwd)/keystore/sidekick-release.jks"
+            ./gradlew assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk ../../PortfolioSidekick-Android.apk
+          else
+            echo "No ANDROID_KEYSTORE_BASE64 secret — building debug APK with cached debug.keystore"
+            ./gradlew assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk ../../PortfolioSidekick-Android.apk
+          fi
 
       - name: Upload Mobile APK Artifact
         uses: actions/upload-artifact@v7

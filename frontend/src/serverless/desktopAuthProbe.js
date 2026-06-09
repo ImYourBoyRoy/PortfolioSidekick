@@ -1,34 +1,64 @@
 // ./frontend/src/serverless/desktopAuthProbe.js
 /**
- * Probes Tauri desktop native Robinhood auth and portable data paths at startup.
- * Used to surface wrong-executable mistakes before login hangs.
+ * Probes auth shell readiness at startup — Tauri desktop vs Capacitor Android vs dev browser.
+ * Surfaces platform-appropriate status in the Robinhood login modal.
  *
  * Created by: Roy Dawson IV
  */
 
+import { Capacitor } from '@capacitor/core';
 import { APP_VERSION } from '../appVersion';
+import { isAndroidNative, isDesktopShell } from '../sidekickClient';
+import { isTauriShellSync } from './storagePaths';
 
 /**
  * @returns {Promise<{
  *   version: string,
+ *   platform: 'desktop' | 'android' | 'dev',
  *   isTauri: boolean,
  *   rustAuth: boolean,
+ *   vaultReady: boolean,
  *   dataPath: string | null,
  *   authLogExists: boolean,
  * }>}
  */
 export async function probeDesktopAuth() {
-  const result = {
+  const base = {
     version: APP_VERSION,
+    platform: 'dev',
     isTauri: false,
     rustAuth: false,
+    vaultReady: false,
     dataPath: null,
     authLogExists: false,
   };
 
+  if (isAndroidNative()) {
+    let vaultReady = false;
+    try {
+      vaultReady = Capacitor.isPluginAvailable('RobinhoodSession');
+    } catch {
+      // Plugin probe failed.
+    }
+    return {
+      ...base,
+      platform: 'android',
+      vaultReady,
+    };
+  }
+
+  if (!isDesktopShell() || !isTauriShellSync()) {
+    return base;
+  }
+
+  const result = {
+    ...base,
+    platform: 'desktop',
+    isTauri: true,
+  };
+
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    result.isTauri = true;
 
     try {
       result.dataPath = await invoke('portable_data_path');
@@ -58,16 +88,35 @@ export async function probeDesktopAuth() {
       // Best effort.
     }
   } catch {
-    // Not a Tauri shell (browser dev, pywebview legacy, etc.).
+    result.isTauri = false;
+    result.platform = 'dev';
   }
 
   return result;
 }
 
+/** @param {Awaited<ReturnType<typeof probeDesktopAuth>> | null | undefined} probe */
+export function authShellIsReady(probe) {
+  if (!probe) return false;
+  if (probe.platform === 'android') return probe.vaultReady === true;
+  if (probe.platform === 'desktop') return probe.rustAuth === true && probe.authLogExists === true;
+  return false;
+}
+
 export function desktopAuthReadyMessage(probe) {
-  if (!probe?.isTauri) {
-    return 'Robinhood login requires the Tauri desktop app (portfolio-sidekick.exe), not the browser dev server.';
+  if (!probe) return '';
+
+  if (probe.platform === 'android') {
+    if (probe.vaultReady) {
+      return `Android · v${probe.version} · encrypted on-device vault · sessions stay on this phone (not synced to desktop)`;
+    }
+    return `Android secure vault unavailable — reinstall PortfolioSidekick-Android.apk v${probe.version}+ from GitHub Releases.`;
   }
+
+  if (probe.platform === 'dev') {
+    return 'Robinhood login requires the Tauri desktop app or Android APK — not the browser dev server alone.';
+  }
+
   if (probe.rustAuth && probe.authLogExists) {
     return `Native auth ready · v${probe.version} · encrypted vault · ${probe.dataPath}`;
   }

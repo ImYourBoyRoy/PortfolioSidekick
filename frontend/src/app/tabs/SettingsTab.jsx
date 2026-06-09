@@ -3,8 +3,9 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
-import { Info, Settings, Save, RotateCcw, ShieldCheck, Zap, Gauge, FileSearch, EyeOff, Eye, Download, RefreshCw, Package } from 'lucide-react';
+import { Info, Settings, Save, RotateCcw, ShieldCheck, Zap, Gauge, FileSearch, EyeOff, Eye, Download, RefreshCw, Package, Link2 } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
+import { isAndroidNative } from '../../sidekickClient';
 
 export default function SettingsTab() {
   const s = useSidekick();
@@ -37,17 +38,45 @@ export default function SettingsTab() {
                 {s.updateChecking ? 'Checking…' : 'Check for updates'}
               </button>
               {s.updateInfo?.updateAvailable && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { void s.downloadLatestUpdate(); }}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '11px', fontWeight: 800,
+                      padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                      background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(167,139,250,0.35)', color: '#ddd6fe',
+                    }}
+                  >
+                    <Download style={{ width: 13, height: 13 }} />
+                    Download v{s.updateInfo.latestVersion}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { void s.copyLatestUpdateLink(); }}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '11px', fontWeight: 800,
+                      padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                      background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.22)', color: '#6ee7b7',
+                    }}
+                  >
+                    <Link2 style={{ width: 13, height: 13 }} />
+                    Copy update link
+                  </button>
+                </>
+              )}
+              {s.updateInfo && (s.updateInfo.downloadUrl || s.updateInfo.releaseUrl) && !s.updateInfo.updateAvailable && (
                 <button
                   type="button"
-                  onClick={s.downloadLatestUpdate}
+                  onClick={() => { void s.copyLatestUpdateLink(); }}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '11px', fontWeight: 800,
                     padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
-                    background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(167,139,250,0.35)', color: '#ddd6fe',
+                    background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.22)', color: '#6ee7b7',
                   }}
                 >
-                  <Download style={{ width: 13, height: 13 }} />
-                  Download v{s.updateInfo.latestVersion}
+                  <Link2 style={{ width: 13, height: 13 }} />
+                  Copy release link
                 </button>
               )}
             </div>
@@ -66,6 +95,12 @@ export default function SettingsTab() {
                   <span style={{ display: 'block', marginTop: 4, color: 'var(--text-muted)' }}>
                     Last checked {s.formatRelativeTime(s.updateInfo.checkedAt)}
                     {s.updateInfo.fromCache ? ' (cached)' : ''}.
+                  </span>
+                )}
+                {s.updateInfo.platform === 'android' && (
+                  <span style={{ display: 'block', marginTop: 8, color: 'var(--text-muted)' }}>
+                    Android sideload updates require the same APK signature and a higher build number.
+                    If install-over fails, uninstall once, then install the new APK. Releases from v1.7.13 onward use a consistent CI signature.
                   </span>
                 )}
               </div>
@@ -226,8 +261,10 @@ export default function SettingsTab() {
             </h4>
             <p style={{ margin: '0 0 12px 0', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
               If Account Net Equity does not match Robinhood after Sync, run this to capture a sanitized API snapshot
-              (no passwords/tokens) to <code style={{ color: '#c4b5fd' }}>data/equity_debug.json</code> beside the executable.
-              Also check <code style={{ color: '#c4b5fd' }}>data/auth.log</code> for the latest account equity line.
+              (no passwords/tokens) to <code style={{ color: '#c4b5fd' }}>equity_debug.json</code>
+              {isAndroidNative()
+                ? ' in the app\'s private storage on this device.'
+                : <> beside the executable. Also check <code style={{ color: '#c4b5fd' }}>data/auth.log</code> for the latest account equity line.</>}
             </p>
             <button
               type="button"

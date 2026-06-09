@@ -135,12 +135,77 @@ export async function checkForAppUpdate(currentVersion, options = {}) {
   return payload;
 }
 
+/** @param {{ downloadUrl?: string | null, releaseUrl?: string | null } | null | undefined} info */
+export function getPreferredUpdateUrl(info) {
+  return info?.downloadUrl || info?.releaseUrl || null;
+}
+
 /** @param {string} url */
-export function openUpdateDownload(url) {
-  if (!url) return;
+export async function copyUpdateDownloadUrl(url) {
+  if (!url || typeof window === 'undefined') return false;
   try {
-    window.open(url, '_blank', 'noopener,noreferrer');
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      return true;
+    }
   } catch {
+    // Fall through to legacy copy.
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = url;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    textarea.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** @param {string} url */
+export async function openUpdateDownload(url) {
+  if (!url || typeof window === 'undefined') return false;
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const { Browser } = await import('@capacitor/browser');
+      await Browser.open({ url });
+      return true;
+    } catch {
+      // Fall through to web-style openers.
+    }
+  }
+
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return true;
+  } catch {
+    // Fall through.
+  }
+
+  try {
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (opened) return true;
+  } catch {
+    // Fall through.
+  }
+
+  try {
     window.location.href = url;
+    return true;
+  } catch {
+    return false;
   }
 }

@@ -23,6 +23,8 @@ export {
 export {
   checkForAppUpdate,
   openUpdateDownload,
+  copyUpdateDownloadUrl,
+  getPreferredUpdateUrl,
   detectUpdatePlatform,
   isNewerVersion,
 } from './updateChecker';
