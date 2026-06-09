@@ -67,6 +67,13 @@ function ensureReleaseSigning(gradle) {
   );
 }
 
+function ensureAgp9ProguardCompat(gradle) {
+  return gradle.replace(
+    /getDefaultProguardFile\('proguard-android\.txt'\)/g,
+    "getDefaultProguardFile('proguard-android-optimize.txt')",
+  );
+}
+
 if (!existsSync(buildGradlePath)) {
   console.error(`Missing ${buildGradlePath}. Run npx cap add android first.`);
   process.exit(1);
@@ -80,6 +87,7 @@ gradle = gradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`);
 gradle = gradle.replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
 gradle = ensureSigningConfig(gradle);
 gradle = ensureReleaseSigning(gradle);
+gradle = ensureAgp9ProguardCompat(gradle);
 
 writeFileSync(buildGradlePath, gradle);
 console.log(`Patched Android build: versionName=${versionName} versionCode=${versionCode}`);

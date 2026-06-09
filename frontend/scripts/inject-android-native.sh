@@ -2,6 +2,7 @@
 # ./frontend/scripts/inject-android-native.sh
 # Injects Kotlin native Robinhood vault plugin and security hardening into the
 # Capacitor Android project. Requires `npx cap sync android` first.
+# AGP/Kotlin/AndroidX versions are refreshed afterward by upgrade-android-build-deps.mjs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
