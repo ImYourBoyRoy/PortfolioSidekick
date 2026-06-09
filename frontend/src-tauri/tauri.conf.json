@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Portfolio Sidekick",
-  "version": "1.7.16",
+  "version": "1.7.17",
   "identifier": "com.imyourboyroy.portfoliosidekick",
   "build": {
     "frontendDist": "../dist",

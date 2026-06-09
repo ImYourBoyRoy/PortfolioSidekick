@@ -14,6 +14,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(__dirname, '..');
 const appVersionPath = resolve(frontendRoot, 'src/appVersion.js');
 const buildGradlePath = resolve(frontendRoot, 'android/app/build.gradle');
+const variablesGradlePath = resolve(frontendRoot, 'android/variables.gradle');
 
 function readAppVersion() {
   const src = readFileSync(appVersionPath, 'utf8');
@@ -74,6 +75,41 @@ function ensureAgp9ProguardCompat(gradle) {
   );
 }
 
+function readSdkVersions() {
+  if (!existsSync(variablesGradlePath)) {
+    return { compileSdk: 36, targetSdk: 36, minSdk: 24 };
+  }
+  const src = readFileSync(variablesGradlePath, 'utf8');
+  const read = (key, fallback) => {
+    const match = src.match(new RegExp(`${key}\\s*=\\s*(\\d+)`));
+    return match ? Number(match[1]) : fallback;
+  };
+  return {
+    compileSdk: read('compileSdkVersion', 36),
+    targetSdk: read('targetSdkVersion', 36),
+    minSdk: read('minSdkVersion', 24),
+  };
+}
+
+/** AGP 9+ requires literal compileSdk/minSdk/targetSdk in app/build.gradle. */
+function ensureExplicitSdkVersions(gradle) {
+  const { compileSdk, targetSdk, minSdk } = readSdkVersions();
+  let next = gradle;
+  next = next.replace(
+    /compileSdk\s*=\s*rootProject\.ext\.compileSdkVersion/,
+    `compileSdk ${compileSdk}`,
+  );
+  next = next.replace(
+    /minSdkVersion rootProject\.ext\.minSdkVersion/,
+    `minSdk ${minSdk}`,
+  );
+  next = next.replace(
+    /targetSdkVersion rootProject\.ext\.targetSdkVersion/,
+    `targetSdk ${targetSdk}`,
+  );
+  return next;
+}
+
 if (!existsSync(buildGradlePath)) {
   console.error(`Missing ${buildGradlePath}. Run npx cap add android first.`);
   process.exit(1);
@@ -88,6 +124,7 @@ gradle = gradle.replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`)
 gradle = ensureSigningConfig(gradle);
 gradle = ensureReleaseSigning(gradle);
 gradle = ensureAgp9ProguardCompat(gradle);
+gradle = ensureExplicitSdkVersions(gradle);
 
 writeFileSync(buildGradlePath, gradle);
 console.log(`Patched Android build: versionName=${versionName} versionCode=${versionCode}`);

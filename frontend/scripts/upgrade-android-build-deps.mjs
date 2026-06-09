@@ -10,7 +10,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import {
@@ -126,6 +126,112 @@ function replaceInFileOptional(filePath, pattern, replacement) {
   return true;
 }
 
+function readSdkVersions() {
+  const src = readFileSync(variablesGradle, 'utf8');
+  const read = (key, fallback) => {
+    const match = src.match(new RegExp(`${key}\\s*=\\s*(\\d+)`));
+    return match ? Number(match[1]) : fallback;
+  };
+  return {
+    compileSdk: read('compileSdkVersion', 36),
+    targetSdk: read('targetSdkVersion', 36),
+    minSdk: read('minSdkVersion', 24),
+  };
+}
+
+/** AGP 9+ requires literal compileSdk/minSdk/targetSdk in app/build.gradle. */
+function ensureExplicitSdkVersions() {
+  const { compileSdk, targetSdk, minSdk } = readSdkVersions();
+  let contents = readFileSync(appGradle, 'utf8');
+  contents = contents.replace(
+    /compileSdk\s*=\s*rootProject\.ext\.compileSdkVersion/,
+    `compileSdk ${compileSdk}`,
+  );
+  contents = contents.replace(
+    /minSdkVersion rootProject\.ext\.minSdkVersion/,
+    `minSdk ${minSdk}`,
+  );
+  contents = contents.replace(
+    /targetSdkVersion rootProject\.ext\.targetSdkVersion/,
+    `targetSdk ${targetSdk}`,
+  );
+  writeFileSync(appGradle, contents);
+}
+
+/**
+ * @param {string} contents
+ * @param {{ compileSdk: number, targetSdk: number, minSdk: number }} sdk
+ */
+function patchGradleContentsForAgp9(contents, sdk) {
+  let next = contents;
+  next = next.replace(/^apply plugin: 'kotlin-android'\s*\n/m, '');
+  next = next.replace(/^apply plugin: 'org\.jetbrains\.kotlin\.android'\s*\n/m, '');
+  next = next.replace(
+    /compileSdk\s*=\s*project\.hasProperty\('compileSdkVersion'\)\s*\?\s*rootProject\.ext\.compileSdkVersion\s*:\s*\d+/g,
+    `compileSdk ${sdk.compileSdk}`,
+  );
+  next = next.replace(
+    /compileSdk\s*=\s*rootProject\.ext\.compileSdkVersion/g,
+    `compileSdk ${sdk.compileSdk}`,
+  );
+  next = next.replace(
+    /minSdkVersion project\.hasProperty\('minSdkVersion'\)\s*\?\s*rootProject\.ext\.minSdkVersion\s*:\s*\d+/g,
+    `minSdk ${sdk.minSdk}`,
+  );
+  next = next.replace(
+    /minSdkVersion rootProject\.ext\.minSdkVersion/g,
+    `minSdk ${sdk.minSdk}`,
+  );
+  next = next.replace(
+    /targetSdkVersion project\.hasProperty\('targetSdkVersion'\)\s*\?\s*rootProject\.ext\.targetSdkVersion\s*:\s*\d+/g,
+    `targetSdk ${sdk.targetSdk}`,
+  );
+  next = next.replace(
+    /targetSdkVersion rootProject\.ext\.targetSdkVersion/g,
+    `targetSdk ${sdk.targetSdk}`,
+  );
+  next = next.replace(/\s*classpath "org\.jetbrains\.kotlin:kotlin-gradle-plugin:\$kotlin_version"\n?/g, '\n');
+  next = next.replace(/\s*classpath 'org\.jetbrains\.kotlin:kotlin-gradle-plugin:[^']+'\n?/g, '\n');
+  return next;
+}
+
+function discoverAndroidModuleGradleFiles() {
+  /** @type {string[]} */
+  const files = [
+    appGradle,
+    resolve(androidRoot, 'capacitor-cordova-android-plugins/build.gradle'),
+  ];
+
+  const settingsPath = resolve(androidRoot, 'capacitor.settings.gradle');
+  if (existsSync(settingsPath)) {
+    const settings = readFileSync(settingsPath, 'utf8');
+    for (const match of settings.matchAll(/projectDir\s*=\s*new\s+File\('([^']+)'\)/g)) {
+      const gradleFile = resolve(androidRoot, join(match[1], 'build.gradle'));
+      if (existsSync(gradleFile)) files.push(gradleFile);
+    }
+  }
+
+  return [...new Set(files)];
+}
+
+function stripAgp9IncompatibleKotlin() {
+  let project = readFileSync(projectGradle, 'utf8');
+  project = project.replace(/\s*classpath 'org\.jetbrains\.kotlin:kotlin-gradle-plugin:[^']+'\n?/, '\n');
+  writeFileSync(projectGradle, project);
+}
+
+function patchAllAndroidModulesForAgp9() {
+  const sdk = readSdkVersions();
+  for (const gradleFile of discoverAndroidModuleGradleFiles()) {
+    const before = readFileSync(gradleFile, 'utf8');
+    const after = patchGradleContentsForAgp9(before, sdk);
+    if (after !== before) {
+      writeFileSync(gradleFile, after);
+      console.log(`AGP 9 compat: patched ${gradleFile}`);
+    }
+  }
+}
+
 function ensureKotlinClasspath(version) {
   let contents = readFileSync(projectGradle, 'utf8');
   const line = `        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:${version}'`;
@@ -141,6 +247,13 @@ function ensureKotlinClasspath(version) {
     );
   }
   writeFileSync(projectGradle, contents);
+}
+
+function ensureKotlinAndroidPluginForLegacyAgp() {
+  let contents = readFileSync(appGradle, 'utf8');
+  if (/kotlin-android|org\.jetbrains\.kotlin\.android/.test(contents)) return;
+  contents = `apply plugin: 'kotlin-android'\n${contents}`;
+  writeFileSync(appGradle, contents);
 }
 
 function patchAppDependencyVersions({ kotlin, okhttp, securityCrypto }) {
@@ -249,7 +362,16 @@ if (!replaceInFileOptional(
 }
 
 console.log(`Kotlin stable: ${resolved.kotlin}`);
-ensureKotlinClasspath(resolved.kotlin);
+const agpMajor = Number(String(resolved.agp).split('.')[0] || 0);
+if (agpMajor >= 9) {
+  console.log(`AGP ${resolved.agp}: built-in Kotlin — patching app + Capacitor modules`);
+  stripAgp9IncompatibleKotlin();
+  patchAllAndroidModulesForAgp9();
+} else {
+  console.log(`AGP ${resolved.agp}: applying Kotlin Gradle plugin ${resolved.kotlin}`);
+  ensureKotlinClasspath(resolved.kotlin);
+  ensureKotlinAndroidPluginForLegacyAgp();
+}
 
 Object.keys(VARIABLE_COORDS).forEach((key, index) => {
   const version = variableVersions[index];
@@ -268,6 +390,10 @@ patchAppDependencyVersions({
   okhttp: resolved.okhttp,
   securityCrypto: resolved.securityCrypto,
 });
+
+if (agpMajor < 9) {
+  ensureExplicitSdkVersions();
+}
 
 patchWrapperProperties(resolved.gradle.downloadUrl);
 try {
