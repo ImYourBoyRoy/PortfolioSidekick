@@ -133,10 +133,44 @@ function readSdkVersions() {
     return match ? Number(match[1]) : fallback;
   };
   return {
-    compileSdk: read('compileSdkVersion', 36),
+    compileSdk: read('compileSdkVersion', 37),
     targetSdk: read('targetSdkVersion', 36),
     minSdk: read('minSdkVersion', 24),
   };
+}
+
+/**
+ * @param {string} key
+ * @param {number} value
+ */
+function patchVariableNumericVersion(key, value) {
+  let contents = readFileSync(variablesGradle, 'utf8');
+  const pattern = new RegExp(`(${key}\\s*=\\s*)\\d+`, 'm');
+  if (!pattern.test(contents)) {
+    throw new Error(`variables.gradle missing numeric key: ${key}`);
+  }
+  contents = contents.replace(pattern, `$1${value}`);
+  writeFileSync(variablesGradle, contents);
+}
+
+/**
+ * Raise compileSdk when resolved AndroidX artifacts require a newer API level.
+ * @param {string} androidxCoreVersion
+ */
+function ensureCompileSdkForAndroidX(androidxCoreVersion) {
+  const [major = 0, minor = 0] = String(androidxCoreVersion).split('.').map(Number);
+  let requiredCompileSdk = 36;
+  if (major > 1 || (major === 1 && minor >= 19)) {
+    requiredCompileSdk = 37;
+  }
+
+  const { compileSdk } = readSdkVersions();
+  if (compileSdk >= requiredCompileSdk) return;
+
+  patchVariableNumericVersion('compileSdkVersion', requiredCompileSdk);
+  console.log(
+    `compileSdkVersion -> ${requiredCompileSdk} (androidx.core:core-ktx:${androidxCoreVersion} requires API ${requiredCompileSdk}+)`,
+  );
 }
 
 /** AGP 9+ requires literal compileSdk/minSdk/targetSdk in app/build.gradle. */
@@ -174,6 +208,7 @@ function patchGradleContentsForAgp9(contents, sdk) {
     /compileSdk\s*=\s*rootProject\.ext\.compileSdkVersion/g,
     `compileSdk ${sdk.compileSdk}`,
   );
+  next = next.replace(/compileSdk \d+/g, `compileSdk ${sdk.compileSdk}`);
   next = next.replace(
     /minSdkVersion project\.hasProperty\('minSdkVersion'\)\s*\?\s*rootProject\.ext\.minSdkVersion\s*:\s*\d+/g,
     `minSdk ${sdk.minSdk}`,
@@ -214,12 +249,6 @@ function discoverAndroidModuleGradleFiles() {
   return [...new Set(files)];
 }
 
-function stripAgp9IncompatibleKotlin() {
-  let project = readFileSync(projectGradle, 'utf8');
-  project = project.replace(/\s*classpath 'org\.jetbrains\.kotlin:kotlin-gradle-plugin:[^']+'\n?/, '\n');
-  writeFileSync(projectGradle, project);
-}
-
 function patchAllAndroidModulesForAgp9() {
   const sdk = readSdkVersions();
   for (const gradleFile of discoverAndroidModuleGradleFiles()) {
@@ -256,10 +285,13 @@ function ensureKotlinAndroidPluginForLegacyAgp() {
   writeFileSync(appGradle, contents);
 }
 
-function patchAppDependencyVersions({ kotlin, okhttp, securityCrypto }) {
+function patchAppDependencyVersions({ kotlin, okhttp, securityCrypto }, agpMajor) {
   let contents = readFileSync(appGradle, 'utf8');
 
-  if (contents.includes('kotlin-stdlib')) {
+  if (agpMajor >= 9) {
+    // AGP built-in Kotlin + root KGP classpath supplies a matching stdlib automatically.
+    contents = contents.replace(/\s*implementation "org\.jetbrains\.kotlin:kotlin-stdlib:[^"]+"\n?/g, '\n');
+  } else if (contents.includes('kotlin-stdlib')) {
     contents = contents.replace(
       /org\.jetbrains\.kotlin:kotlin-stdlib:[^"]+/,
       `org.jetbrains.kotlin:kotlin-stdlib:${kotlin}`,
@@ -363,13 +395,13 @@ if (!replaceInFileOptional(
 
 console.log(`Kotlin stable: ${resolved.kotlin}`);
 const agpMajor = Number(String(resolved.agp).split('.')[0] || 0);
-if (agpMajor >= 9) {
-  console.log(`AGP ${resolved.agp}: built-in Kotlin — patching app + Capacitor modules`);
-  stripAgp9IncompatibleKotlin();
-  patchAllAndroidModulesForAgp9();
-} else {
-  console.log(`AGP ${resolved.agp}: applying Kotlin Gradle plugin ${resolved.kotlin}`);
-  ensureKotlinClasspath(resolved.kotlin);
+console.log(
+  agpMajor >= 9
+    ? `AGP ${resolved.agp}: built-in Kotlin — upgrading KGP to ${resolved.kotlin}`
+    : `AGP ${resolved.agp}: applying Kotlin Gradle plugin ${resolved.kotlin}`,
+);
+ensureKotlinClasspath(resolved.kotlin);
+if (agpMajor < 9) {
   ensureKotlinAndroidPluginForLegacyAgp();
 }
 
@@ -383,15 +415,19 @@ Object.keys(VARIABLE_COORDS).forEach((key, index) => {
 patchVariableVersion('cordovaAndroidVersion', resolved.cordovaAndroidVersion);
 console.log(`cordovaAndroidVersion: ${resolved.cordovaAndroidVersion}`);
 
+ensureCompileSdkForAndroidX(resolved.androidxCoreVersion);
+
 console.log(`okhttp stable: ${resolved.okhttp}`);
 console.log(`security-crypto stable: ${resolved.securityCrypto}`);
 patchAppDependencyVersions({
   kotlin: resolved.kotlin,
   okhttp: resolved.okhttp,
   securityCrypto: resolved.securityCrypto,
-});
+}, agpMajor);
 
-if (agpMajor < 9) {
+if (agpMajor >= 9) {
+  patchAllAndroidModulesForAgp9();
+} else {
   ensureExplicitSdkVersions();
 }
 

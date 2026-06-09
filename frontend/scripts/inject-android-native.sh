@@ -13,7 +13,7 @@ cp "$ROOT/native/android/network_security_config.xml" "$ROOT/android/app/src/mai
 
 APP_GRADLE="$ROOT/android/app/build.gradle"
 if ! grep -q "security-crypto" "$APP_GRADLE"; then
-  sed -i "/dependencies {/a\    implementation \"org.jetbrains.kotlin:kotlin-stdlib:2.1.0\"\n    implementation \"com.squareup.okhttp3:okhttp:4.12.0\"\n    implementation \"androidx.security:security-crypto:1.1.0-alpha06\"" "$APP_GRADLE"
+  sed -i "/dependencies {/a\    implementation \"com.squareup.okhttp3:okhttp:4.12.0\"\n    implementation \"androidx.security:security-crypto:1.1.0-alpha06\"" "$APP_GRADLE"
 fi
 
 cat > "$PKG_DIR/MainActivity.java" <<'JAVA'

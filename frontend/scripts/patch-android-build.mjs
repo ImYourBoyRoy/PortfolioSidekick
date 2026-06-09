@@ -77,7 +77,7 @@ function ensureAgp9ProguardCompat(gradle) {
 
 function readSdkVersions() {
   if (!existsSync(variablesGradlePath)) {
-    return { compileSdk: 36, targetSdk: 36, minSdk: 24 };
+    return { compileSdk: 37, targetSdk: 36, minSdk: 24 };
   }
   const src = readFileSync(variablesGradlePath, 'utf8');
   const read = (key, fallback) => {
@@ -85,7 +85,7 @@ function readSdkVersions() {
     return match ? Number(match[1]) : fallback;
   };
   return {
-    compileSdk: read('compileSdkVersion', 36),
+    compileSdk: read('compileSdkVersion', 37),
     targetSdk: read('targetSdkVersion', 36),
     minSdk: read('minSdkVersion', 24),
   };
@@ -99,6 +99,7 @@ function ensureExplicitSdkVersions(gradle) {
     /compileSdk\s*=\s*rootProject\.ext\.compileSdkVersion/,
     `compileSdk ${compileSdk}`,
   );
+  next = next.replace(/compileSdk \d+/, `compileSdk ${compileSdk}`);
   next = next.replace(
     /minSdkVersion rootProject\.ext\.minSdkVersion/,
     `minSdk ${minSdk}`,
