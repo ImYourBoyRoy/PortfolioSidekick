@@ -109,9 +109,10 @@ export default function DashboardTab() {
               {/* Call to Action Buttons */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, justifyContent: 'center', width: '100%', borderTop: '1px solid var(--border-light)', paddingTop: 24 }}>
                 <button
-                  onClick={() => s.triggerSync()}
+                  type="button"
+                  onClick={() => s.openRobinhoodLogin()}
                   className="glowing-sync-cta"
-                  style={{ margin: 0, width: 'auto' }}
+                  style={{ margin: 0, width: 'auto', touchAction: 'manipulation' }}
                 >
                   <RefreshCw style={{ width: 14, height: 14 }} />
                   Connect Robinhood Account for Tracking

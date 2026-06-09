@@ -20,3 +20,9 @@ export {
   STOCK_ACT_MAX_LAG_DAYS,
   CONGRESS_CACHE_TTL_MS,
 } from './congressTrades';
+export {
+  checkForAppUpdate,
+  openUpdateDownload,
+  detectUpdatePlatform,
+  isNewerVersion,
+} from './updateChecker';

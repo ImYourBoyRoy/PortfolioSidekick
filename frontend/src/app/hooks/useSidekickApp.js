@@ -5,7 +5,7 @@ import {
   robinhoodClient, evolveWeights, generateViabilityForecast, calculateMarketStrength,
   calculateAtr, DEFAULT_INDICATORS, RISK_PROFILES, INDICATOR_META, getIndicatorConfig,
   fetchMarketNews, formatNewsTime, fetchCongressTrades, formatCongressTradeDate, formatCongressSyncStatus,
-  STOCK_ACT_MAX_LAG_DAYS,
+  STOCK_ACT_MAX_LAG_DAYS, checkForAppUpdate, openUpdateDownload,
 } from '../../serverless';
 import { sidekickFetch } from '../../sidekickClient';
 import { APP_VERSION } from '../../appVersion';
@@ -120,6 +120,8 @@ export function useSidekickApp() {
   const [congressData, setCongressData] = useState(null);
   const [congressLoading, setCongressLoading] = useState(false);
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
   
   // Visual Coach mode for Roy's father
   const [isCoachMode, setIsCoachMode] = useState(true); // Default to True to help Roy's father immediately
@@ -380,6 +382,51 @@ export function useSidekickApp() {
     }
   }, []);
 
+  const openRobinhoodLogin = useCallback(() => {
+    if (!activeProfile) {
+      showToast('Create a profile first.', 'warning');
+      return;
+    }
+    setLoginForm((prev) => ({
+      ...prev,
+      username: activeProfile.robinhood_username || prev.username,
+      password: '',
+      mfa_code: '',
+    }));
+    setLoginStatus({ status: '', message: '' });
+    setLoading(false);
+    setIsLoginOpen(true);
+  }, [activeProfile, showToast]);
+
+  const checkForUpdates = useCallback(async (force = false) => {
+    setUpdateChecking(true);
+    try {
+      const result = await checkForAppUpdate(APP_VERSION, { force });
+      setUpdateInfo(result);
+      if (result.updateAvailable) {
+        showToast(`Update v${result.latestVersion} is available on GitHub.`, 'info', 9000);
+      } else if (force && !result.error) {
+        showToast(`You are on the latest release (v${result.latestVersion || APP_VERSION}).`, 'success');
+      }
+    } catch (err) {
+      const message = err?.message || 'Could not reach GitHub releases.';
+      setUpdateInfo({ error: message, currentVersion: APP_VERSION, updateAvailable: false });
+      if (force) showToast(message, 'warning');
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, [showToast]);
+
+  const downloadLatestUpdate = useCallback(() => {
+    if (updateInfo?.downloadUrl) {
+      openUpdateDownload(updateInfo.downloadUrl);
+      return;
+    }
+    if (updateInfo?.releaseUrl) {
+      openUpdateDownload(updateInfo.releaseUrl);
+    }
+  }, [updateInfo]);
+
   const loadCongressTrades = useCallback(async (force = false) => {
     setCongressLoading(true);
     try {
@@ -422,6 +469,13 @@ export function useSidekickApp() {
     const timer = setTimeout(() => void loadCongressTrades(true), delay);
     return () => clearTimeout(timer);
   }, [activeTab, congressData?.nextRefreshAt, congressLoading, loadCongressTrades]);
+
+  // Poll GitHub Releases for a newer build (cached ~4h).
+  useEffect(() => {
+    const timer = setTimeout(() => void checkForUpdates(false), 2500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot startup update check
+  }, []);
 
   // Load market news the first time the News tab is opened.
   useEffect(() => {
@@ -1494,14 +1548,14 @@ export function useSidekickApp() {
     if (!canSyncLive) {
       if (!options.silent && !options.bootstrap) {
         if (!options.afterLogin) {
-          setLoginForm((prev) => ({
-            ...prev,
-            username: activeProfile.robinhood_username || prev.username,
-            password: "",
-            mfa_code: "",
-          }));
-          setIsLoginOpen(true);
-          showToast("Robinhood session expired. Sign in again to sync live holdings.", "warning");
+          openRobinhoodLogin();
+          const hadSession = Boolean(activeProfile.robinhood_username);
+          showToast(
+            hadSession
+              ? 'Robinhood session expired. Sign in again to sync live holdings.'
+              : 'Sign in with Robinhood to sync your stock and ETF positions.',
+            'info'
+          );
         } else {
           showToast("Connected, but the encrypted vault is still saving. Tap Sync Account once more.", "warning", 8000);
         }
@@ -1983,6 +2037,7 @@ export function useSidekickApp() {
     chartOverlays, setChartOverlays, indicatorSettings, riskProfile, newsData, newsLoading,
     loadMarketNews, congressData, congressLoading, loadCongressTrades, formatCongressTradeDate,
     congressSyncStatus, STOCK_ACT_MAX_LAG_DAYS, formatRelativeTime,
+    openRobinhoodLogin, updateInfo, updateChecking, checkForUpdates, downloadLatestUpdate,
     openNewsLink, isCoachMode, setIsCoachMode, showManualAdjust, setShowManualAdjust,
         guesses, setGuesses, analytics, setAnalytics, isLoginOpen, setIsLoginOpen, loginForm, setLoginForm,
     loginStatus, setLoginStatus, desktopAuthProbe, desktopAuthReadyMessage, isImportOpen, setIsImportOpen,

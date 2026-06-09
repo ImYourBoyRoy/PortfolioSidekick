@@ -135,6 +135,12 @@ h1, h2, h3, h4 {
   border-radius: 4px;
 }
 
+button.brand-version-badge {
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 .brand-desc {
   font-size: 10px;
   font-weight: 700;
@@ -1160,7 +1166,8 @@ h1, h2, h3, h4 {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 1000;
+  z-index: 100000;
+  touch-action: manipulation;
 }
 
 .modal-card {

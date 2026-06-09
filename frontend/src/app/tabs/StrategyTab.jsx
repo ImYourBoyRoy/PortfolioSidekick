@@ -97,7 +97,7 @@ export default function StrategyTab() {
 
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', justifyContent: 'center', borderTop: '1px solid var(--border-light)', paddingTop: 20, width: '100%' }}>
                 <button
-                  onClick={() => s.setIsLoginOpen(true)}
+                  onClick={() => s.openRobinhoodLogin()}
                   className="glowing-sync-cta"
                   style={{ margin: 0, width: 'auto' }}
                 >

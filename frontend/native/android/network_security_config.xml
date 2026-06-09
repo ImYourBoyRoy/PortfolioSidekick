@@ -11,5 +11,7 @@
         <domain includeSubdomains="true">query2.finance.yahoo.com</domain>
         <domain includeSubdomains="true">disclosures-clerk.house.gov</domain>
         <domain includeSubdomains="true">efdsearch.senate.gov</domain>
+        <domain includeSubdomains="true">api.github.com</domain>
+        <domain includeSubdomains="true">github.com</domain>
     </domain-config>
 </network-security-config>

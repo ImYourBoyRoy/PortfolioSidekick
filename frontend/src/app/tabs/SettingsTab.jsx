@@ -3,7 +3,7 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
-import { Info, Settings, Save, RotateCcw, ShieldCheck, Zap, Gauge, FileSearch, EyeOff, Eye } from 'lucide-react';
+import { Info, Settings, Save, RotateCcw, ShieldCheck, Zap, Gauge, FileSearch, EyeOff, Eye, Download, RefreshCw, Package } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
 
 export default function SettingsTab() {
@@ -11,6 +11,67 @@ export default function SettingsTab() {
 
   return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="glass-card" style={{ padding: 20 }}>
+            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Package style={{ width: 18, height: 18, color: '#34d399' }} />
+              App Updates (GitHub Releases)
+            </h3>
+            <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              Installed <strong style={{ color: '#fff' }}>v{s.APP_VERSION}</strong>
+              {s.updateInfo?.platform ? ` · ${s.updateInfo.platform} build` : ''}.
+              Sidekick checks <a href="https://github.com/ImYourBoyRoy/PortfolioSidekick/releases/latest" target="_blank" rel="noopener noreferrer" style={{ color: '#34d399' }}>GitHub Releases</a> for newer Windows, macOS, Linux, and Android artifacts.
+            </p>
+            <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => s.checkForUpdates(true)}
+                disabled={s.updateChecking}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '11px', fontWeight: 800,
+                  padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                  background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.25)', color: '#6ee7b7',
+                  opacity: s.updateChecking ? 0.6 : 1,
+                }}
+              >
+                <RefreshCw className={s.updateChecking ? 'animate-spin' : ''} style={{ width: 13, height: 13 }} />
+                {s.updateChecking ? 'Checking…' : 'Check for updates'}
+              </button>
+              {s.updateInfo?.updateAvailable && (
+                <button
+                  type="button"
+                  onClick={s.downloadLatestUpdate}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '11px', fontWeight: 800,
+                    padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                    background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(167,139,250,0.35)', color: '#ddd6fe',
+                  }}
+                >
+                  <Download style={{ width: 13, height: 13 }} />
+                  Download v{s.updateInfo.latestVersion}
+                </button>
+              )}
+            </div>
+            {s.updateInfo && (
+              <div style={{ marginTop: 12, fontSize: '10.5px', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+                {s.updateInfo.updateAvailable ? (
+                  <span style={{ color: '#fbbf24' }}>
+                    Update available: v{s.updateInfo.latestVersion} ({s.updateInfo.downloadName || 'see release page'}).
+                  </span>
+                ) : s.updateInfo.error ? (
+                  <span style={{ color: '#fbbf24' }}>{s.updateInfo.error}</span>
+                ) : (
+                  <span style={{ color: '#34d399' }}>You are on the latest published release.</span>
+                )}
+                {s.updateInfo.checkedAt && (
+                  <span style={{ display: 'block', marginTop: 4, color: 'var(--text-muted)' }}>
+                    Last checked {s.formatRelativeTime(s.updateInfo.checkedAt)}
+                    {s.updateInfo.fromCache ? ' (cached)' : ''}.
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="glass-card" style={{ padding: 20 }}>
             <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Settings style={{ width: 18, height: 18, color: 'var(--color-oracle, #a78bfa)' }} />

@@ -18,7 +18,24 @@ export default function AppHeader() {
           </div>
           <div>
             <h1 className="brand-title">
-              Portfolio Sidekick <span className="brand-version-badge">COACH ACTIVE v{APP_VERSION}</span>
+              Portfolio Sidekick{' '}
+              <button
+                type="button"
+                className="brand-version-badge"
+                onClick={() => {
+                  s.setActiveTab('settings');
+                  if (!s.updateInfo?.updateAvailable) void s.checkForUpdates(true);
+                }}
+                title={s.updateInfo?.updateAvailable ? `Update v${s.updateInfo.latestVersion} available` : 'App version — open Settings for updates'}
+                style={{
+                  cursor: 'pointer',
+                  border: s.updateInfo?.updateAvailable ? '1px solid rgba(251, 191, 36, 0.5)' : undefined,
+                  background: s.updateInfo?.updateAvailable ? 'rgba(251, 191, 36, 0.12)' : undefined,
+                  color: s.updateInfo?.updateAvailable ? '#fbbf24' : undefined,
+                }}
+              >
+                {s.updateInfo?.updateAvailable ? `UPDATE v${s.updateInfo.latestVersion}` : `COACH ACTIVE v${APP_VERSION}`}
+              </button>
             </h1>
             <p className="brand-desc">Local Privacy-Preserved Companion for Robinhood</p>
           </div>

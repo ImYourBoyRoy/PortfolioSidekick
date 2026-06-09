@@ -3,6 +3,7 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
+import { createPortal } from 'react-dom';
 import { ShieldAlert, RefreshCw, X, Sliders } from 'lucide-react';
 import { useSidekick } from '../../context/SidekickContext';
 
@@ -11,8 +12,8 @@ export default function LoginModal() {
 
   if (!s.isLoginOpen) return null;
 
-  return (
-        <div className="modal-overlay">
+  return createPortal(
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Robinhood login">
           <div className="glass-card modal-card">
             <button 
               onClick={() => {
@@ -34,7 +35,7 @@ export default function LoginModal() {
                 🔒 100% Optional &amp; Local Isolation
               </p>
               <p className="modal-subtitle" style={{ fontSize: '10.5px', lineHeight: '1.5', margin: '0 8px' }}>
-                Connecting your account is entirely optional! All planning, predicting, and rebalancing tools work offline. If you sync, Robinhood OAuth tokens are stored in an AES-256 encrypted vault file in the data folder beside this executable — passwords are never persisted.
+                Connecting your account is entirely optional! All planning, predicting, and rebalancing tools work offline. If you sync, Robinhood OAuth tokens are stored in an encrypted on-device vault — passwords are never persisted.
               </p>
               {s.desktopAuthProbe && (
                 <p
@@ -212,6 +213,7 @@ export default function LoginModal() {
 
             </form>
           </div>
-        </div>
+        </div>,
+    document.body
   );
 }
