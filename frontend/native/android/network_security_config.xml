@@ -9,5 +9,7 @@
         <domain includeSubdomains="true">api.robinhood.com</domain>
         <domain includeSubdomains="true">query1.finance.yahoo.com</domain>
         <domain includeSubdomains="true">query2.finance.yahoo.com</domain>
+        <domain includeSubdomains="true">disclosures-clerk.house.gov</domain>
+        <domain includeSubdomains="true">efdsearch.senate.gov</domain>
     </domain-config>
 </network-security-config>

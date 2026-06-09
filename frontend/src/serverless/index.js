@@ -12,3 +12,11 @@ export * from './advisor';
 export * from './robinhood';
 export * from './strength';
 export * from './news';
+export {
+  fetchCongressTrades,
+  formatCongressTradeDate,
+  formatCongressSyncStatus,
+  DEFAULT_TRACKED_INSIDERS,
+  STOCK_ACT_MAX_LAG_DAYS,
+  CONGRESS_CACHE_TTL_MS,
+} from './congressTrades';

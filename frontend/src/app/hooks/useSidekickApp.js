@@ -4,7 +4,8 @@ import {
   localDb, generateRecommendation, fetchPublicHistoricalPrices, fetchPublicQuote,
   robinhoodClient, evolveWeights, generateViabilityForecast, calculateMarketStrength,
   calculateAtr, DEFAULT_INDICATORS, RISK_PROFILES, INDICATOR_META, getIndicatorConfig,
-  fetchMarketNews, formatNewsTime,
+  fetchMarketNews, formatNewsTime, fetchCongressTrades, formatCongressTradeDate, formatCongressSyncStatus,
+  STOCK_ACT_MAX_LAG_DAYS,
 } from '../../serverless';
 import { sidekickFetch } from '../../sidekickClient';
 import { APP_VERSION } from '../../appVersion';
@@ -116,6 +117,9 @@ export function useSidekickApp() {
   // Market News state
   const [newsData, setNewsData] = useState(null);
   const [newsLoading, setNewsLoading] = useState(false);
+  const [congressData, setCongressData] = useState(null);
+  const [congressLoading, setCongressLoading] = useState(false);
+  const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   
   // Visual Coach mode for Roy's father
   const [isCoachMode, setIsCoachMode] = useState(true); // Default to True to help Roy's father immediately
@@ -376,11 +380,59 @@ export function useSidekickApp() {
     }
   }, []);
 
+  const loadCongressTrades = useCallback(async (force = false) => {
+    setCongressLoading(true);
+    try {
+      const result = await fetchCongressTrades({ force });
+      setCongressData(result);
+    } catch {
+      setCongressData({
+        trades: [],
+        total: 0,
+        fetchedAt: Date.now(),
+        error: 'Unable to load congressional trade disclosures.',
+        disclaimer: '',
+      });
+    } finally {
+      setCongressLoading(false);
+    }
+  }, []);
+
+  const formatRelativeTime = useCallback(
+    (timestamp) => formatNewsTime(timestamp, relativeTimeNow),
+    [relativeTimeNow]
+  );
+
+  const congressSyncStatus = useMemo(
+    () => formatCongressSyncStatus(congressData, relativeTimeNow),
+    [congressData, relativeTimeNow]
+  );
+
+  // Tick relative timestamps while the News tab is visible.
+  useEffect(() => {
+    if (activeTab !== 'news') return undefined;
+    const id = setInterval(() => setRelativeTimeNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, [activeTab]);
+
+  // Auto-refresh congressional disclosures when the local cache window expires.
+  useEffect(() => {
+    if (activeTab !== 'news' || congressLoading || !congressData?.nextRefreshAt) return undefined;
+    const delay = Math.max(0, congressData.nextRefreshAt - Date.now());
+    const timer = setTimeout(() => void loadCongressTrades(true), delay);
+    return () => clearTimeout(timer);
+  }, [activeTab, congressData?.nextRefreshAt, congressLoading, loadCongressTrades]);
+
   // Load market news the first time the News tab is opened.
   useEffect(() => {
     if (activeTab === "news" && !newsData && !newsLoading) {
       queueMicrotask(() => {
         void loadMarketNews();
+      });
+    }
+    if (activeTab === "news" && !congressData && !congressLoading) {
+      queueMicrotask(() => {
+        void loadCongressTrades();
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot load on tab open
@@ -1929,7 +1981,9 @@ export function useSidekickApp() {
     pulsePreset, persistPulsePreset, pulseIntervalMs, PULSE_PRESETS, RH_REQUESTS_PER_MINUTE,
     selectedTicker, setSelectedTicker, chartData, setChartData, advisorData, setAdvisorData,
     chartOverlays, setChartOverlays, indicatorSettings, riskProfile, newsData, newsLoading,
-    loadMarketNews, openNewsLink, isCoachMode, setIsCoachMode, showManualAdjust, setShowManualAdjust,
+    loadMarketNews, congressData, congressLoading, loadCongressTrades, formatCongressTradeDate,
+    congressSyncStatus, STOCK_ACT_MAX_LAG_DAYS, formatRelativeTime,
+    openNewsLink, isCoachMode, setIsCoachMode, showManualAdjust, setShowManualAdjust,
         guesses, setGuesses, analytics, setAnalytics, isLoginOpen, setIsLoginOpen, loginForm, setLoginForm,
     loginStatus, setLoginStatus, desktopAuthProbe, desktopAuthReadyMessage, isImportOpen, setIsImportOpen,
     clipboardText, setClipboardText, guessForm, setGuessForm, holdingForm, setHoldingForm,

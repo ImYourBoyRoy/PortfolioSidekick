@@ -12,6 +12,8 @@
  * Created by: Roy Dawson IV
  */
 
+import { nativeHttpGet } from './nativeHttp.js';
+
 // Broad market proxies always queried so there is meaningful macro coverage
 // even when the user has no holdings yet.
 const MARKET_SYMBOLS = ['^GSPC', '^IXIC', '^DJI', 'SPY', 'QQQ'];
@@ -56,9 +58,8 @@ export const fetchMarketNews = async (extraSymbols = []) => {
     symbols.map(async (sym) => {
       try {
         const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(sym)}&newsCount=12&quotesCount=0&enableFuzzyQuery=false&recommendCount=0`;
-        const res = await fetch(url);
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await nativeHttpGet(url, { timeoutMs: 20000 });
+        if (!data) return;
         if (Array.isArray(data.news)) {
           for (const n of data.news) collected.push(normalizeItem(n));
         }
@@ -95,8 +96,8 @@ export const fetchMarketNews = async (extraSymbols = []) => {
   };
 };
 
-export const formatNewsTime = (timestamp) => {
-  const diff = Date.now() - timestamp;
+export const formatNewsTime = (timestamp, now = Date.now()) => {
+  const diff = now - timestamp;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;

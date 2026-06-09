@@ -51,25 +51,33 @@ class RobinhoodHttpSession {
 
   ingestHeaders(headers) {
     if (!headers) return;
+    const ingestValue = (value) => {
+      if (value == null) return;
+      if (Array.isArray(value)) {
+        for (const entry of value) this.ingestSetCookie(entry);
+        return;
+      }
+      this.ingestSetCookie(value);
+    };
     if (typeof headers.getSetCookie === 'function') {
       for (const cookie of headers.getSetCookie()) this.ingestSetCookie(cookie);
       return;
     }
     if (typeof headers.forEach === 'function') {
       headers.forEach((value, key) => {
-        if (key.toLowerCase() === 'set-cookie') this.ingestSetCookie(value);
+        if (key.toLowerCase() === 'set-cookie') ingestValue(value);
       });
       return;
     }
     if (Array.isArray(headers)) {
       for (const [key, value] of headers) {
-        if (String(key).toLowerCase() === 'set-cookie') this.ingestSetCookie(value);
+        if (String(key).toLowerCase() === 'set-cookie') ingestValue(value);
       }
       return;
     }
     if (typeof headers === 'object') {
       for (const [key, value] of Object.entries(headers)) {
-        if (key.toLowerCase() === 'set-cookie') this.ingestSetCookie(value);
+        if (key.toLowerCase() === 'set-cookie') ingestValue(value);
       }
     }
   }
@@ -289,18 +297,27 @@ async function httpRequest(
       headers: mergedHeaders,
       connectTimeout: timeoutMs,
       readTimeout: timeoutMs,
-      responseType: 'json',
+      responseType: 'text',
       shouldEncodeUrlParams: true,
     };
-    if (jsonPayload !== null) options.data = jsonPayload;
-    else if (formPayload !== null) options.data = toFormObject(formPayload);
+    if (jsonPayload !== null) {
+      options.data = jsonPayload;
+    } else if (formPayload !== null) {
+      options.data = new URLSearchParams(toFormObject(formPayload)).toString();
+      options.headers = {
+        ...options.headers,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+      };
+    } else if (body != null) {
+      options.data = typeof body === 'string' ? body : String(body);
+    }
 
     const res = await withTimeout(CapacitorHttp.request(options), timeoutMs + 3000, method);
     if (useManualCookies) rhHttpSession.ingestHeaders(res.headers);
-    let data = res.data;
-    if (typeof data === 'string') data = parseJsonText(data);
+    const text = typeof res.data === 'string' ? res.data : (res.data == null ? '' : JSON.stringify(res.data));
+    const data = parseJsonText(text);
     const ok = RH_ALLOWED_STATUSES.has(res.status) || (res.status >= 200 && res.status < 300);
-    return { ok, status: res.status, data, text: '', transport };
+    return { ok, status: res.status, data, text, transport };
   }
 
   const controller = new AbortController();
