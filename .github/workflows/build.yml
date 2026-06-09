@@ -5,7 +5,7 @@
 #   (android-actions/setup-android has no master — stay on @v4).
 # Node: frontend/.node-version major line + actions/setup-node check-latest:true.
 # Rust: rust-toolchain.toml channel=stable + dtolnay/rust-toolchain@master toolchain:stable.
-# Android Gradle: upgrade-android-gradle.mjs (separate from this policy block).
+# Android deps: upgrade-android-build-deps.mjs (Gradle, AGP, Kotlin, AndroidX, Cordova).
 # Audit locally: node frontend/scripts/upgrade-ci-toolchain.mjs [--check]
 
 name: Compile & Package Multi-Platform Releases
