@@ -2,7 +2,7 @@
 /**
  * Robinhood HTTP session aligned with robin_stocks globals.SESSION (requests.Session).
  * Keeps cookies across login → pathfinder → inquiries → push/challenge calls.
- * Uses Tauri native HTTP, CapacitorHttp, or Vite dev proxy.
+ * Uses Tauri Rust HTTP, Android OkHttp (RobinhoodSession plugin), CapacitorHttp, or Vite dev proxy.
  *
  * Created by: Roy Dawson IV
  */
@@ -12,8 +12,8 @@ import { isTauriShellSync, readStorageFile, writeStorageFile } from './storagePa
 
 export const RH_CLIENT_ID = 'c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS';
 
-const RH_POST_TIMEOUT_MS = 16000;
-const RH_GET_TIMEOUT_MS = 16000;
+const RH_POST_TIMEOUT_MS = 45000;
+const RH_GET_TIMEOUT_MS = 45000;
 
 const RH_ALLOWED_STATUSES = new Set([200, 201, 202, 204, 301, 302, 303, 304, 307, 400, 401, 402, 403]);
 
@@ -91,11 +91,24 @@ class RobinhoodHttpSession {
 let rhHttpSession = new RobinhoodHttpSession();
 
 /** Reset session cookies on fresh credential login (robin_stocks starts a new Session). */
-export function resetAuthHttpSession() {
+export async function resetAuthHttpSession() {
   rhHttpSession.reset();
   cachedTransport = null;
   if (isTauriShellSync()) {
-    void import('@tauri-apps/api/core').then(({ invoke }) => invoke('rh_http_reset')).catch(() => {});
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('rh_http_reset');
+    } catch {
+      // Not Tauri desktop.
+    }
+  }
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('RobinhoodSession')) {
+    try {
+      const { RobinhoodSession } = await import('../plugins/robinhood-session/index.ts');
+      await RobinhoodSession.httpReset();
+    } catch (err) {
+      console.warn('[RobinhoodAuth] Android httpReset failed:', err);
+    }
   }
 }
 
@@ -191,6 +204,10 @@ async function resolveTransport() {
   } catch {
     // Not Tauri desktop — fall through.
   }
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('RobinhoodSession')) {
+    cachedTransport = 'android-native';
+    return cachedTransport;
+  }
   if (Capacitor.isNativePlatform()) {
     cachedTransport = 'capacitor';
     return cachedTransport;
@@ -282,6 +299,41 @@ async function httpRequest(
       }),
       timeoutMs + 2000,
       method
+    );
+    const text = result?.body || '';
+    const data = parseJsonText(text);
+    const status = result?.status || 0;
+    const ok = RH_ALLOWED_STATUSES.has(status) || (status >= 200 && status < 300);
+    return { ok, status, data, text, transport };
+  }
+
+  if (transport === 'android-native') {
+    const { RobinhoodSession } = await import('../plugins/robinhood-session/index.ts');
+    const headerObj = { ...mergedHeaders };
+    delete headerObj.Cookie;
+
+    let bodyStr = null;
+    let jsonBody = null;
+    if (jsonPayload !== null) {
+      jsonBody = jsonPayload;
+      headerObj['Content-Type'] = headerObj['Content-Type'] || 'application/json';
+    } else if (formPayload !== null) {
+      bodyStr = new URLSearchParams(toFormObject(formPayload)).toString();
+      headerObj['Content-Type'] = 'application/x-www-form-urlencoded; charset=utf-8';
+    } else if (body != null) {
+      bodyStr = typeof body === 'string' ? body : String(body);
+    }
+
+    const result = await withTimeout(
+      RobinhoodSession.httpRequest({
+        method,
+        url,
+        headers: headerObj,
+        body: bodyStr,
+        jsonBody,
+      }),
+      timeoutMs + 3000,
+      method,
     );
     const text = result?.body || '';
     const data = parseJsonText(text);

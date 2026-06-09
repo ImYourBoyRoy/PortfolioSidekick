@@ -39,7 +39,7 @@ export function isDesktopShell() {
 /** User-facing label for Robinhood HTTP transport during login. */
 export function robinhoodTransportLabel() {
   if (isDesktopShell()) return 'native Rust HTTP';
-  if (isAndroidNative()) return 'secure mobile HTTP';
+  if (isAndroidNative()) return 'native OkHttp';
   return 'embedded HTTP';
 }
 

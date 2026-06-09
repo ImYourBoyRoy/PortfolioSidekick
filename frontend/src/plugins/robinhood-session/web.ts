@@ -64,6 +64,14 @@ async function writeVaultFile(vault: VaultFile) {
 }
 
 export class RobinhoodSessionWeb extends WebPlugin implements RobinhoodSessionPlugin {
+  async httpReset() {
+    // No-op on web — fetch transport has no shared cookie jar.
+  }
+
+  async httpRequest() {
+    throw this.unimplemented('httpRequest');
+  }
+
   async saveSession({ profileId, session, username }) {
     const vault = await readVaultFile();
     vault.sessions[String(profileId)] = JSON.stringify(session);

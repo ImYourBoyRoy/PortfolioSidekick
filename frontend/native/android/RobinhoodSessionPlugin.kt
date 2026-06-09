@@ -8,13 +8,81 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import org.json.JSONObject
 
 /**
- * Encrypted session vault for Android. Robinhood HTTP auth runs in embedded JS
- * (robinhoodAuth.js / robinhoodAuthCore.js) via Capacitor native HTTP — this plugin
- * only persists tokens and pending MFA state on-device.
+ * Android Robinhood bridge: encrypted vault + OkHttp auth transport (cookie jar).
+ * Login/MFA HTTP uses [RobinhoodNativeHttp]; holdings sync may use JS CapacitorHttp.
  */
 @CapacitorPlugin(name = "RobinhoodSession")
 class RobinhoodSessionPlugin : Plugin() {
     private val vault by lazy { SessionVault(context) }
+
+    @PluginMethod
+    fun httpReset(call: PluginCall) {
+        Thread {
+            try {
+                RobinhoodNativeHttp.resetCookies()
+                call.resolve()
+            } catch (e: Exception) {
+                call.reject(e.message ?: "httpReset failed")
+            }
+        }.start()
+    }
+
+    @PluginMethod
+    fun httpRequest(call: PluginCall) {
+        val method = call.getString("method") ?: run {
+            call.reject("method required")
+            return
+        }
+        val url = call.getString("url") ?: run {
+            call.reject("url required")
+            return
+        }
+        val body = call.getString("body")
+        val jsonBody = call.getObject("jsonBody")
+        val headersObj = call.getObject("headers")
+
+        Thread {
+            try {
+                val headers = mutableMapOf<String, String>()
+                headersObj?.keys()?.forEach { key ->
+                    headersObj.getString(key)?.let { headers[key] = it }
+                }
+
+                val contentType: String?
+                val payload: String?
+                when {
+                    jsonBody != null -> {
+                        contentType = "application/json"
+                        payload = JSObjectToJson(jsonBody).toString()
+                    }
+                    body != null -> {
+                        contentType = headers["Content-Type"]
+                            ?: headers.entries.firstOrNull { it.key.equals("Content-Type", true) }?.value
+                            ?: "application/x-www-form-urlencoded; charset=utf-8"
+                        payload = body
+                    }
+                    else -> {
+                        contentType = null
+                        payload = null
+                    }
+                }
+
+                val (status, responseBody) = RobinhoodNativeHttp.request(
+                    method,
+                    url,
+                    headers,
+                    payload,
+                    contentType,
+                )
+                val res = JSObject()
+                res.put("status", status)
+                res.put("body", responseBody)
+                call.resolve(res)
+            } catch (e: Exception) {
+                call.reject(e.message ?: "httpRequest failed")
+            }
+        }.start()
+    }
 
     @PluginMethod
     fun saveSession(call: PluginCall) {

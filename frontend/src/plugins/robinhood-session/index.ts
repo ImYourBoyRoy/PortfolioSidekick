@@ -18,7 +18,20 @@ export interface PendingChallenge {
   inquiries_url: string;
 }
 
+export interface HttpRequestResult {
+  status: number;
+  body: string;
+}
+
 export interface RobinhoodSessionPlugin {
+  httpReset(): Promise<void>;
+  httpRequest(options: {
+    method: string;
+    url: string;
+    headers?: Record<string, string>;
+    body?: string | null;
+    jsonBody?: Record<string, unknown> | null;
+  }): Promise<HttpRequestResult>;
   saveSession(options: {
     profileId: number;
     session: SessionPayload;

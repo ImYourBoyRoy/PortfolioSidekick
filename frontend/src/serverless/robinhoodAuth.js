@@ -1,7 +1,7 @@
 // ./frontend/src/serverless/robinhoodAuth.js
 /**
  * Two-phase Robinhood auth ported from robin_stocks (authentication.py + helper.py).
- * Runs entirely in embedded JS — Tauri native HTTP on desktop, CapacitorHttp on Android.
+ * Desktop: Tauri Rust HTTP. Android: OkHttp via RobinhoodSession plugin (cookie jar).
  *
  * Phase 1: POST credentials → pathfinder → poll inquiries for challenge type.
  * Phase 2: push poll / SMS-email code / workflow advance / re-login.
@@ -77,6 +77,9 @@ function withInvokeTimeout(promise, ms, label) {
 /** robin_stocks push + workflow polling */
 const WORKFLOW_POLL_ATTEMPTS = 5;
 const WORKFLOW_POLL_INTERVAL_MS = 5000;
+/** Python client polls inquiries after pathfinder to detect push/SMS challenge id */
+const PHASE1_INQUIRY_ATTEMPTS = 3;
+const PHASE1_INQUIRY_INTERVAL_MS = 2000;
 const memoryChallenges = new Map();
 
 /** True when Tauri desktop Rust auth commands are available (not pywebview / browser). */
@@ -308,26 +311,51 @@ async function initiateChallenge(loginResponse, deviceToken, loginPayload, urls)
   const machineId = machineData.id;
   const inquiriesUrl = urls.inquiries(machineId);
 
-  // Return immediately — Phase 2 polls inquiries (robin_stocks sleeps 5s in a loop).
+  let challengeType = 'prompt';
+  let challengeId = null;
+  let challengeStatus = null;
+
+  for (let attempt = 0; attempt < PHASE1_INQUIRY_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(PHASE1_INQUIRY_INTERVAL_MS);
+    const inquiries = await requestGet(inquiriesUrl);
+    const challenge = extractSheriffChallenge(inquiries);
+    if (challenge) {
+      challengeType = challenge.challenge_type || challengeType;
+      challengeId = challenge.challenge_id;
+      challengeStatus = challenge.challenge_status;
+      console.info(
+        `[RobinhoodAuth] Challenge detected in Phase 1: type=${challengeType} status=${challengeStatus} id=${challengeId}`
+      );
+      break;
+    }
+    console.info(`[RobinhoodAuth] Waiting for Robinhood challenge (attempt ${attempt + 1}/${PHASE1_INQUIRY_ATTEMPTS})…`);
+  }
+
   const pending = {
     device_token: deviceToken,
     login_payload: loginPayload,
     workflow_id: workflowId,
     machine_id: machineId,
-    challenge_type: 'prompt',
-    challenge_id: null,
-    challenge_status: null,
+    challenge_type: challengeType,
+    challenge_id: challengeId,
+    challenge_status: challengeStatus,
     inquiries_url: inquiriesUrl,
   };
 
-  console.info('[RobinhoodAuth] Phase 1 complete — pathfinder started, MFA polling in Phase 2.');
+  console.info('[RobinhoodAuth] Phase 1 complete — MFA polling continues in Phase 2.');
+
+  const promptMessage = challengeType === 'prompt'
+    ? (challengeId
+      ? 'Push sent — approve the login in your Robinhood app. We detect approval automatically.'
+      : 'Check your Robinhood app for a login approval request. We detect approval automatically.')
+    : mfaUserMessage(challengeType, challengeStatus);
 
   return {
     status: 'mfa_required',
     mode: 'live',
-    challenge_type: 'prompt',
-    challenge_issued: false,
-    message: 'Check your Robinhood app for a login approval request. We detect approval automatically.',
+    challenge_type: challengeType,
+    challenge_issued: challengeType !== 'prompt' && challengeStatus === 'issued',
+    message: promptMessage,
     pending,
   };
 }
@@ -596,7 +624,7 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
     };
   } else {
     await clearChallengeSafe(vault, profileId);
-    resetAuthHttpSession();
+    await resetAuthHttpSession();
     const deviceToken = generateDeviceToken();
     const loginPayload = buildLoginPayload(username, password, deviceToken);
     const transport = await getAuthTransport();
