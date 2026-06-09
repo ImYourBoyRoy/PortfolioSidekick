@@ -107,7 +107,9 @@ If you prefer running the development server locally:
    npx cap add android   # first time only
    npx cap sync android
    node scripts/patch-android-build.mjs
+   node scripts/upgrade-android-gradle.mjs
    ```
+   *CI resolves the latest stable Gradle from `services.gradle.org/versions/current` (currently 9.5.x) before `assembleRelease` / `assembleDebug`.*
    ***Experimental:** Robinhood auth uses embedded JS + CapacitorHttp; Kotlin plugin stores encrypted sessions. Prefer desktop Tauri for production Robinhood sync until Android is validated on a physical device.*
 
    **Sideload upgrades (install over existing APK):** Android only allows in-place upgrades when the new APK is signed with the **same key** and has a **higher `versionCode`**. CI patches `versionCode` from `APP_VERSION` (e.g. `1.7.13` → `10713`) and uses either:
