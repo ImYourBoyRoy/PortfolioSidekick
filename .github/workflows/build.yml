@@ -61,9 +61,12 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu
 
       - name: Rust Cache
-        uses: swatinem/rust-cache@master
+        uses: swatinem/rust-cache@v2
         with:
-          workspaces: frontend/src-tauri
+          workspaces: |
+            frontend/src-tauri -> frontend/src-tauri/target
+          shared-key: portfolio-sidekick
+          cache-bin: true
 
       - name: Install Frontend Dependencies & Build
         run: |
@@ -165,8 +168,8 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Install Android compile SDK platform (API 37+)
-        run: sdkmanager "platforms;android-37"
+      - name: Install Android compile SDK platform (API 37.0)
+        run: sdkmanager "platforms;android-37.0"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

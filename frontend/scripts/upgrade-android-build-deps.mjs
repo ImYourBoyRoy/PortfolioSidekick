@@ -17,6 +17,7 @@ import {
   fetchLatestStableMavenVersion,
   fetchLatestNpmVersion,
 } from './lib/mavenLatest.mjs';
+import { applyCompileSdkLine } from './lib/androidSdkGradle.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(__dirname, '..');
@@ -176,11 +177,7 @@ function ensureCompileSdkForAndroidX(androidxCoreVersion) {
 /** AGP 9+ requires literal compileSdk/minSdk/targetSdk in app/build.gradle. */
 function ensureExplicitSdkVersions() {
   const { compileSdk, targetSdk, minSdk } = readSdkVersions();
-  let contents = readFileSync(appGradle, 'utf8');
-  contents = contents.replace(
-    /compileSdk\s*=\s*rootProject\.ext\.compileSdkVersion/,
-    `compileSdk ${compileSdk}`,
-  );
+  let contents = applyCompileSdkLine(readFileSync(appGradle, 'utf8'), compileSdk);
   contents = contents.replace(
     /minSdkVersion rootProject\.ext\.minSdkVersion/,
     `minSdk ${minSdk}`,
@@ -200,15 +197,7 @@ function patchGradleContentsForAgp9(contents, sdk) {
   let next = contents;
   next = next.replace(/^apply plugin: 'kotlin-android'\s*\n/m, '');
   next = next.replace(/^apply plugin: 'org\.jetbrains\.kotlin\.android'\s*\n/m, '');
-  next = next.replace(
-    /compileSdk\s*=\s*project\.hasProperty\('compileSdkVersion'\)\s*\?\s*rootProject\.ext\.compileSdkVersion\s*:\s*\d+/g,
-    `compileSdk ${sdk.compileSdk}`,
-  );
-  next = next.replace(
-    /compileSdk\s*=\s*rootProject\.ext\.compileSdkVersion/g,
-    `compileSdk ${sdk.compileSdk}`,
-  );
-  next = next.replace(/compileSdk \d+/g, `compileSdk ${sdk.compileSdk}`);
+  next = applyCompileSdkLine(next, sdk.compileSdk);
   next = next.replace(
     /minSdkVersion project\.hasProperty\('minSdkVersion'\)\s*\?\s*rootProject\.ext\.minSdkVersion\s*:\s*\d+/g,
     `minSdk ${sdk.minSdk}`,

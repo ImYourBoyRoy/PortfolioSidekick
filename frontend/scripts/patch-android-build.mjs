@@ -9,6 +9,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyCompileSdkLine } from './lib/androidSdkGradle.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(__dirname, '..');
@@ -94,12 +95,7 @@ function readSdkVersions() {
 /** AGP 9+ requires literal compileSdk/minSdk/targetSdk in app/build.gradle. */
 function ensureExplicitSdkVersions(gradle) {
   const { compileSdk, targetSdk, minSdk } = readSdkVersions();
-  let next = gradle;
-  next = next.replace(
-    /compileSdk\s*=\s*rootProject\.ext\.compileSdkVersion/,
-    `compileSdk ${compileSdk}`,
-  );
-  next = next.replace(/compileSdk \d+/, `compileSdk ${compileSdk}`);
+  let next = applyCompileSdkLine(gradle, compileSdk);
   next = next.replace(
     /minSdkVersion rootProject\.ext\.minSdkVersion/,
     `minSdk ${minSdk}`,
