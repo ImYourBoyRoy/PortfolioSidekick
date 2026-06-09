@@ -41,11 +41,14 @@ jobs:
             patchelf \
             libssl-dev
 
-      - name: Setup Rust (1.88+ per src-tauri/rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.88
+      - name: Setup Rust (stable — tracks rust-toolchain.toml channel)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc,x86_64-unknown-linux-gnu
 
       - name: Rust Cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@master
         with:
           workspaces: frontend/src-tauri
 
@@ -143,10 +146,11 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
-          java-version: '21'
+          java-version: '24'
+          check-latest: true
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@master
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -226,7 +230,7 @@ jobs:
         run: node frontend/scripts/patch-android-build.mjs
 
       - name: Cache Android debug keystore (consistent sideload signature fallback)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.android/debug.keystore
           key: sidekick-android-debug-keystore-v1
@@ -271,7 +275,7 @@ jobs:
           merge-multiple: true
 
       - name: Create Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@master
         with:
           files: |
             release-assets/PortfolioSidekick-Windows.exe

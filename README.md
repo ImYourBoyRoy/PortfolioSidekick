@@ -77,7 +77,7 @@ If you prefer running the development server locally:
 
 #### Prerequisites
 * **Node.js**: 24+ (LTS recommended)
-* **Rust**: 1.88+ ([rustup.rs](https://rustup.rs)) — required for Tauri desktop builds
+* **Rust**: stable / latest via [rustup.rs](https://rustup.rs) (`rust-toolchain.toml` pins `stable`) — required for Tauri desktop builds
 * **Python**: 3.12+ — **optional**, legacy `backend/` reference and `verify_toolkit.py` only (not used at runtime in v1.7.7)
 
 #### Installation & Execution
@@ -99,7 +99,7 @@ If you prefer running the development server locally:
    npm install
    npm run tauri:build
    ```
-   *Requires [Rust](https://rustup.rs) 1.88+. Windows: `.\compile_windows.ps1`*
+   *Requires [Rust](https://rustup.rs) stable (`rustup update stable`). Windows: `.\compile_windows.ps1`*
 4. **Android standalone build**:
    ```bash
    cd frontend
