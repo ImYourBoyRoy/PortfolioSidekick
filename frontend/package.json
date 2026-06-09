@@ -11,7 +11,9 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "deps:refresh": "npx npm-check-updates -u && npm install && npm run lint && npm run build"
+    "deps:refresh": "npx npm-check-updates -u && npm install && npm run lint && npm run build",
+    "toolchain:audit": "node scripts/upgrade-ci-toolchain.mjs",
+    "toolchain:check": "node scripts/upgrade-ci-toolchain.mjs --check"
   },
   "engines": {
     "node": ">=24"

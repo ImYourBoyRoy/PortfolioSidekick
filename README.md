@@ -76,9 +76,19 @@ Every release tag (`v*`) triggers CI: **Tauri** desktop builds (Windows/macOS/Li
 If you prefer running the development server locally:
 
 #### Prerequisites
-* **Node.js**: 24+ (LTS recommended)
-* **Rust**: stable / latest via [rustup.rs](https://rustup.rs) (`rust-toolchain.toml` pins `stable`) — required for Tauri desktop builds
+* **Node.js**: 24+ — major line in `frontend/.node-version`; CI uses `check-latest` for the newest patch
+* **Rust**: stable / latest via [rustup.rs](https://rustup.rs) (`rust-toolchain.toml` pins `stable`; run `rustup update stable` before builds) — required for Tauri desktop builds
 * **Python**: 3.12+ — **optional**, legacy `backend/` reference and `verify_toolkit.py` only (not used at runtime in v1.7.7)
+
+#### Toolchain policy (floating latest stable)
+| Component | Local | CI |
+|-----------|-------|-----|
+| Node | `frontend/.node-version` + Node 24+ | `setup-node@v6` + `check-latest: true` |
+| Rust / Tauri | `rust-toolchain.toml` → `stable` | `dtolnay/rust-toolchain@master` + `swatinem/rust-cache@master` |
+| npm deps | `npm run deps:refresh` when upgrading intentionally | `npm ci` (lockfile pinned) |
+| Audit | `npm run toolchain:check` | same script in desktop CI job |
+
+See `AGENTS.md` for the full GitHub Actions pin table and Android Gradle policy.
 
 #### Installation & Execution
 1. **Clone and Enter Workspace**:
@@ -107,9 +117,9 @@ If you prefer running the development server locally:
    npx cap add android   # first time only
    npx cap sync android
    node scripts/patch-android-build.mjs
-   node scripts/upgrade-android-gradle.mjs
+   node scripts/upgrade-android-build-deps.mjs
    ```
-   *CI resolves the latest stable Gradle from `services.gradle.org/versions/current` (currently 9.5.x) before `assembleRelease` / `assembleDebug`.*
+   *CI resolves latest stable Gradle, AGP, Kotlin, Google Services, AndroidX, okhttp, and Cordova from live registries before `assembleRelease` / `assembleDebug`.*
    ***Experimental:** Robinhood auth uses embedded JS + CapacitorHttp; Kotlin plugin stores encrypted sessions. Prefer desktop Tauri for production Robinhood sync until Android is validated on a physical device.*
 
    **Sideload upgrades (install over existing APK):** Android only allows in-place upgrades when the new APK is signed with the **same key** and has a **higher `versionCode`**. CI patches `versionCode` from `APP_VERSION` (e.g. `1.7.13` → `10713`) and uses either:

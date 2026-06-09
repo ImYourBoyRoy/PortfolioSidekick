@@ -10,6 +10,8 @@ One-off tooling for the App.jsx modularization migration. Obsolete split scripts
 |--------|---------|
 | `fix-mojibake.mjs` | Repairs UTF-8 mojibake (`ΓÇö` → `—`, broken emoji) in source files after bad encodings. |
 | `inject-android-native.sh` | Android Capacitor native hook injection for portable builds. |
+| `upgrade-android-gradle.mjs` | Points the Android Gradle wrapper at latest stable GA (CI + local). |
+| `upgrade-ci-toolchain.mjs` | Audits Node/Rust/CI action policy; `--check` for CI gate; `--sync-node` to bump `.node-version`. |
 
 ## Removed (do not restore without review)
 

@@ -21,8 +21,8 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 $nodeVersion = (node -v) -replace 'v', ''
 $nodeMajor = [int]($nodeVersion.Split('.')[0])
 Write-Host "Detected Node.js version $nodeVersion" -ForegroundColor Gray
-if ($nodeMajor -lt 22) {
-    Write-Error "Node.js >= 22 is required."
+if ($nodeMajor -lt 24) {
+    Write-Error "Node.js >= 24 is required (see frontend/.node-version)."
     Exit 1
 }
 
@@ -30,6 +30,9 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     Write-Error "Rust/Cargo is not found. Install from https://rustup.rs for Tauri desktop builds."
     Exit 1
 }
+
+Write-Host "Updating Rust stable toolchain (matches rust-toolchain.toml)..." -ForegroundColor Gray
+rustup update stable 2>$null | Out-Null
 
 Write-Host "`n[STEP 1/2] Compiling & linting React frontend..." -ForegroundColor Yellow
 Push-Location (Join-Path $RepoRoot "frontend")

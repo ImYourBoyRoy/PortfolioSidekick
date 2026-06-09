@@ -1,3 +1,13 @@
+# Portfolio Sidekick CI — floating latest-stable toolchain policy
+#
+# GitHub official actions: pin latest major tag (v6/v7/v8) + check-latest where supported.
+# Third-party actions: @master only when the repo publishes a master branch; else latest version tag
+#   (android-actions/setup-android has no master — stay on @v4).
+# Node: frontend/.node-version major line + actions/setup-node check-latest:true.
+# Rust: rust-toolchain.toml channel=stable + dtolnay/rust-toolchain@master toolchain:stable.
+# Android Gradle: upgrade-android-gradle.mjs (separate from this policy block).
+# Audit locally: node frontend/scripts/upgrade-ci-toolchain.mjs [--check]
+
 name: Compile & Package Multi-Platform Releases
 
 on:
@@ -29,6 +39,9 @@ jobs:
           check-latest: true
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Verify desktop toolchain policy
+        run: node frontend/scripts/upgrade-ci-toolchain.mjs --check
 
       - name: Install Linux Tauri Dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -229,8 +242,8 @@ jobs:
       - name: Patch Android versionCode and signing config
         run: node frontend/scripts/patch-android-build.mjs
 
-      - name: Upgrade Gradle wrapper to latest stable
-        run: node frontend/scripts/upgrade-android-gradle.mjs
+      - name: Upgrade Android build deps to latest stable
+        run: node frontend/scripts/upgrade-android-build-deps.mjs
 
       - name: Cache Android debug keystore (consistent sideload signature fallback)
         uses: actions/cache@v5
