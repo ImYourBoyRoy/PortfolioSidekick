@@ -1,0 +1,20 @@
+# Dependabot — monitor only active sidekick paths (no deleted backend/frontend).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /sidekick
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: cargo
+    directory: /sidekick/src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

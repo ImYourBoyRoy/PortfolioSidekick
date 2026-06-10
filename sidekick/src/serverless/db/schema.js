@@ -1,7 +1,7 @@
 // ./sidekick/src/serverless/db/schema.js
 /**
  * Canonical SQLite schema shared across Android, Tauri desktop, and dev.
- * Mirrors legacy/python-backend/database.py with JS-specific extensions (metadata JSON, indicators).
+ * SQLite schema for profiles, holdings, predictions, and indicator weights.
  */
 
 export const SCHEMA_SQL = `
