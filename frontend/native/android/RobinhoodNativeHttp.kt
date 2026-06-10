@@ -8,6 +8,8 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
+import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -55,10 +57,22 @@ object RobinhoodNativeHttp {
             }
         }
 
-        client.newCall(request).execute().use { response ->
-            val text = response.body.string()
-            return response.code to text
+        var lastError: IOException? = null
+        for (attempt in 0 until 3) {
+            try {
+                client.newCall(request).execute().use { response ->
+                    val text = response.body.string()
+                    return response.code to text
+                }
+            } catch (e: UnknownHostException) {
+                lastError = e
+                if (attempt < 2) Thread.sleep(1000L * (attempt + 1))
+            } catch (e: IOException) {
+                lastError = e
+                if (attempt < 2) Thread.sleep(1000L * (attempt + 1))
+            }
         }
+        throw lastError ?: IOException("Robinhood request failed")
     }
 
     private class RobinhoodCookieJar : CookieJar {

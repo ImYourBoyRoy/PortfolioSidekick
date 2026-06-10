@@ -1831,6 +1831,7 @@ export function useSidekickApp() {
 
     let cancelled = false;
     let appListener = null;
+    let foregroundTimer = null;
 
     const pollMfa = async () => {
       if (cancelled || loginSucceededRef.current) return;
@@ -1861,9 +1862,11 @@ export function useSidekickApp() {
     mfaPollFnRef.current = pollMfa;
 
     const onForeground = () => {
-      if (cancelled || loginSucceededRef.current) return;
-      mfaPollInFlightRef.current = false;
-      void pollMfa();
+      if (cancelled || loginSucceededRef.current || mfaPollInFlightRef.current) return;
+      clearTimeout(foregroundTimer);
+      foregroundTimer = setTimeout(() => {
+        void pollMfa();
+      }, 2000);
     };
 
     void pollMfa();
@@ -1889,6 +1892,7 @@ export function useSidekickApp() {
 
     return () => {
       cancelled = true;
+      clearTimeout(foregroundTimer);
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onForeground);

@@ -76,8 +76,32 @@ class RobinhoodSessionPlugin : Plugin() {
                     call.resolve(mapToJSObject(result))
                 }
             } catch (e: Exception) {
+                val msg = e.message ?: "robinhoodLogin failed"
+                val networkRetry = continueMfa && (
+                    msg.contains("Unable to resolve host", ignoreCase = true)
+                        || msg.contains("UnknownHost", ignoreCase = true)
+                        || msg.contains("failed to connect", ignoreCase = true)
+                        || msg.contains("ETIMEDOUT", ignoreCase = true)
+                    )
                 bridge.activity.runOnUiThread {
-                    call.reject(e.message ?: "robinhoodLogin failed")
+                    if (networkRetry) {
+                        val pending = RobinhoodAuthNative.pendingSnapshot(profileId.toString())
+                        val challengeType = pending?.optString("challenge_type")?.takeIf { it.isNotEmpty() }
+                            ?: "prompt"
+                        call.resolve(
+                            mapToJSObject(
+                                mapOf(
+                                    "status" to "mfa_required",
+                                    "mode" to "live",
+                                    "message" to "Network interrupted — retrying automatically…",
+                                    "challenge_type" to challengeType,
+                                    "challenge_issued" to (challengeType != "prompt"),
+                                ),
+                            ),
+                        )
+                    } else {
+                        call.reject(msg)
+                    }
                 }
             }
         }.start()

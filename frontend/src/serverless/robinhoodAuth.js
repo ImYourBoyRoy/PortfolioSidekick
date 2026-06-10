@@ -658,10 +658,20 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
       return normalizeNativeLoginResult(result, profileId, username, options);
     } catch (err) {
       await authLog(`RobinhoodSession.robinhoodLogin error: ${err?.message || err}`);
+      const msg = err?.message || String(err);
+      if (options.continueMfa === true && /Unable to resolve host|UnknownHost|failed to connect|ETIMEDOUT/i.test(msg)) {
+        return {
+          status: 'mfa_required',
+          mode: 'live',
+          message: 'Network interrupted — retrying automatically…',
+          challenge_type: 'prompt',
+          challenge_issued: false,
+        };
+      }
       return {
         status: 'error',
         mode: 'live',
-        message: err?.message || String(err),
+        message: msg,
       };
     }
   }

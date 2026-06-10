@@ -204,11 +204,13 @@ object RobinhoodAuthNative {
             return finalizeLoginWithRetries(pending)
         }
 
-        if (pending.challengeId.isNullOrEmpty() || !pending.pushIssued) {
-            refreshSheriffFromInquiries(pending)
+        refreshSheriffFromInquiries(pending)
+
+        if (pending.challengeType != "prompt") {
+            return completeCodeChallenge(pending, mfaCode)
         }
 
-        if (pending.challengeType == "prompt") {
+        run {
             val challengeId = pending.challengeId
             if (challengeId.isNullOrEmpty()) {
                 return Triple(
@@ -302,66 +304,71 @@ object RobinhoodAuthNative {
                 pending,
                 false,
             )
-        } else {
-            val challengeId = pending.challengeId
-            if (challengeId.isNullOrEmpty()) {
-                return Triple(
-                    loginResult(
-                        status = "mfa_required",
-                        mode = "live",
-                        message = "Robinhood is still preparing your verification challenge.",
-                        challengeType = pending.challengeType,
-                        challengeIssued = false,
-                    ),
-                    pending,
-                    false,
-                )
-            }
+        }
+    }
 
-            if (pending.challengeStatus != "issued") {
-                return Triple(
-                    loginResult(
-                        status = "mfa_required",
-                        mode = "live",
-                        message = "Waiting for ${pending.challengeType} verification code...",
-                        challengeType = pending.challengeType,
-                        challengeIssued = false,
-                    ),
-                    pending,
-                    false,
-                )
-            }
+    private fun completeCodeChallenge(
+        pending: PendingChallenge,
+        mfaCode: String?,
+    ): Triple<Map<String, Any?>, PendingChallenge, Boolean> {
+        val challengeId = pending.challengeId
+        if (challengeId.isNullOrEmpty()) {
+            return Triple(
+                loginResult(
+                    status = "mfa_required",
+                    mode = "live",
+                    message = "Robinhood is still preparing your verification challenge.",
+                    challengeType = pending.challengeType,
+                    challengeIssued = false,
+                ),
+                pending,
+                false,
+            )
+        }
 
-            val code = mfaCode?.takeIf { it.isNotEmpty() }
-            if (code == null) {
-                return Triple(
-                    loginResult(
-                        status = "mfa_required",
-                        mode = "live",
-                        message = "Enter the ${pending.challengeType} verification code.",
-                        challengeType = pending.challengeType,
-                        challengeIssued = true,
-                    ),
-                    pending,
-                    false,
-                )
-            }
+        if (pending.challengeStatus != "issued") {
+            return Triple(
+                loginResult(
+                    status = "mfa_required",
+                    mode = "live",
+                    message = "Waiting for ${pending.challengeType} verification code...",
+                    challengeType = pending.challengeType,
+                    challengeIssued = false,
+                ),
+                pending,
+                false,
+            )
+        }
 
-            val respondUrl = "$RH_API/challenge/$challengeId/respond/"
-            val (_, resp) = rhFormPost(respondUrl, mapOf("response" to code))
-            if (resp.optString("status") != "validated") {
-                return Triple(
-                    loginResult(
-                        status = "mfa_required",
-                        mode = "live",
-                        message = "Invalid verification code. Please re-enter.",
-                        challengeType = pending.challengeType,
-                        challengeIssued = true,
-                    ),
-                    pending,
-                    false,
-                )
-            }
+        val code = mfaCode?.takeIf { it.isNotEmpty() }
+        if (code == null) {
+            return Triple(
+                loginResult(
+                    status = "mfa_required",
+                    mode = "live",
+                    message = "Robinhood sent a ${pending.challengeType} code — enter it below.",
+                    challengeType = pending.challengeType,
+                    challengeIssued = true,
+                ),
+                pending,
+                false,
+            )
+        }
+
+        val respondUrl = "$RH_API/challenge/$challengeId/respond/"
+        val (_, resp) = rhFormPost(respondUrl, mapOf("response" to code))
+        if (resp.optString("status") != "validated") {
+            return Triple(
+                loginResult(
+                    status = "mfa_required",
+                    mode = "live",
+                    message = "Invalid verification code. Please re-enter.",
+                    challengeType = pending.challengeType,
+                    challengeIssued = true,
+                ),
+                pending,
+                false,
+            )
         }
 
         return finalizeLoginWithRetries(pending)
@@ -375,7 +382,7 @@ object RobinhoodAuthNative {
         val loginUrl = "$RH_API/oauth2/token/"
         for (attempt in 0 until attempts) {
             if (!pending.inquiriesExpired && attempt == 0) {
-                pollWorkflow(pending.inquiriesUrl)
+                pollWorkflow(pending.inquiriesUrl, maxAttempts = 2)
             }
             val (_, data) = rhFormPost(loginUrl, pending.loginForm)
             data.optString("access_token").takeIf { it.isNotEmpty() }?.let { _ ->
@@ -487,8 +494,14 @@ object RobinhoodAuthNative {
                 "inquiries HTTP $inqStatus id=${sheriff?.optString("id")} status=${sheriff?.optString("status")}",
             )
             extractSheriffChallenge(inq)?.let { (ctype, cid, cstatus) ->
+                if (ctype != "prompt" && pending.challengeType == "prompt") {
+                    Log.i(TAG, "challenge type changed prompt -> $ctype")
+                    pending.pushIssued = false
+                    pending.pushApproved = false
+                    pending.pushRateLimitedUntilMs = 0
+                }
                 pending.challengeType = ctype
-                if (pending.challengeId.isNullOrEmpty() && !cid.isNullOrEmpty()) {
+                if (!cid.isNullOrEmpty()) {
                     pending.challengeId = cid
                 }
                 if (!cstatus.isNullOrEmpty()) pending.challengeStatus = cstatus
@@ -498,8 +511,8 @@ object RobinhoodAuthNative {
         }
     }
 
-    private fun pollWorkflow(inquiriesUrl: String) {
-        for (attempt in 0 until 8) {
+    private fun pollWorkflow(inquiriesUrl: String, maxAttempts: Int = 8) {
+        for (attempt in 0 until maxAttempts) {
             val body = JSONObject()
                 .put("sequence", 0)
                 .put("user_input", JSONObject().put("status", "continue"))
@@ -507,7 +520,7 @@ object RobinhoodAuthNative {
             if (workflowApproved(data)) {
                 return
             }
-            if (attempt < 7) {
+            if (attempt < maxAttempts - 1) {
                 Thread.sleep(2000)
             }
         }
