@@ -9,7 +9,7 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
-use rand::RngCore;
+use rand::RngExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -31,7 +31,7 @@ fn load_or_create_vault_key() -> Result<[u8; 32], String> {
         }
     }
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
+    rand::rng().fill(&mut key);
     std::fs::write(&path, key).map_err(|e| format!("write vault key: {e}"))?;
     auth_log_append_line("vault key created (.vault_key beside data/)");
     Ok(key)
@@ -40,7 +40,7 @@ fn load_or_create_vault_key() -> Result<[u8; 32], String> {
 fn encrypt_vault_bytes(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("vault cipher: {e}"))?;
     let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    rand::rng().fill(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
         .encrypt(nonce, plaintext)

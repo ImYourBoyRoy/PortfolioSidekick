@@ -642,7 +642,7 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
     const { RobinhoodSession } = await import('../plugins/robinhood-session');
     try {
       await authLog('invoking RobinhoodSession.robinhoodLogin');
-      const timeoutMs = options.continueMfa === true ? 90000 : 60000;
+      const timeoutMs = options.continueMfa === true ? 120000 : 60000;
       const result = await withInvokeTimeout(
         RobinhoodSession.robinhoodLogin({
           profileId: Number(profileId),

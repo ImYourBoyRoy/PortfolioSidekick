@@ -1834,15 +1834,7 @@ export function useSidekickApp() {
 
     const pollMfa = async () => {
       if (cancelled || loginSucceededRef.current) return;
-      if (
-        mfaPollInFlightRef.current
-        && Date.now() - mfaPollStartedAtRef.current < 95000
-      ) {
-        return;
-      }
-      if (mfaPollInFlightRef.current) {
-        mfaPollInFlightRef.current = false;
-      }
+      if (mfaPollInFlightRef.current) return;
       mfaPollInFlightRef.current = true;
       mfaPollStartedAtRef.current = Date.now();
       try {
@@ -1877,7 +1869,7 @@ export function useSidekickApp() {
     void pollMfa();
     const interval = setInterval(() => {
       void pollMfa();
-    }, 2000);
+    }, 4000);
     const onVisibility = () => {
       if (document.visibilityState === "visible") onForeground();
     };
@@ -1905,18 +1897,6 @@ export function useSidekickApp() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- poll keyed on MFA state
   }, [loginStatus.status, loginStatus.challenge_type, loginStatus.challenge_issued, loginForm.mfa_code, activeProfile]);
-
-  const triggerMfaPoll = () => {
-    if (loginStatus.status !== "mfa_required" || !activeProfile) return;
-    mfaPollStartedAtRef.current = 0;
-    mfaPollInFlightRef.current = false;
-    setLoginStatus((prev) => (
-      prev.status === "mfa_required"
-        ? { ...prev, message: "Checking Robinhood approval…" }
-        : prev
-    ));
-    mfaPollFnRef.current?.();
-  };
 
   // Robinhood Secure Logout & Wiping
   const handleLogout = async () => {
@@ -2136,7 +2116,7 @@ export function useSidekickApp() {
     handleSeedMockAssets, fetchProfiles, handleCreateProfile, handleDeleteProfile,
     fetchPortfolio, fetchGuesses, fetchAnalytics, fetchStockHistoryAndAdvisor, fetchWatchlist,
     fetchShadowCoachData, handleAddToWatchlist, handleRemoveFromWatchlist, fetchStrategyBrackets, triggerSync,
-    handleImportClipboard, handleStayOffline, handleLogin, triggerMfaPoll, handleLogout, handleCreateGuess,
+    handleImportClipboard, handleStayOffline, handleLogin, handleLogout, handleCreateGuess,
     equityDiagnostic, equityDiagnosticLoading, runEquityDiagnostic,
     hiddenHoldings, autoHideWarrants, setAutoHideWarrants,
     handleHideHolding, handleUnhideHolding, handleAdjustHolding, handleForceEvolve,

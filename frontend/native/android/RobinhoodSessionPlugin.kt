@@ -54,13 +54,15 @@ class RobinhoodSessionPlugin : Plugin() {
                     }
                 }
 
-                val result = RobinhoodAuthNative.login(
-                    profileKey,
-                    username,
-                    password,
-                    mfaCode,
-                    continueMfa,
-                )
+                val result = RobinhoodAuthNative.withLoginLock(profileKey) {
+                    RobinhoodAuthNative.login(
+                        profileKey,
+                        username,
+                        password,
+                        mfaCode,
+                        continueMfa,
+                    )
+                }
 
                 if (!continueMfa && result["status"] == "mfa_required") {
                     RobinhoodAuthNative.pendingSnapshot(profileKey)?.let { snapshot ->
