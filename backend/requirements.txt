@@ -1,3 +1,0 @@
-# Portfolio Sidekick — Python no longer required for production builds.
-# Install only if running legacy verification scripts:
-#   pip install -r backend/requirements-legacy.txt
