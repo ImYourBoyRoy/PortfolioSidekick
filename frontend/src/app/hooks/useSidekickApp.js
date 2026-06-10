@@ -1869,7 +1869,7 @@ export function useSidekickApp() {
     void pollMfa();
     const interval = setInterval(() => {
       void pollMfa();
-    }, 4000);
+    }, 10000);
     const onVisibility = () => {
       if (document.visibilityState === "visible") onForeground();
     };
