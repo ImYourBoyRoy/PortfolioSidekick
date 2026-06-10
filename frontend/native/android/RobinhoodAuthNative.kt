@@ -38,6 +38,45 @@ object RobinhoodAuthNative {
         pendingByProfile.clear()
     }
 
+    fun resetCookiesOnly() {
+        RobinhoodNativeHttp.resetCookies()
+    }
+
+    fun hasPending(profileId: String): Boolean = pendingByProfile.containsKey(profileId)
+
+    fun restorePending(profileId: String, json: JSONObject) {
+        val loginForm = mutableMapOf<String, String>()
+        val formObj = json.optJSONObject("login_form") ?: json.optJSONObject("login_payload")
+        formObj?.keys()?.forEach { key ->
+            loginForm[key] = formObj.optString(key)
+        }
+        pendingByProfile[profileId] = PendingChallenge(
+            deviceToken = json.optString("device_token"),
+            loginForm = loginForm,
+            workflowId = json.optString("workflow_id"),
+            machineId = json.optString("machine_id"),
+            challengeType = json.optString("challenge_type", "prompt"),
+            challengeId = json.optString("challenge_id").takeIf { it.isNotEmpty() },
+            challengeStatus = json.optString("challenge_status").takeIf { it.isNotEmpty() },
+            inquiriesUrl = json.optString("inquiries_url"),
+        )
+    }
+
+    fun pendingSnapshot(profileId: String): JSONObject? {
+        val pending = pendingByProfile[profileId] ?: return null
+        val loginForm = JSONObject()
+        pending.loginForm.forEach { (key, value) -> loginForm.put(key, value) }
+        return JSONObject()
+            .put("device_token", pending.deviceToken)
+            .put("login_form", loginForm)
+            .put("workflow_id", pending.workflowId)
+            .put("machine_id", pending.machineId)
+            .put("challenge_type", pending.challengeType)
+            .put("challenge_id", pending.challengeId)
+            .put("challenge_status", pending.challengeStatus)
+            .put("inquiries_url", pending.inquiriesUrl)
+    }
+
     fun login(
         profileId: String,
         username: String,
@@ -133,17 +172,7 @@ object RobinhoodAuthNative {
         pending: PendingChallenge,
         mfaCode: String?,
     ): Triple<Map<String, Any?>, PendingChallenge, Boolean> {
-        try {
-            val (inqStatus, inq) = rhGet(pending.inquiriesUrl)
-            Log.i(TAG, "inquiries HTTP $inqStatus challenge=${inq.optJSONObject("context")?.optJSONObject("sheriff_challenge")?.optString("id")}")
-            extractSheriffChallenge(inq)?.let { (ctype, cid, cstatus) ->
-                pending.challengeType = ctype
-                pending.challengeId = cid
-                pending.challengeStatus = cstatus
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "inquiries refresh failed: ${e.message}")
-        }
+        refreshInquiriesIfNeeded(pending)
 
         if (pending.challengeType == "prompt") {
             val challengeId = pending.challengeId
@@ -162,24 +191,27 @@ object RobinhoodAuthNative {
             }
 
             val pushUrl = "$RH_API/push/$challengeId/get_prompts_status/"
-            val pushApproved = try {
+            val pushState = try {
                 val (pushStatus, push) = rhGet(pushUrl)
-                val pushState = push.optString("challenge_status").takeIf { it.isNotEmpty() }
+                val state = push.optString("challenge_status").takeIf { it.isNotEmpty() }
                     ?: push.optString("status").takeIf { it.isNotEmpty() }
                     ?: "unknown"
-                Log.i(TAG, "push HTTP $pushStatus state=$pushState sheriff=${pending.challengeStatus}")
-                isPushApproved(pending, pushState)
+                Log.i(TAG, "push HTTP $pushStatus state=$state id=$challengeId")
+                state
             } catch (e: Exception) {
                 Log.w(TAG, "push status failed: ${e.message}")
-                pending.challengeStatus == "validated"
+                "unknown"
             }
 
-            if (!pushApproved) {
+            if (!isPushEndpointValidated(pushState)) {
                 return Triple(
                     loginResult(
                         status = "mfa_required",
                         mode = "live",
-                        message = "Push sent — approve the login in your Robinhood app.",
+                        message = when (pushState) {
+                            "issued" -> "Push sent — approve the login in your Robinhood app."
+                            else -> "Waiting for approval in your Robinhood app…"
+                        },
                         challengeType = "prompt",
                         challengeIssued = false,
                     ),
@@ -187,6 +219,9 @@ object RobinhoodAuthNative {
                     false,
                 )
             }
+
+            Log.i(TAG, "push validated — advancing workflow")
+            Thread.sleep(1500)
         } else {
             val challengeId = pending.challengeId
             if (challengeId.isNullOrEmpty()) {
@@ -267,21 +302,58 @@ object RobinhoodAuthNative {
             )
         }
 
+        if (data.has("verification_workflow")) {
+            Log.w(TAG, "login still requires verification_workflow after push — keep polling")
+            return Triple(
+                loginResult(
+                    status = "mfa_required",
+                    mode = "live",
+                    message = "Approval received — finishing login…",
+                    challengeType = pending.challengeType,
+                    challengeIssued = false,
+                ),
+                pending,
+                false,
+            )
+        }
+
         val detail = data.optString("detail").takeIf { it.isNotEmpty() }
             ?: "Login failed after verification."
+        Log.w(TAG, "post-MFA login pending retry: $detail")
         return Triple(
             loginResult(
-                status = "error",
+                status = "mfa_required",
                 mode = "live",
-                message = detail,
+                message = "Approval received — still finishing login. Keep this app open.",
+                challengeType = pending.challengeType,
+                challengeIssued = false,
             ),
             pending,
             false,
         )
     }
 
+    /** Only hit inquiries when we still need challenge metadata — avoids re-issuing app pushes. */
+    private fun refreshInquiriesIfNeeded(pending: PendingChallenge) {
+        val needsInquiries = pending.challengeId.isNullOrEmpty()
+            || (pending.challengeType != "prompt" && pending.challengeStatus.isNullOrEmpty())
+        if (!needsInquiries) return
+
+        try {
+            val (inqStatus, inq) = rhGet(pending.inquiriesUrl)
+            Log.i(TAG, "inquiries HTTP $inqStatus challenge=${findSheriffChallenge(inq)?.optString("id")}")
+            extractSheriffChallenge(inq)?.let { (ctype, cid, cstatus) ->
+                pending.challengeType = ctype
+                if (!cid.isNullOrEmpty()) pending.challengeId = cid
+                if (!cstatus.isNullOrEmpty()) pending.challengeStatus = cstatus
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "inquiries refresh failed: ${e.message}")
+        }
+    }
+
     private fun pollWorkflow(inquiriesUrl: String) {
-        for (attempt in 0 until 5) {
+        for (attempt in 0 until 8) {
             val body = JSONObject()
                 .put("sequence", 0)
                 .put("user_input", JSONObject().put("status", "continue"))
@@ -289,10 +361,11 @@ object RobinhoodAuthNative {
             if (workflowApproved(data)) {
                 return
             }
-            if (attempt < 4) {
+            if (attempt < 7) {
                 Thread.sleep(2000)
             }
         }
+        Log.i(TAG, "workflow poll finished (proceeding with token request)")
     }
 
     private fun workflowApproved(data: JSONObject): Boolean {
@@ -317,11 +390,7 @@ object RobinhoodAuthNative {
         return Triple(challengeType, challengeId, challengeStatus)
     }
 
-    private fun isPushApproved(pending: PendingChallenge, pushState: String): Boolean {
-        if (pushState == "validated") return true
-        if (pending.challengeStatus == "validated") return true
-        return false
-    }
+    private fun isPushEndpointValidated(pushState: String): Boolean = pushState == "validated"
 
     private fun rhFormPost(url: String, form: Map<String, String>): Pair<Int, JSONObject> {
         val headers = rhHeaders().toMutableMap()

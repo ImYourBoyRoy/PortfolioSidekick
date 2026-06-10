@@ -24,6 +24,7 @@ import {
   sessionPayload,
 } from './robinhoodAuthCore';
 import { isSandboxUsername } from './authUtils';
+import { fetchPublicQuote } from './yahooQuotes.js';
 import { isAndroidNative, isDesktopShell } from '../sidekickClient';
 import {
   getPortableDataDirectory,
@@ -902,7 +903,6 @@ export async function robinhoodSyncHoldings(profileId) {
             price = rhPrice;
           } else {
             try {
-              const { fetchPublicQuote } = await import('./robinhood.js');
               price = await fetchPublicQuote(symbol);
             } catch {
               // Yahoo fallback is best-effort during sync.

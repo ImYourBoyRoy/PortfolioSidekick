@@ -19,7 +19,7 @@ class RobinhoodSessionPlugin : Plugin() {
     fun httpReset(call: PluginCall) {
         Thread {
             try {
-                RobinhoodAuthNative.resetAllSessions()
+                RobinhoodAuthNative.resetCookiesOnly()
                 call.resolve()
             } catch (e: Exception) {
                 call.reject(e.message ?: "httpReset failed")
@@ -47,13 +47,29 @@ class RobinhoodSessionPlugin : Plugin() {
         call.setKeepAlive(true)
         Thread {
             try {
+                val profileKey = profileId.toString()
+                if (continueMfa && !RobinhoodAuthNative.hasPending(profileKey)) {
+                    vault.loadChallenge(profileId)?.let { stored ->
+                        RobinhoodAuthNative.restorePending(profileKey, stored)
+                    }
+                }
+
                 val result = RobinhoodAuthNative.login(
-                    profileId.toString(),
+                    profileKey,
                     username,
                     password,
                     mfaCode,
                     continueMfa,
                 )
+
+                if (!continueMfa && result["status"] == "mfa_required") {
+                    RobinhoodAuthNative.pendingSnapshot(profileKey)?.let { snapshot ->
+                        vault.saveChallenge(profileId, snapshot)
+                    }
+                } else if (result["status"] == "success" && result["session"] != null) {
+                    vault.clearChallenge(profileId)
+                }
+
                 bridge.activity.runOnUiThread {
                     call.resolve(mapToJSObject(result))
                 }

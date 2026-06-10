@@ -1702,7 +1702,7 @@ export function useSidekickApp() {
     showToast("Staying offline. Add holdings manually, paste a list, or seed sandbox assets.", "info");
   };
 
-  const applyLoginResult = async (data) => {
+  const applyLoginResult = async (data, options = {}) => {
     if (loginSucceededRef.current) {
       return;
     }
@@ -1730,6 +1730,15 @@ export function useSidekickApp() {
         challenge_type: data.challenge_type || "prompt",
         challenge_issued: data.challenge_issued ?? false,
       });
+      setLoading(false);
+      return;
+    }
+    if (options.fromMfaPoll && loginStatus.status === "mfa_required") {
+      setLoginStatus((prev) => ({
+        ...prev,
+        status: "mfa_required",
+        message: data.message || prev.message || "Waiting for Robinhood approval…",
+      }));
       setLoading(false);
       return;
     }
@@ -1849,7 +1858,7 @@ export function useSidekickApp() {
           { continueMfa: true }
         );
         if (cancelled || loginSucceededRef.current) return;
-        await applyLoginResult(data);
+        await applyLoginResult(data, { fromMfaPoll: true });
       } catch (err) {
         console.warn("[RobinhoodAuth] MFA poll error:", err?.message || err);
       } finally {
