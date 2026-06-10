@@ -42,7 +42,7 @@ class RobinhoodSessionPlugin : Plugin() {
             return
         }
         val mfaCode = call.getString("mfaCode")
-        val continueMfa = call.getBoolean("continueMfa", false)
+        val continueMfa = call.getBoolean("continueMfa", false) ?: false
 
         call.setKeepAlive(true)
         Thread {
