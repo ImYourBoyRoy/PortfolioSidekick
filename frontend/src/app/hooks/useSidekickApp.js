@@ -1840,9 +1840,12 @@ export function useSidekickApp() {
       mfaPollStartedAtRef.current = Date.now();
       try {
         const needsCode = ["sms", "email"].includes(loginStatus.challenge_type);
-        const code = needsCode && loginStatus.challenge_issued
+        const optionalPromptCode = loginStatus.challenge_type === "prompt"
           ? (loginForm.mfa_code?.trim() || null)
           : null;
+        const code = needsCode && loginStatus.challenge_issued
+          ? (loginForm.mfa_code?.trim() || null)
+          : optionalPromptCode;
         const data = await robinhoodClient.login(
           activeProfile.id,
           loginForm.username,
@@ -1900,7 +1903,7 @@ export function useSidekickApp() {
       appListener?.remove?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- poll keyed on MFA state
-  }, [loginStatus.status, loginStatus.challenge_type, loginStatus.challenge_issued, loginForm.mfa_code, activeProfile]);
+  }, [loginStatus.status, loginStatus.challenge_type, loginStatus.challenge_issued, loginForm.mfa_code, loginForm.username, loginForm.password, activeProfile]);
 
   // Robinhood Secure Logout & Wiping
   const handleLogout = async () => {

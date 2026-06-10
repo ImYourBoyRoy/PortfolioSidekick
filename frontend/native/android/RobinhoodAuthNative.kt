@@ -201,7 +201,7 @@ object RobinhoodAuthNative {
         mfaCode: String?,
     ): Triple<Map<String, Any?>, PendingChallenge, Boolean> {
         if (pending.pushApproved) {
-            return finalizeLoginWithRetries(pending)
+            return completeAfterChallengeValidated(pending, mfaCode)
         }
 
         refreshSheriffFromInquiries(pending)
@@ -211,6 +211,18 @@ object RobinhoodAuthNative {
         }
 
         run {
+            val optionalCode = mfaCode?.takeIf { it.isNotEmpty() }
+            if (optionalCode != null && !pending.challengeId.isNullOrEmpty()) {
+                val respondUrl = "$RH_API/challenge/${pending.challengeId}/respond/"
+                val (_, resp) = rhFormPost(respondUrl, mapOf("response" to optionalCode))
+                if (resp.optString("status") == "validated") {
+                    Log.i(TAG, "optional MFA code accepted — polling workflow before token")
+                    pending.pushApproved = true
+                    return completeAfterChallengeValidated(pending, mfaCode)
+                }
+                Log.w(TAG, "optional MFA code not validated status=${resp.optString("status")}")
+            }
+
             val challengeId = pending.challengeId
             if (challengeId.isNullOrEmpty()) {
                 return Triple(
@@ -240,7 +252,7 @@ object RobinhoodAuthNative {
                     pushHttpStatus = status
                     if (status == 429) {
                         pending.pushRateLimitedUntilMs = now + PUSH_RATE_LIMIT_BACKOFF_MS
-                        Log.w(TAG, "push HTTP 429 — rate limited; trying token exchange instead")
+                        Log.w(TAG, "push HTTP 429 — rate limited; will poll workflow if push was approved")
                     } else {
                         pushState = push.optString("challenge_status").takeIf { it.isNotEmpty() }
                             ?: push.optString("status").takeIf { it.isNotEmpty() }
@@ -256,32 +268,20 @@ object RobinhoodAuthNative {
             }
 
             if (pushState != null && isPromptApproved(pending, pushState)) {
-                Log.i(TAG, "push validated — advancing workflow")
+                Log.i(TAG, "push validated — polling workflow before token")
                 pending.pushApproved = true
                 Thread.sleep(1500)
-                return finalizeLoginWithRetries(pending)
+                return completeAfterChallengeValidated(pending, mfaCode)
             }
 
-            val shouldTryToken = pushHttpStatus == 429
-                || pending.pushIssued
-                || now - pending.mfaStartedAtMs >= 12_000L
-
-            if (shouldTryToken) {
-                val tokenResult = tryQuickTokenExchange(pending, attempts = 3)
-                if (tokenResult.third) return tokenResult
-                if (pushHttpStatus == 429 || pending.pushIssued) {
-                    return Triple(
-                        loginResult(
-                            status = "mfa_required",
-                            mode = "live",
-                            message = "Approval received — finishing login…",
-                            challengeType = "prompt",
-                            challengeIssued = false,
-                        ),
-                        pending,
-                        false,
-                    )
-                }
+            if (
+                pushHttpStatus == 429
+                && pending.pushIssued
+                && now - pending.mfaStartedAtMs >= 20_000L
+            ) {
+                Log.i(TAG, "push rate-limited but issued — assuming approval and polling workflow")
+                pending.pushApproved = true
+                return completeAfterChallengeValidated(pending, mfaCode)
             }
 
             return Triple(
@@ -289,14 +289,12 @@ object RobinhoodAuthNative {
                     status = "mfa_required",
                     mode = "live",
                     message = when (pushState) {
-                        "issued" -> "Push sent — approve the login in your Robinhood app."
-                        "redeemed", "validated" -> "Approval received — finishing login…"
-                        null -> if (pending.pushIssued) {
-                            "Waiting for approval in your Robinhood app…"
+                        "issued" -> "Push sent — approve in the Robinhood app, or enter the SMS code if you received one."
+                        else -> if (pending.pushIssued) {
+                            "Waiting for approval in your Robinhood app (or enter SMS code if you received one)…"
                         } else {
-                            "Push sent — approve the login in your Robinhood app."
+                            "Push sent — approve in the Robinhood app, or enter the SMS code if you received one."
                         }
-                        else -> "Waiting for approval in your Robinhood app…"
                     },
                     challengeType = "prompt",
                     challengeIssued = false,
@@ -371,111 +369,121 @@ object RobinhoodAuthNative {
             )
         }
 
-        return finalizeLoginWithRetries(pending)
-    }
-
-    /** Lightweight token attempts during MFA polling — avoids hammering push status (HTTP 429). */
-    private fun tryQuickTokenExchange(
-        pending: PendingChallenge,
-        attempts: Int = 3,
-    ): Triple<Map<String, Any?>, PendingChallenge, Boolean> {
-        val loginUrl = "$RH_API/oauth2/token/"
-        for (attempt in 0 until attempts) {
-            if (!pending.inquiriesExpired && attempt == 0) {
-                pollWorkflow(pending.inquiriesUrl, maxAttempts = 2)
-            }
-            val (_, data) = rhFormPost(loginUrl, pending.loginForm)
-            data.optString("access_token").takeIf { it.isNotEmpty() }?.let { _ ->
-                Log.i(TAG, "oauth2/token success during MFA poll (attempt ${attempt + 1})")
-                return Triple(
-                    loginResult(
-                        status = "success",
-                        mode = "live",
-                        message = "Successfully connected to Robinhood account!",
-                        session = sessionPayload(data, pending.deviceToken),
-                    ),
-                    pending,
-                    true,
-                )
-            }
-            if (data.has("verification_workflow")) {
-                Log.i(TAG, "token poll still awaiting workflow (attempt ${attempt + 1}/$attempts)")
-            } else {
-                val detail = data.optString("detail").takeIf { it.isNotEmpty() }
-                if (detail != null) Log.i(TAG, "token poll attempt ${attempt + 1}/$attempts: $detail")
-            }
-            if (attempt < attempts - 1) Thread.sleep(2000L)
-        }
-        return Triple(
-            loginResult(
-                status = "mfa_required",
-                mode = "live",
-                message = "Approval received — finishing login…",
-                challengeType = pending.challengeType,
-                challengeIssued = false,
-            ),
-            pending,
-            false,
-        )
+        pending.pushApproved = true
+        return completeAfterChallengeValidated(pending, mfaCode)
     }
 
     /**
-     * After push/SMS approval Robinhood may return HTTP 410 on inquiries and rate-limit token POSTs.
-     * Retry inside one native call so JS polling does not hammer the API in parallel.
+     * Mirrors robin_stocks: poll pathfinder until workflow_status_approved, then POST oauth2/token once.
      */
-    private fun finalizeLoginWithRetries(pending: PendingChallenge): Triple<Map<String, Any?>, PendingChallenge, Boolean> {
-        val loginUrl = "$RH_API/oauth2/token/"
-        val maxAttempts = if (pending.pushApproved) 15 else 8
-
-        for (attempt in 0 until maxAttempts) {
-            if (!pending.inquiriesExpired) {
-                if (attempt == 0 || attempt % 3 == 2) {
-                    pollWorkflow(pending.inquiriesUrl)
-                }
-            } else if (attempt == 0) {
-                Log.i(TAG, "skipping workflow poll — inquiries session expired (HTTP 410)")
-            }
-
-            val (_, data) = rhFormPost(loginUrl, pending.loginForm)
-
-            data.optString("access_token").takeIf { it.isNotEmpty() }?.let { _ ->
-                Log.i(TAG, "oauth2/token success after MFA (attempt ${attempt + 1})")
-                return Triple(
-                    loginResult(
-                        status = "success",
-                        mode = "live",
-                        message = "Successfully connected to Robinhood account!",
-                        session = sessionPayload(data, pending.deviceToken),
-                    ),
-                    pending,
-                    true,
-                )
-            }
-
-            if (data.has("verification_workflow")) {
-                Log.w(TAG, "token still requires verification_workflow (attempt ${attempt + 1}/$maxAttempts)")
-            } else {
-                val detail = data.optString("detail").takeIf { it.isNotEmpty() }
-                    ?: "Login failed after verification."
-                Log.w(TAG, "post-MFA token attempt ${attempt + 1}/$maxAttempts: $detail")
-            }
-
-            if (attempt < maxAttempts - 1) {
-                Thread.sleep(if (pending.pushApproved) 2500L else 2000L)
-            }
+    private fun completeAfterChallengeValidated(
+        pending: PendingChallenge,
+        mfaCode: String?,
+    ): Triple<Map<String, Any?>, PendingChallenge, Boolean> {
+        refreshSheriffFromInquiries(pending)
+        if (pending.challengeType != "prompt") {
+            pending.pushApproved = false
+            return completeCodeChallenge(pending, mfaCode)
         }
+        if (!pending.inquiriesExpired) {
+            pollWorkflowUntilApproved(pending, maxWaitMs = 60_000)
+        }
+        return finalizeLoginOnce(pending)
+    }
 
+    private fun pollWorkflowUntilApproved(pending: PendingChallenge, maxWaitMs: Long = 60_000): Boolean {
+        val start = System.currentTimeMillis()
+        var attempt = 0
+        while (System.currentTimeMillis() - start < maxWaitMs) {
+            if (pending.inquiriesExpired) return false
+            val body = JSONObject()
+                .put("sequence", 0)
+                .put("user_input", JSONObject().put("status", "continue"))
+            val (status, data) = rhJsonPost(pending.inquiriesUrl, body)
+            if (status == 410) {
+                pending.inquiriesExpired = true
+                Log.i(TAG, "workflow poll HTTP 410")
+                return false
+            }
+            applySheriffUpdate(pending, data)
+            if (pending.challengeType != "prompt" && pending.challengeStatus == "issued") {
+                Log.i(TAG, "workflow poll requires ${pending.challengeType} code before token")
+                pending.pushApproved = false
+                return false
+            }
+            val wfStatus = data.optJSONObject("verification_workflow")?.optString("workflow_status").orEmpty()
+            val typeResult = data.optJSONObject("type_context")?.optString("result").orEmpty()
+            Log.i(TAG, "workflow poll #$attempt HTTP $status result=$typeResult wf=$wfStatus")
+            if (workflowApproved(data) || wfStatus == "workflow_status_approved") {
+                Log.i(TAG, "workflow_status_approved")
+                return true
+            }
+            Thread.sleep(5000)
+            attempt++
+        }
+        Log.w(TAG, "workflow poll timeout — proceeding with token (robin_stocks fallback)")
+        return false
+    }
+
+    private fun finalizeLoginOnce(pending: PendingChallenge): Triple<Map<String, Any?>, PendingChallenge, Boolean> {
+        val loginUrl = "$RH_API/oauth2/token/"
+        val (_, data) = rhFormPost(loginUrl, pending.loginForm)
+        data.optString("access_token").takeIf { it.isNotEmpty() }?.let { _ ->
+            Log.i(TAG, "oauth2/token success after workflow approval")
+            return Triple(
+                loginResult(
+                    status = "success",
+                    mode = "live",
+                    message = "Successfully connected to Robinhood account!",
+                    session = sessionPayload(data, pending.deviceToken),
+                ),
+                pending,
+                true,
+            )
+        }
+        if (data.has("verification_workflow")) {
+            val wfStatus = data.optJSONObject("verification_workflow")?.optString("workflow_status")
+            Log.w(TAG, "token still has verification_workflow wf=$wfStatus")
+            pending.pushApproved = false
+            return Triple(
+                loginResult(
+                    status = "mfa_required",
+                    mode = "live",
+                    message = "Robinhood is still processing approval — keep this app open.",
+                    challengeType = pending.challengeType,
+                    challengeIssued = false,
+                ),
+                pending,
+                false,
+            )
+        }
+        val detail = data.optString("detail").takeIf { it.isNotEmpty() }
+            ?: "Login failed after verification."
+        Log.w(TAG, "post-MFA token failed: $detail")
+        pending.pushApproved = false
         return Triple(
             loginResult(
                 status = "mfa_required",
                 mode = "live",
-                message = "Approval received — still finishing login. Keep this app open.",
+                message = detail,
                 challengeType = pending.challengeType,
                 challengeIssued = false,
             ),
             pending,
             false,
         )
+    }
+
+    private fun applySheriffUpdate(pending: PendingChallenge, inq: JSONObject) {
+        extractSheriffChallenge(inq)?.let { (ctype, cid, cstatus) ->
+            if (ctype != "prompt" && pending.challengeType == "prompt") {
+                Log.i(TAG, "sheriff changed prompt -> $ctype during workflow poll")
+                pending.pushApproved = false
+            }
+            pending.challengeType = ctype
+            if (!cid.isNullOrEmpty()) pending.challengeId = cid
+            if (!cstatus.isNullOrEmpty()) pending.challengeStatus = cstatus
+        }
     }
 
     /** Refresh sheriff challenge metadata each poll (matches desktop Rust). */
@@ -493,18 +501,9 @@ object RobinhoodAuthNative {
                 TAG,
                 "inquiries HTTP $inqStatus id=${sheriff?.optString("id")} status=${sheriff?.optString("status")}",
             )
-            extractSheriffChallenge(inq)?.let { (ctype, cid, cstatus) ->
-                if (ctype != "prompt" && pending.challengeType == "prompt") {
-                    Log.i(TAG, "challenge type changed prompt -> $ctype")
-                    pending.pushIssued = false
-                    pending.pushApproved = false
-                    pending.pushRateLimitedUntilMs = 0
-                }
-                pending.challengeType = ctype
-                if (!cid.isNullOrEmpty()) {
-                    pending.challengeId = cid
-                }
-                if (!cstatus.isNullOrEmpty()) pending.challengeStatus = cstatus
+            applySheriffUpdate(pending, inq)
+            if (pending.challengeType == "prompt" && pending.challengeStatus == "issued") {
+                pending.pushIssued = true
             }
         } catch (e: Exception) {
             Log.w(TAG, "inquiries refresh failed: ${e.message}")

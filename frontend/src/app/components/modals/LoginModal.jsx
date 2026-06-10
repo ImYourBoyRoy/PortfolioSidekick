@@ -102,17 +102,28 @@ export default function LoginModal() {
                         : "Enter SMS Verification Code"}
                   </label>
                   {s.loginStatus.challenge_type === "prompt" ? (
-                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center', margin: '8px 0', lineHeight: 1.6 }}>
-                      Open your <strong style={{ color: 'var(--color-buy)' }}>Robinhood mobile app</strong> and approve the login notification.
-                      We&apos;ll detect it <strong style={{ color: 'var(--color-buy)' }}>automatically</strong> — no need to click anything.
-                      <br />
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, color: '#fbbf24' }}>
-                        <RefreshCw className="animate-spin" style={{ width: 12, height: 12 }} />
-                        {s.loginStatus.message?.includes('finishing') || s.loginStatus.message?.includes('Approval received')
-                          ? 'Finishing login…'
-                          : 'Waiting for approval…'}
-                      </span>
-                    </p>
+                    <>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'center', margin: '8px 0', lineHeight: 1.6 }}>
+                        Open your <strong style={{ color: 'var(--color-buy)' }}>Robinhood mobile app</strong> and approve the login notification.
+                        We&apos;ll detect it automatically.
+                        <br />
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, color: '#fbbf24' }}>
+                          <RefreshCw className="animate-spin" style={{ width: 12, height: 12 }} />
+                          {s.loginStatus.message?.includes('processing') || s.loginStatus.message?.includes('finishing')
+                            ? 'Finishing login…'
+                            : (s.loginStatus.message || 'Waiting for approval…')}
+                        </span>
+                      </p>
+                      <input
+                        type="text"
+                        disabled={s.loading}
+                        placeholder="SMS code (if Robinhood sent one)"
+                        value={s.loginForm.mfa_code}
+                        onChange={(e) => s.setLoginForm(prev => ({ ...prev, mfa_code: e.target.value }))}
+                        className="form-input-text"
+                        style={{ letterSpacing: '0.25em', textAlign: 'center', fontWeight: '800', marginTop: 8, opacity: s.loading ? 0.6 : 1, cursor: s.loading ? 'not-allowed' : 'default' }}
+                      />
+                    </>
                   ) : s.loginStatus.challenge_issued ? (
                     <input
                       type="text"
