@@ -39,7 +39,7 @@ export function isDesktopShell() {
 /** User-facing label for Robinhood HTTP transport during login. */
 export function robinhoodTransportLabel() {
   if (isDesktopShell()) return 'native Rust HTTP';
-  if (isAndroidNative()) return 'native OkHttp';
+  if (isAndroidNative()) return 'native Kotlin auth';
   return 'embedded HTTP';
 }
 
@@ -49,7 +49,7 @@ export function robinhoodLoginDebugHint() {
     return ' Open <exe>/data/auth.log and share the last 5 lines.';
   }
   if (isAndroidNative()) {
-    return ' Try again on Wi‑Fi, approve MFA in the Robinhood app, or reinstall the latest APK from GitHub Releases.';
+    return ' Try Wi‑Fi, keep the Robinhood app open for the push, or install the latest APK (v1.7.22+) from GitHub Releases. Debug: adb logcat -s RobinhoodAuth';
   }
   return '';
 }

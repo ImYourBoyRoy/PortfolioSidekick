@@ -68,6 +68,10 @@ export class RobinhoodSessionWeb extends WebPlugin implements RobinhoodSessionPl
     // No-op on web — fetch transport has no shared cookie jar.
   }
 
+  async robinhoodLogin() {
+    throw this.unimplemented('robinhoodLogin');
+  }
+
   async httpRequest() {
     throw this.unimplemented('httpRequest');
   }

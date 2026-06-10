@@ -1,7 +1,7 @@
 // ./frontend/src/serverless/robinhoodAuth.js
 /**
  * Two-phase Robinhood auth ported from robin_stocks (authentication.py + helper.py).
- * Desktop: Tauri Rust HTTP. Android: OkHttp via RobinhoodSession plugin (cookie jar).
+ * Desktop: Tauri Rust HTTP. Android: native Kotlin login via RobinhoodSession plugin.
  *
  * Phase 1: POST credentials → pathfinder → poll inquiries for challenge type.
  * Phase 2: push poll / SMS-email code / workflow advance / re-login.
@@ -9,6 +9,7 @@
  * Created by: Roy Dawson IV
  */
 
+import { Capacitor } from '@capacitor/core';
 import { APP_VERSION } from '../appVersion';
 import {
   authHeader,
@@ -534,6 +535,36 @@ async function mapPool(items, mapper, concurrency = 8) {
   return results;
 }
 
+/** True when Android native RobinhoodSession plugin exposes full login bridge. */
+async function isAndroidNativeAuth() {
+  return isAndroidNative()
+    && Capacitor.isPluginAvailable('RobinhoodSession');
+}
+
+async function normalizeNativeLoginResult(result, profileId, username, options = {}) {
+  const normalized = {
+    status: result?.status || 'error',
+    mode: result?.mode || 'live',
+    message: result?.message || 'Robinhood login failed.',
+    challenge_type: result?.challenge_type ?? result?.challengeType,
+    challenge_issued: result?.challenge_issued ?? result?.challengeIssued,
+    session: result?.session,
+  };
+
+  if (normalized.status === 'success') {
+    memoryChallenges.delete(profileId);
+    if (normalized.session) {
+      const vault = await getVaultPlugin();
+      await saveSessionSafe(vault, profileId, normalizeSession(normalized.session), username);
+      await clearChallengeSafe(vault, profileId);
+    } else if (options.continueMfa) {
+      await waitForRobinhoodSession(profileId, 8, 150);
+    }
+  }
+
+  return normalized;
+}
+
 export async function robinhoodLogin(profileId, username, password, mfaCode = null, options = {}) {
   if (isSandboxUsername(username)) {
     return {
@@ -597,6 +628,35 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
       return normalized;
     } catch (err) {
       await authLog(`rh_robinhood_login error: ${err?.message || err}`);
+      return {
+        status: 'error',
+        mode: 'live',
+        message: err?.message || String(err),
+      };
+    }
+  }
+
+  if (await isAndroidNativeAuth()) {
+    await authLog(`android native login start profile=${profileId} continueMfa=${options.continueMfa === true}`);
+    const { RobinhoodSession } = await import('../plugins/robinhood-session');
+    try {
+      await authLog('invoking RobinhoodSession.robinhoodLogin');
+      const timeoutMs = options.continueMfa === true ? 90000 : 60000;
+      const result = await withInvokeTimeout(
+        RobinhoodSession.robinhoodLogin({
+          profileId: Number(profileId),
+          username,
+          password,
+          mfaCode: mfaCode || null,
+          continueMfa: options.continueMfa === true,
+        }),
+        timeoutMs,
+        'Native Robinhood login',
+      );
+      await authLog(`RobinhoodSession.robinhoodLogin returned status=${result?.status || 'unknown'}`);
+      return normalizeNativeLoginResult(result, profileId, username, options);
+    } catch (err) {
+      await authLog(`RobinhoodSession.robinhoodLogin error: ${err?.message || err}`);
       return {
         status: 'error',
         mode: 'live',

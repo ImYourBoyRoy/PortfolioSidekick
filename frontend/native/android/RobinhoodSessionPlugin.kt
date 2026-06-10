@@ -19,10 +19,48 @@ class RobinhoodSessionPlugin : Plugin() {
     fun httpReset(call: PluginCall) {
         Thread {
             try {
-                RobinhoodNativeHttp.resetCookies()
+                RobinhoodAuthNative.resetAllSessions()
                 call.resolve()
             } catch (e: Exception) {
                 call.reject(e.message ?: "httpReset failed")
+            }
+        }.start()
+    }
+
+    @PluginMethod
+    fun robinhoodLogin(call: PluginCall) {
+        val profileId = call.getInt("profileId") ?: run {
+            call.reject("profileId required")
+            return
+        }
+        val username = call.getString("username") ?: run {
+            call.reject("username required")
+            return
+        }
+        val password = call.getString("password") ?: run {
+            call.reject("password required")
+            return
+        }
+        val mfaCode = call.getString("mfaCode")
+        val continueMfa = call.getBoolean("continueMfa", false)
+
+        call.setKeepAlive(true)
+        Thread {
+            try {
+                val result = RobinhoodAuthNative.login(
+                    profileId.toString(),
+                    username,
+                    password,
+                    mfaCode,
+                    continueMfa,
+                )
+                bridge.activity.runOnUiThread {
+                    call.resolve(mapToJSObject(result))
+                }
+            } catch (e: Exception) {
+                bridge.activity.runOnUiThread {
+                    call.reject(e.message ?: "robinhoodLogin failed")
+                }
             }
         }.start()
     }
@@ -41,6 +79,7 @@ class RobinhoodSessionPlugin : Plugin() {
         val jsonBody = call.getObject("jsonBody")
         val headersObj = call.getObject("headers")
 
+        call.setKeepAlive(true)
         Thread {
             try {
                 val headers = mutableMapOf<String, String>()
@@ -77,9 +116,11 @@ class RobinhoodSessionPlugin : Plugin() {
                 val res = JSObject()
                 res.put("status", status)
                 res.put("body", responseBody)
-                call.resolve(res)
+                bridge.activity.runOnUiThread { call.resolve(res) }
             } catch (e: Exception) {
-                call.reject(e.message ?: "httpRequest failed")
+                bridge.activity.runOnUiThread {
+                    call.reject(e.message ?: "httpRequest failed")
+                }
             }
         }.start()
     }
@@ -169,6 +210,19 @@ class RobinhoodSessionPlugin : Plugin() {
         vault.wipe(profileId)
         vault.clearChallenge(profileId)
         call.resolve()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun mapToJSObject(map: Map<String, Any?>): JSObject {
+        val js = JSObject()
+        for ((key, value) in map) {
+            when (value) {
+                null -> Unit
+                is Map<*, *> -> js.put(key, mapToJSObject(value as Map<String, Any?>))
+                else -> js.put(key, value)
+            }
+        }
+        return js
     }
 
     private fun JSObjectToJson(obj: JSObject): JSONObject {

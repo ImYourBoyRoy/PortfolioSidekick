@@ -1787,7 +1787,7 @@ export function useSidekickApp() {
     const slowTimer = setTimeout(() => {
       setLoginStatus((prev) => (
         prev.status === "processing"
-          ? { ...prev, message: `Still contacting Robinhood (${transport}, up to 45s).${robinhoodLoginDebugHint()}` }
+          ? { ...prev, message: `Still contacting Robinhood (${transport}, up to 60s).${robinhoodLoginDebugHint()}` }
           : prev
       ));
     }, 4000);

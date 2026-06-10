@@ -20,9 +20,9 @@ object RobinhoodNativeHttp {
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookieJar)
-        .connectTimeout(45, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
-        .writeTimeout(45, TimeUnit.SECONDS)
+        .connectTimeout(16, TimeUnit.SECONDS)
+        .readTimeout(16, TimeUnit.SECONDS)
+        .writeTimeout(16, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
 

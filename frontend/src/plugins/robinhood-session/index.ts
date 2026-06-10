@@ -23,8 +23,24 @@ export interface HttpRequestResult {
   body: string;
 }
 
+export interface RobinhoodLoginResult {
+  status: string;
+  mode: string;
+  message: string;
+  challenge_type?: string;
+  challenge_issued?: boolean;
+  session?: SessionPayload;
+}
+
 export interface RobinhoodSessionPlugin {
   httpReset(): Promise<void>;
+  robinhoodLogin(options: {
+    profileId: number;
+    username: string;
+    password: string;
+    mfaCode?: string | null;
+    continueMfa?: boolean;
+  }): Promise<RobinhoodLoginResult>;
   httpRequest(options: {
     method: string;
     url: string;
