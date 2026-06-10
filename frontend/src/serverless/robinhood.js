@@ -11,6 +11,8 @@ import { sidekickFetch } from '../sidekickClient';
 import { isSandboxUsername } from './authUtils';
 import { mockChartBasePrice } from './portfolioConstants';
 import { robinhoodLogin, robinhoodLogout as rhLogout } from './robinhoodAuth';
+import { fetchPublicQuote, fetchYahooChartJson } from './yahooQuotes.js';
+
 export { fetchPublicQuote } from './yahooQuotes.js';
 
 const generateMockHistoricals = (ticker, count = 100) => {

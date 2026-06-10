@@ -24,7 +24,7 @@ function parseYahooChartPrice(data) {
   return null;
 }
 
-async function fetchYahooChartJson(url) {
+export async function fetchYahooChartJson(url) {
   try {
     const { isTauri, invoke } = await import('@tauri-apps/api/core');
     if (await isTauri()) {
