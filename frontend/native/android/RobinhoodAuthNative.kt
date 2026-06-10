@@ -172,7 +172,7 @@ object RobinhoodAuthNative {
         pending: PendingChallenge,
         mfaCode: String?,
     ): Triple<Map<String, Any?>, PendingChallenge, Boolean> {
-        refreshInquiriesIfNeeded(pending)
+        refreshSheriffFromInquiries(pending)
 
         if (pending.challengeType == "prompt") {
             val challengeId = pending.challengeId
@@ -203,13 +203,14 @@ object RobinhoodAuthNative {
                 "unknown"
             }
 
-            if (!isPushEndpointValidated(pushState)) {
+            if (!isPromptApproved(pending, pushState)) {
                 return Triple(
                     loginResult(
                         status = "mfa_required",
                         mode = "live",
                         message = when (pushState) {
                             "issued" -> "Push sent — approve the login in your Robinhood app."
+                            "redeemed", "validated" -> "Approval received — finishing login…"
                             else -> "Waiting for approval in your Robinhood app…"
                         },
                         challengeType = "prompt",
@@ -333,18 +334,20 @@ object RobinhoodAuthNative {
         )
     }
 
-    /** Only hit inquiries when we still need challenge metadata — avoids re-issuing app pushes. */
-    private fun refreshInquiriesIfNeeded(pending: PendingChallenge) {
-        val needsInquiries = pending.challengeId.isNullOrEmpty()
-            || (pending.challengeType != "prompt" && pending.challengeStatus.isNullOrEmpty())
-        if (!needsInquiries) return
-
+    /** Refresh sheriff challenge metadata each poll (matches desktop Rust). */
+    private fun refreshSheriffFromInquiries(pending: PendingChallenge) {
         try {
             val (inqStatus, inq) = rhGet(pending.inquiriesUrl)
-            Log.i(TAG, "inquiries HTTP $inqStatus challenge=${findSheriffChallenge(inq)?.optString("id")}")
+            val sheriff = findSheriffChallenge(inq)
+            Log.i(
+                TAG,
+                "inquiries HTTP $inqStatus id=${sheriff?.optString("id")} status=${sheriff?.optString("status")}",
+            )
             extractSheriffChallenge(inq)?.let { (ctype, cid, cstatus) ->
                 pending.challengeType = ctype
-                if (!cid.isNullOrEmpty()) pending.challengeId = cid
+                if (pending.challengeId.isNullOrEmpty() && !cid.isNullOrEmpty()) {
+                    pending.challengeId = cid
+                }
                 if (!cstatus.isNullOrEmpty()) pending.challengeStatus = cstatus
             }
         } catch (e: Exception) {
@@ -390,7 +393,14 @@ object RobinhoodAuthNative {
         return Triple(challengeType, challengeId, challengeStatus)
     }
 
-    private fun isPushEndpointValidated(pushState: String): Boolean = pushState == "validated"
+    private fun isPromptApproved(pending: PendingChallenge, pushState: String): Boolean {
+        if (pushState in PROMPT_APPROVED_STATES) return true
+        val sheriffStatus = pending.challengeStatus.orEmpty()
+        if (sheriffStatus in PROMPT_APPROVED_STATES) return true
+        return false
+    }
+
+    private val PROMPT_APPROVED_STATES = setOf("validated", "redeemed", "approved", "completed")
 
     private fun rhFormPost(url: String, form: Map<String, String>): Pair<Int, JSONObject> {
         val headers = rhHeaders().toMutableMap()

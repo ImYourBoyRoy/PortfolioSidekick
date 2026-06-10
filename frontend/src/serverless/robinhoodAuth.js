@@ -422,7 +422,7 @@ async function completeChallenge(pending, mfaCode, urls) {
     }
 
     const pushStatus = await requestGet(urls.pushStatus(active.challenge_id));
-    if (!pushStatus || pushStatus.challenge_status !== 'validated') {
+    if (!pushStatus || !['validated', 'redeemed', 'approved', 'completed'].includes(pushStatus.challenge_status)) {
       return {
         status: 'mfa_required',
         mode: 'live',

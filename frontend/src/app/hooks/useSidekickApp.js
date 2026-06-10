@@ -1907,7 +1907,14 @@ export function useSidekickApp() {
   }, [loginStatus.status, loginStatus.challenge_type, loginStatus.challenge_issued, loginForm.mfa_code, activeProfile]);
 
   const triggerMfaPoll = () => {
+    if (loginStatus.status !== "mfa_required" || !activeProfile) return;
+    mfaPollStartedAtRef.current = 0;
     mfaPollInFlightRef.current = false;
+    setLoginStatus((prev) => (
+      prev.status === "mfa_required"
+        ? { ...prev, message: "Checking Robinhood approval…" }
+        : prev
+    ));
     mfaPollFnRef.current?.();
   };
 

@@ -400,7 +400,7 @@ async fn complete_challenge(
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         auth_log_append_line(&format!("push status HTTP {push_status} state={push_state}"));
-        if push_state != "validated" {
+        if !matches!(push_state, "validated" | "redeemed" | "approved" | "completed") {
             return (
                 LoginResult {
                     status: "mfa_required".into(),
