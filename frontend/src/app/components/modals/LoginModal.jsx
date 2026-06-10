@@ -110,6 +110,26 @@ export default function LoginModal() {
                         <RefreshCw className="animate-spin" style={{ width: 12, height: 12 }} />
                         Waiting for approval…
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => s.triggerMfaPoll?.()}
+                        disabled={s.loading}
+                        style={{
+                          marginTop: 12,
+                          width: '100%',
+                          padding: '10px 12px',
+                          borderRadius: 8,
+                          border: '1px solid rgba(16, 185, 129, 0.35)',
+                          background: 'rgba(16, 185, 129, 0.1)',
+                          color: 'var(--color-buy)',
+                          fontWeight: 700,
+                          fontSize: 12,
+                          cursor: s.loading ? 'not-allowed' : 'pointer',
+                          opacity: s.loading ? 0.6 : 1,
+                        }}
+                      >
+                        I approved — check again
+                      </button>
                     </p>
                   ) : s.loginStatus.challenge_issued ? (
                     <input

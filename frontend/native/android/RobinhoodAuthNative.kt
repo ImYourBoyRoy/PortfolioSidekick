@@ -162,16 +162,19 @@ object RobinhoodAuthNative {
             }
 
             val pushUrl = "$RH_API/push/$challengeId/get_prompts_status/"
-            val pushState = try {
+            val pushApproved = try {
                 val (pushStatus, push) = rhGet(pushUrl)
-                Log.i(TAG, "push HTTP $pushStatus state=${push.optString("challenge_status")}")
-                push.optString("challenge_status").takeIf { it.isNotEmpty() } ?: "unknown"
+                val pushState = push.optString("challenge_status").takeIf { it.isNotEmpty() }
+                    ?: push.optString("status").takeIf { it.isNotEmpty() }
+                    ?: "unknown"
+                Log.i(TAG, "push HTTP $pushStatus state=$pushState sheriff=${pending.challengeStatus}")
+                isPushApproved(pending, pushState)
             } catch (e: Exception) {
                 Log.w(TAG, "push status failed: ${e.message}")
-                "unknown"
+                pending.challengeStatus == "validated"
             }
 
-            if (pushState != "validated") {
+            if (!pushApproved) {
                 return Triple(
                     loginResult(
                         status = "mfa_required",
@@ -299,12 +302,25 @@ object RobinhoodAuthNative {
         return vw?.optString("workflow_status") == "workflow_status_approved"
     }
 
+    private fun findSheriffChallenge(data: JSONObject): JSONObject? {
+        data.optJSONObject("context")?.optJSONObject("sheriff_challenge")?.let { return it }
+        data.optJSONObject("type_context")?.optJSONObject("context")?.optJSONObject("sheriff_challenge")?.let { return it }
+        data.optJSONObject("type_context")?.optJSONObject("sheriff_challenge")?.let { return it }
+        return null
+    }
+
     private fun extractSheriffChallenge(data: JSONObject): Triple<String, String?, String?>? {
-        val challenge = data.optJSONObject("context")?.optJSONObject("sheriff_challenge") ?: return null
+        val challenge = findSheriffChallenge(data) ?: return null
         val challengeType = challenge.optString("type").takeIf { it.isNotEmpty() } ?: return null
         val challengeId = challenge.optString("id").takeIf { it.isNotEmpty() }
         val challengeStatus = challenge.optString("status").takeIf { it.isNotEmpty() }
         return Triple(challengeType, challengeId, challengeStatus)
+    }
+
+    private fun isPushApproved(pending: PendingChallenge, pushState: String): Boolean {
+        if (pushState == "validated") return true
+        if (pending.challengeStatus == "validated") return true
+        return false
     }
 
     private fun rhFormPost(url: String, form: Map<String, String>): Pair<Int, JSONObject> {

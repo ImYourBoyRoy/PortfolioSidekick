@@ -49,7 +49,7 @@ export function robinhoodLoginDebugHint() {
     return ' Open <exe>/data/auth.log and share the last 5 lines.';
   }
   if (isAndroidNative()) {
-    return ' Try Wi‑Fi, keep the Robinhood app open for the push, or install the latest APK (v1.7.22+) from GitHub Releases. Debug: adb logcat -s RobinhoodAuth';
+    return ' Try Wi‑Fi, keep the Robinhood app open for the push, or install the latest APK (v1.7.23+) from GitHub Releases. Debug: adb logcat -s RobinhoodAuth';
   }
   return '';
 }

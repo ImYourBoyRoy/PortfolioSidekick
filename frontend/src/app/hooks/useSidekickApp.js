@@ -143,6 +143,8 @@ export function useSidekickApp() {
   const loginSucceededRef = useRef(false);
   const loginGraceUntilRef = useRef(0);
   const mfaPollInFlightRef = useRef(false);
+  const mfaPollStartedAtRef = useRef(0);
+  const mfaPollFnRef = useRef(null);
   const portfolioRestoreRef = useRef({ profileId: null, attempted: false });
   const quoteFallbackRef = useRef({ active: false, lastToastAt: 0 });
   const portfolioBootstrappingRef = useRef(false);
@@ -1819,10 +1821,21 @@ export function useSidekickApp() {
     if (loginStatus.status !== "mfa_required" || !activeProfile) return undefined;
 
     let cancelled = false;
+    let appListener = null;
 
     const pollMfa = async () => {
-      if (cancelled || loginSucceededRef.current || mfaPollInFlightRef.current) return;
+      if (cancelled || loginSucceededRef.current) return;
+      if (
+        mfaPollInFlightRef.current
+        && Date.now() - mfaPollStartedAtRef.current < 95000
+      ) {
+        return;
+      }
+      if (mfaPollInFlightRef.current) {
+        mfaPollInFlightRef.current = false;
+      }
       mfaPollInFlightRef.current = true;
+      mfaPollStartedAtRef.current = Date.now();
       try {
         const needsCode = ["sms", "email"].includes(loginStatus.challenge_type);
         const code = needsCode && loginStatus.challenge_issued
@@ -1837,24 +1850,57 @@ export function useSidekickApp() {
         );
         if (cancelled || loginSucceededRef.current) return;
         await applyLoginResult(data);
-      } catch {
-        // Transient network blip during polling; keep waiting.
+      } catch (err) {
+        console.warn("[RobinhoodAuth] MFA poll error:", err?.message || err);
       } finally {
         mfaPollInFlightRef.current = false;
       }
     };
 
+    mfaPollFnRef.current = pollMfa;
+
+    const onForeground = () => {
+      if (cancelled || loginSucceededRef.current) return;
+      mfaPollInFlightRef.current = false;
+      void pollMfa();
+    };
+
     void pollMfa();
     const interval = setInterval(() => {
       void pollMfa();
-    }, 2500);
+    }, 2000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") onForeground();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onForeground);
+
+    import("@capacitor/app")
+      .then(({ App }) => App.addListener("appStateChange", ({ isActive }) => {
+        if (isActive) onForeground();
+      }))
+      .then((handle) => {
+        appListener = handle;
+      })
+      .catch(() => {
+        // @capacitor/app optional — visibility/focus handlers cover WebView resume.
+      });
 
     return () => {
       cancelled = true;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onForeground);
+      mfaPollFnRef.current = null;
+      appListener?.remove?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- poll keyed on MFA state
   }, [loginStatus.status, loginStatus.challenge_type, loginStatus.challenge_issued, loginForm.mfa_code, activeProfile]);
+
+  const triggerMfaPoll = () => {
+    mfaPollInFlightRef.current = false;
+    mfaPollFnRef.current?.();
+  };
 
   // Robinhood Secure Logout & Wiping
   const handleLogout = async () => {
@@ -2074,7 +2120,7 @@ export function useSidekickApp() {
     handleSeedMockAssets, fetchProfiles, handleCreateProfile, handleDeleteProfile,
     fetchPortfolio, fetchGuesses, fetchAnalytics, fetchStockHistoryAndAdvisor, fetchWatchlist,
     fetchShadowCoachData, handleAddToWatchlist, handleRemoveFromWatchlist, fetchStrategyBrackets, triggerSync,
-    handleImportClipboard, handleStayOffline, handleLogin, handleLogout, handleCreateGuess,
+    handleImportClipboard, handleStayOffline, handleLogin, triggerMfaPoll, handleLogout, handleCreateGuess,
     equityDiagnostic, equityDiagnosticLoading, runEquityDiagnostic,
     hiddenHoldings, autoHideWarrants, setAutoHideWarrants,
     handleHideHolding, handleUnhideHolding, handleAdjustHolding, handleForceEvolve,
