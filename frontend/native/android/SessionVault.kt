@@ -1,25 +1,27 @@
 package com.imyourboyroy.portfoliosidekick
 
 import android.content.Context
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import org.json.JSONObject
 
 class SessionVault(private val context: Context) {
-    private fun prefs(profileId: Int) = EncryptedSharedPreferences.create(
-        context,
-        "sidekick_rh_vault_$profileId",
-        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+    private fun prefs(profileId: Int) =
+        context.getSharedPreferences("sidekick_rh_vault_$profileId", Context.MODE_PRIVATE)
+
+    private fun putEncrypted(profileId: Int, key: String, value: String) {
+        prefs(profileId).edit().putString(key, VaultCrypto.encrypt(value)).apply()
+    }
+
+    private fun getEncrypted(profileId: Int, key: String): String? {
+        val encoded = prefs(profileId).getString(key, null) ?: return null
+        return VaultCrypto.decrypt(encoded)
+    }
 
     fun save(profileId: Int, payload: JSONObject) {
-        prefs(profileId).edit().putString("session", payload.toString()).apply()
+        putEncrypted(profileId, "session", payload.toString())
     }
 
     fun load(profileId: Int): JSONObject? {
-        val raw = prefs(profileId).getString("session", null) ?: return null
+        val raw = getEncrypted(profileId, "session") ?: return null
         return try {
             JSONObject(raw)
         } catch (_: Exception) {
@@ -32,11 +34,11 @@ class SessionVault(private val context: Context) {
     }
 
     fun saveChallenge(profileId: Int, payload: JSONObject) {
-        prefs(profileId).edit().putString("pending_challenge", payload.toString()).apply()
+        putEncrypted(profileId, "pending_challenge", payload.toString())
     }
 
     fun loadChallenge(profileId: Int): JSONObject? {
-        val raw = prefs(profileId).getString("pending_challenge", null) ?: return null
+        val raw = getEncrypted(profileId, "pending_challenge") ?: return null
         return try {
             JSONObject(raw)
         } catch (_: Exception) {
@@ -49,10 +51,8 @@ class SessionVault(private val context: Context) {
     }
 
     fun saveUsername(profileId: Int, username: String) {
-        prefs(profileId).edit().putString("robinhood_username", username).apply()
+        putEncrypted(profileId, "robinhood_username", username)
     }
 
-    fun getUsername(profileId: Int): String? =
-        prefs(profileId).getString("robinhood_username", null)
-
+    fun getUsername(profileId: Int): String? = getEncrypted(profileId, "robinhood_username")
 }

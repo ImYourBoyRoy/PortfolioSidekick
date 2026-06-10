@@ -251,11 +251,16 @@ jobs:
       - name: Upgrade Android build deps to latest stable
         run: node frontend/scripts/upgrade-android-build-deps.mjs
 
+      - name: Prepare Android home for debug keystore cache
+        run: mkdir -p ~/.android
+
       - name: Cache Android debug keystore (consistent sideload signature fallback)
         uses: actions/cache@v5
         with:
-          path: ~/.android/debug.keystore
-          key: sidekick-android-debug-keystore-v1
+          path: ~/.android
+          key: sidekick-android-home-v1
+          restore-keys: |
+            sidekick-android-home-v1
 
       - name: Compile Android APK via Gradle
         env:

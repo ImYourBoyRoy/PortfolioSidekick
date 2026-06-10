@@ -12,8 +12,8 @@ cp "$ROOT/native/android/"*.kt "$PKG_DIR/"
 cp "$ROOT/native/android/network_security_config.xml" "$ROOT/android/app/src/main/res/xml/network_security_config.xml"
 
 APP_GRADLE="$ROOT/android/app/build.gradle"
-if ! grep -q "security-crypto" "$APP_GRADLE"; then
-  sed -i "/dependencies {/a\    implementation \"com.squareup.okhttp3:okhttp:4.12.0\"\n    implementation \"androidx.security:security-crypto:1.1.0-alpha06\"" "$APP_GRADLE"
+if ! grep -q "okhttp3:okhttp" "$APP_GRADLE"; then
+  sed -i "/dependencies {/a\    implementation \"com.squareup.okhttp3:okhttp:4.12.0\"" "$APP_GRADLE"
 fi
 
 cat > "$PKG_DIR/MainActivity.java" <<'JAVA'

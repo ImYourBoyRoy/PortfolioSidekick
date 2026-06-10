@@ -56,7 +56,7 @@ object RobinhoodNativeHttp {
         }
 
         client.newCall(request).execute().use { response ->
-            val text = response.body?.string() ?: ""
+            val text = response.body.string()
             return response.code to text
         }
     }

@@ -15,6 +15,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(__dirname, '..');
 const appVersionPath = resolve(frontendRoot, 'src/appVersion.js');
 const buildGradlePath = resolve(frontendRoot, 'android/app/build.gradle');
+const rootGradlePath = resolve(frontendRoot, 'android/build.gradle');
 const variablesGradlePath = resolve(frontendRoot, 'android/variables.gradle');
 
 function readAppVersion() {
@@ -107,6 +108,24 @@ function ensureExplicitSdkVersions(gradle) {
   return next;
 }
 
+/** Silence Kotlin warnings in Capacitor node_modules plugins (upstream deprecations). */
+function ensureCapacitorKotlinWarningSilence(gradle) {
+  if (gradle.includes('sidekickCapacitorKotlinWarningsSilenced')) return gradle;
+  return `${gradle.trimEnd()}
+
+// sidekickCapacitorKotlinWarningsSilenced — Capacitor plugin sources live in node_modules.
+subprojects { sub ->
+    if (sub.projectDir.absolutePath.contains("node_modules")) {
+        sub.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+            compilerOptions {
+                suppressWarnings.set(true)
+            }
+        }
+    }
+}
+`;
+}
+
 if (!existsSync(buildGradlePath)) {
   console.error(`Missing ${buildGradlePath}. Run npx cap add android first.`);
   process.exit(1);
@@ -124,4 +143,11 @@ gradle = ensureAgp9ProguardCompat(gradle);
 gradle = ensureExplicitSdkVersions(gradle);
 
 writeFileSync(buildGradlePath, gradle);
+
+if (existsSync(rootGradlePath)) {
+  let rootGradle = readFileSync(rootGradlePath, 'utf8');
+  rootGradle = ensureCapacitorKotlinWarningSilence(rootGradle);
+  writeFileSync(rootGradlePath, rootGradle);
+}
+
 console.log(`Patched Android build: versionName=${versionName} versionCode=${versionCode}`);

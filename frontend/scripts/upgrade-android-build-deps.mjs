@@ -274,7 +274,7 @@ function ensureKotlinAndroidPluginForLegacyAgp() {
   writeFileSync(appGradle, contents);
 }
 
-function patchAppDependencyVersions({ kotlin, okhttp, securityCrypto }, agpMajor) {
+function patchAppDependencyVersions({ kotlin, okhttp }, agpMajor) {
   let contents = readFileSync(appGradle, 'utf8');
 
   if (agpMajor >= 9) {
@@ -301,17 +301,8 @@ function patchAppDependencyVersions({ kotlin, okhttp, securityCrypto }, agpMajor
     );
   }
 
-  if (contents.includes('security-crypto')) {
-    contents = contents.replace(
-      /androidx\.security:security-crypto:[^"]+/,
-      `androidx.security:security-crypto:${securityCrypto}`,
-    );
-  } else {
-    contents = contents.replace(
-      /dependencies \{/,
-      `dependencies {\n    implementation "androidx.security:security-crypto:${securityCrypto}"`,
-    );
-  }
+  // Deprecated EncryptedSharedPreferences — vault uses Android Keystore via VaultCrypto.kt.
+  contents = contents.replace(/\s*implementation "androidx\.security:security-crypto:[^"]+"\n?/g, '\n');
 
   writeFileSync(appGradle, contents);
 }
@@ -337,7 +328,6 @@ const [
   googleServices,
   kotlin,
   okhttp,
-  securityCrypto,
   cordovaAndroidVersion,
   ...variableVersions
 ] = await Promise.all([
@@ -345,7 +335,6 @@ const [
   fetchLatestStableMavenVersion('com.google.gms', 'google-services'),
   fetchLatestStableMavenVersion('org.jetbrains.kotlin', 'kotlin-gradle-plugin', 'central'),
   fetchLatestStableMavenVersion('com.squareup.okhttp3', 'okhttp', 'central'),
-  fetchLatestStableMavenVersion('androidx.security', 'security-crypto'),
   fetchLatestNpmVersion('cordova-android'),
   ...Object.values(VARIABLE_COORDS).map((coords) =>
     fetchLatestStableMavenVersion(coords.group, coords.artifact, coords.repo || 'google'),
@@ -356,7 +345,6 @@ resolved.agp = agp;
 resolved.googleServices = googleServices;
 resolved.kotlin = kotlin;
 resolved.okhttp = okhttp;
-resolved.securityCrypto = securityCrypto;
 resolved.cordovaAndroidVersion = cordovaAndroidVersion;
 
 console.log(`AGP stable: ${resolved.agp}`);
@@ -407,11 +395,9 @@ console.log(`cordovaAndroidVersion: ${resolved.cordovaAndroidVersion}`);
 ensureCompileSdkForAndroidX(resolved.androidxCoreVersion);
 
 console.log(`okhttp stable: ${resolved.okhttp}`);
-console.log(`security-crypto stable: ${resolved.securityCrypto}`);
 patchAppDependencyVersions({
   kotlin: resolved.kotlin,
   okhttp: resolved.okhttp,
-  securityCrypto: resolved.securityCrypto,
 }, agpMajor);
 
 if (agpMajor >= 9) {
