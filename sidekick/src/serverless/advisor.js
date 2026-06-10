@@ -3,7 +3,7 @@
  * Portfolio Sidekick Serverless Advisor & Technical Scanners
  * Pure JavaScript implementations of technical indicator calculations,
  * regime filters, recommendation scorers, and multi-epoch ROI-based backtesting loops.
- * Ported from legacy/python-backend/advisor.py.
+ * Technical advisor scoring engine (RSI, MACD, Bollinger, EMA/SMA).
  *
  * Created by: Roy Dawson IV
  */

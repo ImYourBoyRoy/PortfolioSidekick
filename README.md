@@ -94,7 +94,7 @@ See `AGENTS.md` for the full GitHub Actions pin table and Android Gradle policy.
    git clone https://github.com/ImYourBoyRoy/PortfolioSidekick.git
    cd PortfolioSidekick
    ```
-2. **Boot React Frontend (primary dev path — no Python server required)**:
+2. **Boot Sidekick dev server (primary dev path)**:
    ```bash
    cd sidekick
    npm install
