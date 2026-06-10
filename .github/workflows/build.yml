@@ -3,10 +3,10 @@
 # GitHub official actions: pin latest major tag (v6/v7/v8) + check-latest where supported.
 # Third-party actions: @master when the repo publishes master; else latest major version tag
 #   (swatinem/rust-cache@v2, android-actions/setup-android@v4 — no reliable @master).
-# Node: frontend/.node-version major line + actions/setup-node check-latest:true.
+# Node: sidekick/.node-version major line + actions/setup-node check-latest:true.
 # Rust: rust-toolchain.toml channel=stable + dtolnay/rust-toolchain@master toolchain:stable.
 # Android deps: upgrade-android-build-deps.mjs (Gradle, AGP, Kotlin, AndroidX, Cordova).
-# Audit locally: node frontend/scripts/upgrade-ci-toolchain.mjs [--check]
+# Audit locally: node sidekick/scripts/upgrade-ci-toolchain.mjs [--check]
 
 name: Compile & Package Multi-Platform Releases
 
@@ -35,13 +35,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: frontend/.node-version
+          node-version-file: sidekick/.node-version
           check-latest: true
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: sidekick/package-lock.json
 
       - name: Verify desktop toolchain policy
-        run: node frontend/scripts/upgrade-ci-toolchain.mjs --check
+        run: node sidekick/scripts/upgrade-ci-toolchain.mjs --check
 
       - name: Install Linux Tauri Dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -64,27 +64,27 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: |
-            frontend/src-tauri -> frontend/src-tauri/target
+            sidekick/src-tauri -> sidekick/src-tauri/target
           shared-key: portfolio-sidekick
           cache-bin: true
 
       - name: Install Frontend Dependencies & Build
         run: |
-          cd frontend
+          cd sidekick
           npm ci
           npm run lint
           npm run build
 
       - name: Build Tauri Desktop Bundle
         run: |
-          cd frontend
+          cd sidekick
           npm run tauri:build
 
       - name: Package Windows Artifact
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $releaseDir = "frontend/src-tauri/target/release"
+          $releaseDir = "sidekick/src-tauri/target/release"
           $portableExe = "$releaseDir/portfolio-sidekick.exe"
           if (-not (Test-Path $portableExe)) {
             $exe = Get-ChildItem -Path $releaseDir -Filter "portfolio-sidekick.exe" | Select-Object -First 1
@@ -97,7 +97,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           set -euo pipefail
-          BUNDLE_DIR="frontend/src-tauri/target/release/bundle"
+          BUNDLE_DIR="sidekick/src-tauri/target/release/bundle"
           APP_DIR="$BUNDLE_DIR/macos/Portfolio Sidekick.app"
           if [ -d "$APP_DIR" ]; then
             zip -r ./PortfolioSidekick-MacOS.zip "$APP_DIR"
@@ -120,9 +120,9 @@ jobs:
       - name: Package Linux Binary
         if: matrix.os == 'ubuntu-latest'
         run: |
-          BIN=$(find frontend/src-tauri/target/release/bundle -type f \( -name "*.AppImage" -o -name "portfolio-sidekick" -o -name "Portfolio Sidekick" \) | head -1)
+          BIN=$(find sidekick/src-tauri/target/release/bundle -type f \( -name "*.AppImage" -o -name "portfolio-sidekick" -o -name "Portfolio Sidekick" \) | head -1)
           if [ -z "$BIN" ]; then
-            BIN=frontend/src-tauri/target/release/portfolio-sidekick
+            BIN=sidekick/src-tauri/target/release/portfolio-sidekick
           fi
           cp "$BIN" ./PortfolioSidekick-Linux
           tar -czvf ./PortfolioSidekick-Linux.tar.gz PortfolioSidekick-Linux
@@ -174,66 +174,66 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: frontend/.node-version
+          node-version-file: sidekick/.node-version
           check-latest: true
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: sidekick/package-lock.json
 
       - name: Install Frontend Dependencies & Build React App
         run: |
-          cd frontend
+          cd sidekick
           npm ci
           npm run lint
           npm run build
 
       - name: Initialize Capacitor Android Platform
         run: |
-          cd frontend
+          cd sidekick
           npx cap sync
           npx cap add android || echo "Android platform already added"
           npx cap sync android
 
       - name: Inject Custom Android Launcher Icons
         run: |
-          mkdir -p frontend/android/app/src/main/res/mipmap-mdpi
-          mkdir -p frontend/android/app/src/main/res/mipmap-hdpi
-          mkdir -p frontend/android/app/src/main/res/mipmap-xhdpi
-          mkdir -p frontend/android/app/src/main/res/mipmap-xxhdpi
-          mkdir -p frontend/android/app/src/main/res/mipmap-xxxhdpi
-          cp assets/android/icon-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-          cp assets/android/icon-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
-          cp assets/android/icon-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-          cp assets/android/icon-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
-          cp assets/android/icon-xhdpi.png frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
-          cp assets/android/icon-xhdpi.png frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
-          cp assets/android/icon-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-          cp assets/android/icon-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
-          cp assets/android/icon-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-          cp assets/android/icon-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
-          cp assets/android/icon-foreground-mdpi.png frontend/android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png
-          cp assets/android/icon-foreground-hdpi.png frontend/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
-          cp assets/android/icon-foreground-xhdpi.png frontend/android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png
-          cp assets/android/icon-foreground-xxhdpi.png frontend/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png
-          cp assets/android/icon-foreground-xxxhdpi.png frontend/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
-          mkdir -p frontend/android/app/src/main/res/mipmap-anydpi-v26
-          cat << 'EOF' > frontend/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          mkdir -p sidekick/android/app/src/main/res/mipmap-mdpi
+          mkdir -p sidekick/android/app/src/main/res/mipmap-hdpi
+          mkdir -p sidekick/android/app/src/main/res/mipmap-xhdpi
+          mkdir -p sidekick/android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p sidekick/android/app/src/main/res/mipmap-xxxhdpi
+          cp assets/android/icon-mdpi.png sidekick/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cp assets/android/icon-mdpi.png sidekick/android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+          cp assets/android/icon-hdpi.png sidekick/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cp assets/android/icon-hdpi.png sidekick/android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+          cp assets/android/icon-xhdpi.png sidekick/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          cp assets/android/icon-xhdpi.png sidekick/android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+          cp assets/android/icon-xxhdpi.png sidekick/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp assets/android/icon-xxhdpi.png sidekick/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+          cp assets/android/icon-xxxhdpi.png sidekick/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          cp assets/android/icon-xxxhdpi.png sidekick/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+          cp assets/android/icon-foreground-mdpi.png sidekick/android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png
+          cp assets/android/icon-foreground-hdpi.png sidekick/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
+          cp assets/android/icon-foreground-xhdpi.png sidekick/android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png
+          cp assets/android/icon-foreground-xxhdpi.png sidekick/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png
+          cp assets/android/icon-foreground-xxxhdpi.png sidekick/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+          mkdir -p sidekick/android/app/src/main/res/mipmap-anydpi-v26
+          cat << 'EOF' > sidekick/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
               <background android:drawable="@color/ic_launcher_background"/>
               <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
           </adaptive-icon>
           EOF
-          cat << 'EOF' > frontend/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          cat << 'EOF' > sidekick/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
               <background android:drawable="@color/ic_launcher_background"/>
               <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
           </adaptive-icon>
           EOF
-          mkdir -p frontend/android/app/src/main/res/values
-          rm -f frontend/android/app/src/main/res/values/colors.xml
-          rm -f frontend/android/app/src/main/res/values/ic_launcher_background.xml
-          cat << 'EOF' > frontend/android/app/src/main/res/values/ic_launcher_background.xml
+          mkdir -p sidekick/android/app/src/main/res/values
+          rm -f sidekick/android/app/src/main/res/values/colors.xml
+          rm -f sidekick/android/app/src/main/res/values/ic_launcher_background.xml
+          cat << 'EOF' > sidekick/android/app/src/main/res/values/ic_launcher_background.xml
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <color name="ic_launcher_background">#070c12</color>
@@ -242,14 +242,14 @@ jobs:
 
       - name: Inject Native Robinhood Plugin & Security Hardening
         run: |
-          chmod +x frontend/scripts/inject-android-native.sh
-          frontend/scripts/inject-android-native.sh
+          chmod +x sidekick/scripts/inject-android-native.sh
+          sidekick/scripts/inject-android-native.sh
 
       - name: Patch Android versionCode and signing config
-        run: node frontend/scripts/patch-android-build.mjs
+        run: node sidekick/scripts/patch-android-build.mjs
 
       - name: Upgrade Android build deps to latest stable
-        run: node frontend/scripts/upgrade-android-build-deps.mjs
+        run: node sidekick/scripts/upgrade-android-build-deps.mjs
 
       - name: Prepare Android home for debug keystore cache
         run: mkdir -p ~/.android
@@ -269,7 +269,7 @@ jobs:
           SIDEKICK_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           SIDEKICK_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          cd frontend/android
+          cd sidekick/android
           chmod +x gradlew
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
             mkdir -p keystore

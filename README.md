@@ -65,7 +65,7 @@ Every release tag (`v*`) triggers CI: **Tauri** desktop builds (Windows/macOS/Li
 | Network | Allowlist | `api.robinhood.com`, Yahoo Finance only (CSP + Android network security config) |
 | Backups | Disabled | `allowBackup=false` on Android; no cloud sync |
 
-> **Desktop is the supported path.** Run `frontend\src-tauri\target\release\portfolio-sidekick.exe` (or `PortfolioSidekick-Windows.exe` from releases). Browser `npm run dev` does not support Robinhood login. 
+> **Desktop is the supported path.** Run `sidekick\src-tauri\target\release\portfolio-sidekick.exe` (or `PortfolioSidekick-Windows.exe` from releases). Browser `npm run dev` does not support Robinhood login. 
 
 ---
 
@@ -76,14 +76,12 @@ Every release tag (`v*`) triggers CI: **Tauri** desktop builds (Windows/macOS/Li
 If you prefer running the development server locally:
 
 #### Prerequisites
-* **Node.js**: 26+ — major line in `frontend/.node-version`; CI uses `check-latest` for the newest patch
+* **Node.js**: 26+ — major line in `sidekick/.node-version`; CI uses `check-latest` for the newest patch
 * **Rust**: stable / latest via [rustup.rs](https://rustup.rs) (`rust-toolchain.toml` pins `stable`; run `rustup update stable` before builds) — required for Tauri desktop builds
-* **Python**: 3.12+ — **optional**, legacy `backend/` reference and `verify_toolkit.py` only (not used at runtime in v1.7.7)
-
 #### Toolchain policy (floating latest stable)
 | Component | Local | CI |
 |-----------|-------|-----|
-| Node | `frontend/.node-version` + Node 26+ | `setup-node@v6` + `check-latest: true` |
+| Node | `sidekick/.node-version` + Node 26+ | `setup-node@v6` + `check-latest: true` |
 | Rust / Tauri | `rust-toolchain.toml` → `stable` | `dtolnay/rust-toolchain@master` + `swatinem/rust-cache@v2` |
 | npm deps | `npm run deps:refresh` when upgrading intentionally | `npm ci` (lockfile pinned) |
 | Audit | `npm run toolchain:check` | same script in desktop CI job |
@@ -98,21 +96,21 @@ See `AGENTS.md` for the full GitHub Actions pin table and Android Gradle policy.
    ```
 2. **Boot React Frontend (primary dev path — no Python server required)**:
    ```bash
-   cd frontend
+   cd sidekick
    npm install
    npm run dev
    ```
-   *Loads at `http://localhost:5173`. All `/api/*` routes are handled in-process by `frontend/src/serverless/apiRouter.js`.*
+   *Loads at `http://localhost:5173`. All `/api/*` routes are handled in-process by `sidekick/src/serverless/apiRouter.js`.*
 3. **Tauri desktop (Windows / macOS / Linux)**:
    ```bash
-   cd frontend
+   cd sidekick
    npm install
    npm run tauri:build
    ```
-   *Requires [Rust](https://rustup.rs) stable (`rustup update stable`). Windows: `.\compile_windows.ps1`*
+   *Requires [Rust](https://rustup.rs) stable (`rustup update stable`). Windows: `.\scripts\build-windows.ps1`*
 4. **Android standalone build**:
    ```bash
-   cd frontend
+   cd sidekick
    npm run build
    npx cap add android   # first time only
    npx cap sync android
@@ -123,30 +121,16 @@ See `AGENTS.md` for the full GitHub Actions pin table and Android Gradle policy.
    ***Experimental:** Robinhood auth uses embedded JS + CapacitorHttp; Kotlin plugin stores encrypted sessions. Prefer desktop Tauri for production Robinhood sync until Android is validated on a physical device.*
 
    **Sideload upgrades (install over existing APK):** Android only allows in-place upgrades when the new APK is signed with the **same key** and has a **higher `versionCode`**. CI patches `versionCode` from `APP_VERSION` (e.g. `1.7.13` → `10713`) and uses either:
-   - **Release keystore** (recommended): add GitHub Actions secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Generate once with `frontend/scripts/generate-android-keystore.sh` (requires JDK `keytool`).
+   - **Release keystore** (recommended): add GitHub Actions secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Generate once with `sidekick/scripts/generate-android-keystore.sh` (requires JDK `keytool`).
    - **Cached debug keystore** (fallback): if no release secrets are set, CI caches `~/.android/debug.keystore` so debug APKs keep a stable signature across builds.
 
    If you installed an older GitHub APK (v1.7.12 or earlier), you may need to **uninstall once** because those builds used ephemeral debug keys. After that, v1.7.13+ APKs from the same signing path should upgrade in place.
 
 ---
 
-### Agentic & MCP Server Integration
+### Agentic Integration
 
-**Portfolio Sidekick** is designed with autonomous software agents in mind, offering low hidden state, strict typing, and high testability.
-
-#### 1. Calling the Verification Engine Natively
-Agents can programmatically execute the integrity check suite to assert correct local SQLite database behavior and quantitative scanner outputs:
-```bash
-python backend/verify_toolkit.py
-```
-
-#### 2. Querying Backend Endpoints via MCP HTTP Gateway (Dev Mode Only)
-In development, MCP clients can query the loopback API with a session header:
-```bash
-TOKEN=$(curl -s http://127.0.0.1:8000/api/dev/session | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
-curl -H "X-Sidekick-Local-Session: $TOKEN" http://127.0.0.1:8000/api/profiles
-```
-Production desktop builds do not expose HTTP.
+**Portfolio Sidekick** is designed with autonomous software agents in mind: low hidden state, embedded `/api/*` routing via `sidekickFetch` → `apiRouter.js`, and no external HTTP server in production.
 
 ---
 
@@ -206,27 +190,16 @@ We stand on the shoulders of giants. This toolkit would not be possible without 
 
 ```text
 StockToolkit/
-├── .github/
-│   └── workflows/
-│       └── build.yml         # Matrix Release compilations (Win/Mac/Linux/Android)
-├── assets/
-│   ├── logo.png              # High-fidelity geometric Obsidian branding
-│   ├── icon.ico              # Multi-resolution Windows app executable icon
-│   ├── icon.icns             # Multi-resolution macOS app bundle icon
-│   ├── icon.png              # High-resolution PNG logo wrapper
-│   └── android/              # Responsive Android density launcher launcher icons
-├── backend/                  # DEPRECATED legacy Python (reference only — see DEPRECATED.md)
-├── frontend/
-│   ├── src-tauri/            # Tauri 2 Rust desktop shell (Windows/macOS/Linux)
-│   ├── capacitor.config.json # Mobile application mapping parameters
-│   ├── package.json          # UI Node package parameters
+├── .github/workflows/            # ci.yml (PR smoke) + build.yml (release tags)
+├── assets/                       # Icons, screenshots (README + CI)
+├── scripts/                      # Repo dev tools (Windows build, git hooks, GH purge)
+├── sidekick/
+│   ├── src-tauri/                # Tauri 2 Rust desktop shell
+│   ├── native/android/           # Kotlin Robinhood auth (injected at CI)
+│   ├── scripts/                  # Android/CI maintenance (Gradle, Capacitor patches)
 │   └── src/
-│       ├── App.jsx           # Main React UI Dashboard & SVG Charts
-│       ├── main.jsx          # DB bootstrap + Vite mount
-│       ├── sidekickClient.js # Unified serverless API transport
-│       ├── plugins/robinhood-session/  # Encrypted OAuth vault plugin
-│       └── serverless/       # SQLite, apiRouter, robinhoodAuth, advisor, news
-│   └── native/android/       # Kotlin session vault (injected at CI build)
-├── compile_windows.ps1       # Tauri Windows desktop compiler
-└── PortfolioSidekick.spec    # DEPRECATED PyInstaller spec (pre-v1.7)
+│       ├── app/                  # React UI (tabs, hooks, components)
+│       ├── lib/                  # sidekickClient, appVersion
+│       ├── serverless/           # Embedded API engine (SQLite, auth, advisors)
+│       └── plugins/robinhood-session/
 ```
