@@ -7,7 +7,8 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyCompileSdkLine } from './lib/androidSdkGradle.mjs';
 
@@ -17,6 +18,8 @@ const appVersionPath = resolve(sidekickRoot, 'src/lib/appVersion.js');
 const buildGradlePath = resolve(sidekickRoot, 'android/app/build.gradle');
 const rootGradlePath = resolve(sidekickRoot, 'android/build.gradle');
 const variablesGradlePath = resolve(sidekickRoot, 'android/variables.gradle');
+const androidRoot = resolve(sidekickRoot, 'android');
+const capacitorSettingsPath = resolve(androidRoot, 'capacitor.settings.gradle');
 
 function readAppVersion() {
   const src = readFileSync(appVersionPath, 'utf8');
@@ -108,6 +111,73 @@ function ensureExplicitSdkVersions(gradle) {
   return next;
 }
 
+function discoverAndroidModuleGradleFiles() {
+  /** @type {string[]} */
+  const files = [
+    buildGradlePath,
+    resolve(androidRoot, 'capacitor-cordova-android-plugins/build.gradle'),
+  ];
+
+  if (existsSync(capacitorSettingsPath)) {
+    const settings = readFileSync(capacitorSettingsPath, 'utf8');
+    for (const match of settings.matchAll(/projectDir\s*=\s*new\s+File\('([^']+)'\)/g)) {
+      const gradleFile = resolve(androidRoot, join(match[1], 'build.gradle'));
+      if (existsSync(gradleFile)) files.push(gradleFile);
+    }
+  }
+
+  return [...new Set(files)];
+}
+
+function detectJavaMajor() {
+  const { stdout, stderr } = spawnSync('java', ['-version'], { encoding: 'utf8' });
+  const text = `${stderr || ''}${stdout || ''}`;
+  const match = text.match(/version "(\d+)/);
+  return match ? Number(match[1]) : 21;
+}
+
+function ensureGradleJavaHome(javaMajor) {
+  const propsPath = resolve(androidRoot, 'gradle.properties');
+  if (!existsSync(propsPath)) return;
+  const javaHome = process.env.JAVA_HOME;
+  if (!javaHome) return;
+  const normalizedHome = javaHome.replace(/\\/g, '/');
+  let lines = readFileSync(propsPath, 'utf8').split('\n');
+  lines = lines.filter((line) => !line.startsWith('org.gradle.java.home='));
+  lines.push(`org.gradle.java.home=${normalizedHome}`);
+  writeFileSync(propsPath, `${lines.join('\n').trimEnd()}\n`);
+  console.log(`gradle.properties: org.gradle.java.home -> ${normalizedHome} (Java ${javaMajor})`);
+}
+
+function patchJvmToolchainMajor() {
+  const major = detectJavaMajor();
+  if (major < 21) {
+    console.warn(`Java ${major} detected; Android build expects JDK 21+.`);
+    return;
+  }
+  ensureGradleJavaHome(major);
+  for (const gradleFile of discoverAndroidModuleGradleFiles()) {
+    const before = readFileSync(gradleFile, 'utf8');
+    const after = before.replace(/jvmToolchain\(\d+\)/g, `jvmToolchain(${major})`);
+    if (after !== before) {
+      writeFileSync(gradleFile, after);
+      console.log(`jvmToolchain ${major}: patched ${gradleFile}`);
+    }
+  }
+}
+
+function patchAllAndroidModuleCompileSdk() {
+  const { compileSdk } = readSdkVersions();
+  for (const gradleFile of discoverAndroidModuleGradleFiles()) {
+    const before = readFileSync(gradleFile, 'utf8');
+    const after = applyCompileSdkLine(before, compileSdk);
+    if (after !== before) {
+      writeFileSync(gradleFile, after);
+      console.log(`compileSdk ${compileSdk}: patched ${gradleFile}`);
+    }
+  }
+}
+
 /** Silence Kotlin warnings in Capacitor node_modules plugins (upstream deprecations). */
 function ensureCapacitorKotlinWarningSilence(gradle) {
   if (gradle.includes('sidekickCapacitorKotlinWarningsSilenced')) return gradle;
@@ -143,6 +213,8 @@ gradle = ensureAgp9ProguardCompat(gradle);
 gradle = ensureExplicitSdkVersions(gradle);
 
 writeFileSync(buildGradlePath, gradle);
+patchAllAndroidModuleCompileSdk();
+patchJvmToolchainMajor();
 
 if (existsSync(rootGradlePath)) {
   let rootGradle = readFileSync(rootGradlePath, 'utf8');

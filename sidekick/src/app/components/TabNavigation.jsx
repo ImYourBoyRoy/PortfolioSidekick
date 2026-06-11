@@ -3,7 +3,7 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
-import { TrendingUp, LayoutDashboard, Sliders, Brain, Target, Eye, ZoomIn, ZoomOut, Settings, Newspaper } from 'lucide-react';
+import { TrendingUp, LayoutDashboard, Sliders, Brain, Target, Eye, Settings, Newspaper, Landmark } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
 
 export default function TabNavigation() {
@@ -24,76 +24,56 @@ export default function TabNavigation() {
             className={`tab-nav-btn ${s.activeTab === "coach" ? 'tab-nav-btn-active' : ''}`}
           >
             <TrendingUp style={{ width: 14, height: 14 }} />
-            Interactive Coach Chart
+            Coach Chart
           </button>
           <button
             onClick={() => s.setActiveTab("oracle")}
             className={`tab-nav-btn ${s.activeTab === "oracle" ? 'tab-nav-btn-active' : ''}`}
           >
             <Brain style={{ width: 14, height: 14 }} />
-            Oracle Predictions
+            Oracle
           </button>
           <button
             onClick={() => s.setActiveTab("strategy")}
             className={`tab-nav-btn ${s.activeTab === "strategy" ? 'tab-nav-btn-active' : ''}`}
           >
             <Sliders style={{ width: 14, height: 14 }} />
-            Tactical Strategy Planner
+            Strategy
           </button>
           <button
             onClick={() => s.setActiveTab("strength")}
             className={`tab-nav-btn ${s.activeTab === "strength" ? 'tab-nav-btn-active' : ''}`}
           >
             <Target style={{ width: 14, height: 14 }} />
-            Strength Analyzer
+            Strength
           </button>
           <button
             onClick={() => s.setActiveTab("shadow")}
             className={`tab-nav-btn ${s.activeTab === "shadow" ? 'tab-nav-btn-active' : ''}`}
           >
             <Eye style={{ width: 14, height: 14 }} />
-            Watch What I Do
+            Shadow Coach
           </button>
           <button
             onClick={() => s.setActiveTab("news")}
             className={`tab-nav-btn ${s.activeTab === "news" ? 'tab-nav-btn-active' : ''}`}
           >
             <Newspaper style={{ width: 14, height: 14 }} />
-            Market News
+            News
+          </button>
+          <button
+            onClick={() => s.setActiveTab("insider")}
+            className={`tab-nav-btn ${s.activeTab === "insider" ? 'tab-nav-btn-active' : ''}`}
+          >
+            <Landmark style={{ width: 14, height: 14 }} />
+            Insider
           </button>
           <button
             onClick={() => s.setActiveTab("settings")}
             className={`tab-nav-btn ${s.activeTab === "settings" ? 'tab-nav-btn-active' : ''}`}
           >
             <Settings style={{ width: 14, height: 14 }} />
-            Advanced Settings
-          </button>
-        </div>
-        {/* Accessibility Controls — Font Sizing & Contrast */}
-        <div className="accessibility-controls-bar">
-          <button
-            onClick={() => s.adjustFontSize(-1)}
-            className="font-size-btn"
-            title="Decrease font size"
-            disabled={s.fontSizeOffset <= -3}
-          >
-            <ZoomOut style={{ width: 13, height: 13 }} />
-          </button>
-          <span className="font-size-indicator" title="Font size adjustment">{s.fontSizeOffset > 0 ? `+${s.fontSizeOffset}` : s.fontSizeOffset}</span>
-          <button
-            onClick={() => s.adjustFontSize(1)}
-            className="font-size-btn"
-            title="Increase font size"
-            disabled={s.fontSizeOffset >= 5}
-          >
-            <ZoomIn style={{ width: 13, height: 13 }} />
-          </button>
-          <button
-            onClick={() => s.setFontSizeOffset(0)}
-            className="font-size-btn font-reset-btn"
-            title="Reset font size to default"
-          >
-            Reset
+            Settings
           </button>
         </div>
       </div>

@@ -50,6 +50,9 @@ const ASSET_UNIVERSE = [
   { ticker: "VOO", name: "Vanguard S&P 500 ETF", basePrice: 478.20, sectors: ["etf"] },
   { ticker: "SCHD", name: "Schwab US Dividend Equity", basePrice: 78.40, sectors: ["etf"] },
   { ticker: "ARKK", name: "ARK Innovation ETF", basePrice: 44.50, sectors: ["etf"] },
+  { ticker: "ARKX", name: "ARK Space Exploration ETF", basePrice: 22.40, sectors: ["etf", "technology"] },
+  { ticker: "UFO", name: "Procure Space ETF", basePrice: 28.30, sectors: ["etf", "technology"] },
+  { ticker: "RKLB", name: "Rocket Lab USA", basePrice: 24.80, sectors: ["technology"] },
   { ticker: "SMH", name: "VanEck Semiconductor ETF", basePrice: 224.80, sectors: ["etf", "technology"] },
   { ticker: "XLK", name: "Technology Select Sector SPDR", basePrice: 204.60, sectors: ["etf", "technology"] }
 ];
@@ -153,7 +156,140 @@ export const calculateMarketStrength = (timeframe = "day", sector = "all") => {
     sector: sec,
     data_synthetic: true,
     disclaimer: 'Simulated strength deck — not live market data. Use for exploration only.',
+    all_assets: scoredAssets,
     top_gainers: gainersSorted.slice(0, 15),
     worst_decliners: declinersSorted.slice(0, 15),
   };
 };
+
+const WISE_TIMEFRAME_WEIGHTS = { day: 0.45, week: 0.35, month: 0.2 };
+
+/**
+ * Ranks cross-timeframe conviction picks for reallocation suggestions (excludes owned tickers).
+ * @param {number} limit
+ * @param {string[]} excludeTickers
+ */
+export const computeWisestReallocationPicks = (limit = 5, excludeTickers = []) => {
+  const exclude = new Set(excludeTickers.map((t) => String(t).toUpperCase()));
+  const composite = new Map();
+
+  for (const [tf, weight] of Object.entries(WISE_TIMEFRAME_WEIGHTS)) {
+    const deck = calculateMarketStrength(tf, 'all');
+    for (const asset of deck.all_assets || []) {
+      const ticker = asset.ticker.toUpperCase();
+      if (exclude.has(ticker)) continue;
+      const entry = composite.get(ticker) || {
+        ticker,
+        name: asset.name,
+        composite_score: 0,
+        day_pct: null,
+        week_pct: null,
+        month_pct: null,
+        verdict: asset.verdict,
+      };
+      entry.composite_score += asset.score * weight;
+      if (tf === 'day') entry.day_pct = asset.change_pct;
+      if (tf === 'week') entry.week_pct = asset.change_pct;
+      if (tf === 'month') entry.month_pct = asset.change_pct;
+      composite.set(ticker, entry);
+    }
+  }
+
+  return [...composite.values()]
+    .sort((a, b) => b.composite_score - a.composite_score)
+    .slice(0, limit)
+    .map((row) => ({
+      ...row,
+      composite_score: Math.round(row.composite_score * 10) / 10,
+    }));
+};
+
+const LIVE_BATCH_SIZE = 6;
+
+function scoreFromChangePct(changePct, volCap = 3) {
+  const clamped = Math.max(-volCap, Math.min(volCap, changePct));
+  const scoreBase = 50 + (clamped / volCap) * 45;
+  return Math.max(10, Math.min(99, Math.round(scoreBase * 10) / 10));
+}
+
+function verdictFromScore(score) {
+  if (score >= 65) return 'KEEP';
+  if (score < 35) return 'ABORT';
+  return 'MONITOR';
+}
+
+/**
+ * Live day-change strength deck via Yahoo (cross-platform). Falls back to synthetic deck on failure.
+ */
+export async function calculateLiveMarketStrength(timeframe = 'day', sector = 'all') {
+  const tf = timeframe.toLowerCase().trim();
+  const sec = sector.toLowerCase().trim();
+
+  if (tf !== 'day') {
+    const synthetic = calculateMarketStrength(tf, sec);
+    return { ...synthetic, live_attempted: true, live_unavailable_reason: 'Live quotes only wired for day timeframe' };
+  }
+
+  const universe = ASSET_UNIVERSE.filter((a) => sec === 'all' || a.sectors.includes(sec));
+  const scoredAssets = [];
+  let liveHits = 0;
+
+  for (let i = 0; i < universe.length; i += LIVE_BATCH_SIZE) {
+    const batch = universe.slice(i, i + LIVE_BATCH_SIZE);
+    const snaps = await Promise.all(
+      batch.map(async (asset) => {
+        try {
+          const { fetchYahooDaySnapshot } = await import('./yahooQuotes.js');
+          return await fetchYahooDaySnapshot(asset.ticker);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (let j = 0; j < batch.length; j += 1) {
+      const asset = batch[j];
+      const snap = snaps[j];
+      if (snap?.price != null) {
+        liveHits += 1;
+        const changePct = snap.change_pct ?? 0;
+        const advisorScore = scoreFromChangePct(changePct);
+        scoredAssets.push({
+          ticker: asset.ticker,
+          name: asset.name,
+          price: snap.price,
+          change_pct: changePct,
+          score: advisorScore,
+          verdict: verdictFromScore(advisorScore),
+          sectors: asset.sectors,
+          live: true,
+        });
+      } else {
+        const fallback = calculateMarketStrength('day', 'all').all_assets.find((a) => a.ticker === asset.ticker);
+        if (fallback) scoredAssets.push({ ...fallback, live: false });
+      }
+    }
+  }
+
+  if (liveHits < Math.max(8, Math.floor(universe.length * 0.25))) {
+    const synthetic = calculateMarketStrength(tf, sec);
+    return {
+      ...synthetic,
+      live_attempted: true,
+      live_unavailable_reason: `Only ${liveHits}/${universe.length} live quotes — showing simulated deck`,
+    };
+  }
+
+  const gainersSorted = [...scoredAssets].sort((a, b) => b.change_pct - a.change_pct);
+  const declinersSorted = [...scoredAssets].sort((a, b) => a.change_pct - b.change_pct);
+
+  return {
+    timeframe: tf,
+    sector: sec,
+    data_synthetic: false,
+    live_quotes: liveHits,
+    disclaimer: 'Live day-change deck from public quotes. Week/month still use horizon models elsewhere.',
+    all_assets: scoredAssets,
+    top_gainers: gainersSorted.slice(0, 15),
+    worst_decliners: declinersSorted.slice(0, 15),
+  };
+}

@@ -11,6 +11,12 @@ export { localDb } from './database';
 export * from './advisor';
 export * from './robinhood';
 export * from './strength';
+export * from './catalystWatch';
+export * from './marketBrief';
+export * from './oracleScenario';
+export * from './marketRegime';
+export * from './oracleFalsifier';
+export * from './oracleScorecard';
 export * from './news';
 export {
   fetchCongressTrades,

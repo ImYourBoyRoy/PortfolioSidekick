@@ -1,7 +1,12 @@
 // ./sidekick/src/serverless/yahooQuotes.js
 /**
  * Yahoo Finance public quote fetch — shared by robinhood sync and holdings enrichment.
+ * Cross-platform: Tauri native HTTP → CapacitorHttp (Android) → fetch.
+ *
+ * Created by: Roy Dawson IV
  */
+
+import { Capacitor } from '@capacitor/core';
 
 const YAHOO_QUOTE_HEADERS = {
   Accept: 'application/json',
@@ -39,11 +44,57 @@ export async function fetchYahooChartJson(url) {
       return JSON.parse(result.body);
     }
   } catch {
-    // Fall through to webview fetch.
+    // Fall through to Capacitor / fetch.
   }
+
+  if (Capacitor.isNativePlatform()) {
+    const { CapacitorHttp } = await import('@capacitor/core');
+    const res = await CapacitorHttp.get({
+      url,
+      headers: YAHOO_QUOTE_HEADERS,
+      connectTimeout: 30000,
+      readTimeout: 30000,
+    });
+    if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+    const text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+    return JSON.parse(text);
+  }
+
   const res = await fetch(url, { headers: YAHOO_QUOTE_HEADERS });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+/** Day change % from Yahoo chart meta (live strength deck). */
+export function parseYahooDayChangePct(data) {
+  const meta = data?.chart?.result?.[0]?.meta;
+  if (!meta) return null;
+  const price = parseYahooChartPrice(data);
+  const prev = parseFloat(meta.chartPreviousClose ?? meta.previousClose);
+  if (!Number.isFinite(price) || !Number.isFinite(prev) || prev <= 0) return null;
+  return round2(((price - prev) / prev) * 100);
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+export async function fetchYahooDaySnapshot(ticker) {
+  const formattedTicker = ticker.toUpperCase().trim();
+  const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+  for (const host of hosts) {
+    try {
+      const url = `https://${host}/v8/finance/chart/${formattedTicker}?range=1d&interval=1m`;
+      const data = await fetchYahooChartJson(url);
+      const price = parseYahooChartPrice(data);
+      const change_pct = parseYahooDayChangePct(data);
+      if (price == null) throw new Error('No price in chart payload');
+      return { ticker: formattedTicker, price, change_pct: change_pct ?? 0 };
+    } catch (err) {
+      console.warn(`[Yahoo] Day snapshot failed for ${formattedTicker} via ${host}: ${err.message}`);
+    }
+  }
+  return null;
 }
 
 export async function fetchPublicQuote(ticker) {

@@ -3,7 +3,7 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
-import { Calendar, CheckCircle, Sparkles, Brain, Activity, Target, ChevronDown, ChevronUp } from 'lucide-react';
+import { Calendar, CheckCircle, Sparkles, Brain, Activity, Target, ChevronDown, ChevronUp, Eye, AlertTriangle } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
 
 export default function OracleTab() {
@@ -28,8 +28,143 @@ export default function OracleTab() {
                 <Brain style={{ width: 14, height: 14 }} />
                 Intuition Tracker & Archetypes
               </button>
+              <button
+                onClick={() => s.setPredictionTab("scenarios")}
+                className={`viability-sub-tab-btn ${s.predictionTab === "scenarios" ? "viability-sub-tab-btn-active" : ""}`}
+              >
+                <Eye style={{ width: 14, height: 14 }} />
+                Scenario Oracle
+              </button>
             </div>
           </div>
+
+          {s.predictionTab === "scenarios" && s.scenarioOracle && (
+            <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {s.marketRegime && !s.marketRegime.regime_is_estimate && (
+                <div className="glass-card" style={{ padding: 12, fontSize: '10px', color: 'var(--text-muted)', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                  <span style={{ fontWeight: 900, color: '#a78bfa' }}>Market regime</span>
+                  <span>{s.marketRegime.tag}</span>
+                  {s.marketRegime.vix != null && <span>VIX {s.marketRegime.vix.toFixed(1)}</span>}
+                  {s.marketRegime.spy_above_200 != null && (
+                    <span>SPY {s.marketRegime.spy_above_200 ? 'above' : 'below'} 200d</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void s.fetchMarketRegime?.()}
+                    style={{ marginLeft: 'auto', fontSize: '9px', fontWeight: 800, color: '#6ee7b7', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                  >
+                    Refresh regime
+                  </button>
+                </div>
+              )}
+
+              {s.scenarioOracle.falsifier_eval?.fired_count > 0 && (
+                <div className="glass-card" style={{ padding: 14, border: '1px solid rgba(244,63,94,0.35)' }}>
+                  <span style={{ fontSize: '10px', fontWeight: 900, color: '#fb7185', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <AlertTriangle style={{ width: 12, height: 12 }} />
+                    {s.scenarioOracle.falsifier_eval.auto_downgraded
+                      ? 'Falsifiers fired — stance auto-downgraded to WAIT'
+                      : `${s.scenarioOracle.falsifier_eval.fired_count} falsifier(s) active`}
+                  </span>
+                  <ul style={{ margin: '8px 0 0', paddingLeft: 16, fontSize: '10px', color: 'var(--text-muted)' }}>
+                    {s.scenarioOracle.falsifier_eval.triggered.map((t) => (
+                      <li key={t.id}>{t.label}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="glass-card" style={{ padding: 18, border: '1px solid rgba(167,139,250,0.25)' }}>
+                <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 950, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Eye style={{ width: 16, height: 16, color: '#a78bfa' }} />
+                  Scenario Oracle — {s.selectedTicker}
+                </h3>
+                <p style={{ margin: '8px 0 0', fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+                  {s.scenarioOracle.stance_summary}
+                </p>
+                <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                  <span style={{
+                    fontSize: '10px', fontWeight: 800, padding: '4px 10px', borderRadius: 8,
+                    background: s.scenarioOracle.confidence.level === 'high' ? 'rgba(16,185,129,0.15)' : s.scenarioOracle.confidence.level === 'low' ? 'rgba(244,63,94,0.12)' : 'rgba(251,191,36,0.12)',
+                    color: s.scenarioOracle.confidence.level === 'high' ? '#6ee7b7' : s.scenarioOracle.confidence.level === 'low' ? '#fda4af' : '#fcd34d',
+                  }}>
+                    {s.scenarioOracle.confidence.label} ({s.scenarioOracle.confidence.score}/100)
+                  </span>
+                  {s.scenarioOracle.signal_agreement != null && (
+                    <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                      Signal agreement: {s.scenarioOracle.signal_agreement}%
+                    </span>
+                  )}
+                </div>
+                <ul style={{ margin: '10px 0 0', paddingLeft: 18, fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  {s.scenarioOracle.confidence.reasons.map((r) => <li key={r}>{r}</li>)}
+                </ul>
+              </div>
+
+              {s.scenarioOracle.scenarios.map((sc) => (
+                <div key={sc.id} className="glass-card" style={{ padding: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: '12px', color: '#fff' }}>{sc.label}</strong>
+                    <span style={{ fontSize: '10px', color: '#a78bfa', fontWeight: 800 }}>Likelihood {sc.likelihood_band}</span>
+                  </div>
+                  <p style={{ margin: '8px 0', fontSize: '10.5px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{sc.thesis}</p>
+                  <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                    Range: ${sc.price_range[0].toFixed(2)} – ${sc.price_range[1].toFixed(2)} · {sc.time_horizon}
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <span style={{ fontSize: '9px', fontWeight: 900, color: '#fb7185', textTransform: 'uppercase' }}>Would falsify if</span>
+                    <ul style={{ margin: '4px 0 0', paddingLeft: 16, fontSize: '10px', color: 'var(--text-muted)' }}>
+                      {sc.falsifiers.map((f) => {
+                        const fired = sc.falsifier_status?.some((fs) => fs.fired && f.includes(String(fs.id || '').replace(/_/g, ' ')));
+                        return (
+                          <li key={f} style={fired ? { color: '#fda4af', fontWeight: 700 } : undefined}>{f}</li>
+                        );
+                      })}
+                      {sc.falsifier_status?.filter((fs) => fs.fired).map((fs) => (
+                        <li key={fs.id} style={{ color: '#fda4af', fontWeight: 700 }}>✓ {fs.label}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ))}
+
+              {s.scenarioOracle.review_triggers?.length > 0 && (
+                <div className="glass-card" style={{ padding: 14, fontSize: '10px', color: 'var(--text-muted)' }}>
+                  <span style={{ fontWeight: 900, color: '#34d399', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Calendar style={{ width: 12, height: 12 }} /> Review triggers
+                  </span>
+                  <ul style={{ margin: '8px 0 0', paddingLeft: 16 }}>
+                    {s.scenarioOracle.review_triggers.map((t) => <li key={t}>{t}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {s.oracleScorecards?.length > 0 && (
+                <div className="glass-card" style={{ padding: 14 }}>
+                  <span style={{ fontSize: '10px', fontWeight: 900, color: '#34d399' }}>Post-event scorecards</span>
+                  <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {s.oracleScorecards.slice(-5).reverse().map((card) => (
+                      <div key={card.id} style={{ fontSize: '10px', color: 'var(--text-muted)', padding: 8, borderRadius: 8, background: 'rgba(0,0,0,0.2)' }}>
+                        <strong style={{ color: '#fff' }}>{card.ticker}</strong>
+                        {card.event_title && ` · ${card.event_title}`}
+                        {card.winner && (
+                          <span style={{ color: card.stance_match ? '#6ee7b7' : '#fcd34d', marginLeft: 6 }}>
+                            → {card.winner} path ({card.change_pct != null ? `${card.change_pct > 0 ? '+' : ''}${card.change_pct}%` : '—'})
+                          </span>
+                        )}
+                        {card.note && <div style={{ marginTop: 4 }}>{card.note}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <p style={{ margin: 0, fontSize: '9.5px', color: 'var(--text-muted)', display: 'flex', alignItems: 'flex-start', gap: 6, lineHeight: 1.5 }}>
+                <AlertTriangle style={{ width: 12, height: 12, flexShrink: 0, marginTop: 2, color: '#fbbf24' }} />
+                {s.scenarioOracle.disclaimer}
+              </p>
+            </div>
+          )}
 
           {s.predictionTab === "intuition" && (
             <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>

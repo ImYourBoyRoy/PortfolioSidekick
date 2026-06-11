@@ -3,7 +3,7 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
-import { Info, Settings, Save, RotateCcw, ShieldCheck, Zap, Gauge, FileSearch, EyeOff, Eye, Download, RefreshCw, Package, Link2 } from 'lucide-react';
+import { Info, Settings, Save, RotateCcw, ShieldCheck, Zap, Gauge, FileSearch, EyeOff, Eye, Download, RefreshCw, Package, Link2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
 import { isAndroidNative } from '../../lib/sidekickClient';
 
@@ -105,6 +105,27 @@ export default function SettingsTab() {
                 )}
               </div>
             )}
+          </div>
+
+          <div className="glass-card" style={{ padding: 20 }}>
+            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ZoomIn style={{ width: 18, height: 18, color: '#38bdf8' }} />
+              Display Zoom
+            </h3>
+            <p style={{ margin: '6px 0 14px 0', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              Pinch with two fingers on mobile, or use <strong>Ctrl/Cmd +</strong>, <strong>Ctrl/Cmd −</strong>, and <strong>Ctrl/Cmd 0</strong> on desktop. Current scale: <strong style={{ color: '#fff' }}>{Math.round(s.zoomScale * 100)}%</strong>.
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              <button type="button" className="btn-base btn-secondary" onClick={() => s.adjustFontSize(-1)} disabled={s.fontSizeOffset <= -3}>
+                <ZoomOut style={{ width: 14, height: 14 }} /> Smaller
+              </button>
+              <button type="button" className="btn-base btn-secondary" onClick={() => s.adjustFontSize(1)} disabled={s.fontSizeOffset >= 5}>
+                <ZoomIn style={{ width: 14, height: 14 }} /> Larger
+              </button>
+              <button type="button" className="btn-base btn-secondary" onClick={() => s.setFontSizeOffset(0)}>
+                <RotateCcw style={{ width: 14, height: 14 }} /> Reset zoom
+              </button>
+            </div>
           </div>
 
           <div className="glass-card" style={{ padding: 20 }}>
@@ -256,6 +277,25 @@ export default function SettingsTab() {
 
           <div className="glass-card" style={{ padding: 18 }}>
             <h4 style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 900, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Gauge style={{ width: 14, height: 14 }} />
+              Developer Debug Mode
+            </h4>
+            <p style={{ margin: '0 0 12px 0', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              Off by default. Enables equity diagnostic exports, paste-holdings import, and other operator-only tools. Safe for everyday use when disabled.
+            </p>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={s.debugMode}
+                onChange={(e) => s.persistDebugMode(e.target.checked)}
+              />
+              Enable debug tools on this device
+            </label>
+          </div>
+
+          {s.debugMode && (
+          <div className="glass-card" style={{ padding: 18 }}>
+            <h4 style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 900, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 8 }}>
               <FileSearch style={{ width: 14, height: 14 }} />
               Equity Diagnostic Dump
             </h4>
@@ -302,6 +342,7 @@ export default function SettingsTab() {
               </div>
             )}
           </div>
+          )}
 
           <div className="glass-card" style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 8, fontSize: '10.5px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
             <Save style={{ width: 14, height: 14, flexShrink: 0 }} />

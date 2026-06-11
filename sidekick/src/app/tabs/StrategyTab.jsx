@@ -3,7 +3,7 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
-import { TrendingUp, ShieldAlert, RefreshCw, CheckCircle, Info, Sliders, Sparkles, Activity, Target } from 'lucide-react';
+import { TrendingUp, ShieldAlert, RefreshCw, CheckCircle, Info, Sliders, Sparkles, Activity, Target, Calendar } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
 import { hasAdvisorScore } from '../utils/holdingDisplay';
 
@@ -80,6 +80,94 @@ export default function StrategyTab() {
               </div>
             );
           })()}
+
+          {s.holdings.length > 0 && s.selectedForwardOutlook && (
+            <div
+              className="glass-card"
+              style={{
+                padding: 18,
+                border: '1px solid rgba(251, 191, 36, 0.25)',
+                background: 'rgba(251, 191, 36, 0.04)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '13px', fontWeight: 950, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Sparkles style={{ width: 16, height: 16 }} />
+                    Forward Prep — {s.selectedTicker}
+                  </h4>
+                  <p style={{ margin: '6px 0 0', fontSize: '12px', fontWeight: 800, color: '#fff' }}>
+                    {s.selectedForwardOutlook.headline}
+                  </p>
+                  <p style={{ margin: '6px 0 0', fontSize: '10.5px', color: 'var(--text-secondary)', lineHeight: 1.55, maxWidth: 640 }}>
+                    {s.selectedForwardOutlook.detail}
+                  </p>
+                  {(s.selectedForwardOutlook.countdown || s.selectedForwardOutlook.macro_headline) && (
+                    <p style={{ margin: '8px 0 0', fontSize: '10px', color: '#fcd34d', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Calendar style={{ width: 12, height: 12 }} />
+                      {s.selectedForwardOutlook.countdown || s.selectedForwardOutlook.macro_headline}
+                    </p>
+                  )}
+                  {s.selectedForwardOutlook.macro_events?.length > 0 && !s.selectedForwardOutlook.catalyst && (
+                    <p style={{ margin: '6px 0 0', fontSize: '10px', color: 'var(--text-muted)' }}>
+                      Macro calendar active — save as Catalyst Watch to pin this thesis to your profile.
+                    </p>
+                  )}
+                </div>
+                <div style={{ textAlign: 'right', fontSize: '10px' }}>
+                  <span style={{ color: 'var(--text-muted)', display: 'block' }}>Now (technical)</span>
+                  <strong style={{ color: '#fff' }}>
+                    {s.selectedForwardOutlook.technical_zone?.toUpperCase() || '—'}
+                  </strong>
+                  {s.selectedForwardOutlook.effective_zone !== s.selectedForwardOutlook.technical_zone && (
+                    <>
+                      <span style={{ color: 'var(--text-muted)', display: 'block', marginTop: 6 }}>Effective</span>
+                      <strong style={{ color: '#fbbf24' }}>
+                        {s.selectedForwardOutlook.effective_zone?.replace('_', ' ').toUpperCase()}
+                      </strong>
+                    </>
+                  )}
+                  {s.selectedForwardOutlook.forward_score_hint != null && (
+                    <>
+                      <span style={{ color: 'var(--text-muted)', display: 'block', marginTop: 6 }}>Forward hint</span>
+                      <strong style={{ color: '#6ee7b7' }}>{s.selectedForwardOutlook.forward_score_hint}</strong>
+                    </>
+                  )}
+                </div>
+              </div>
+              {(s.selectedForwardOutlook.prep?.length > 0 || s.selectedForwardOutlook.risks?.length > 0) && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginTop: 14 }}>
+                  {s.selectedForwardOutlook.prep?.length > 0 && (
+                    <div>
+                      <span style={{ fontSize: '9px', fontWeight: 900, color: '#6ee7b7', textTransform: 'uppercase' }}>Prep steps</span>
+                      <ul style={{ margin: '6px 0 0', paddingLeft: 16, fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                        {s.selectedForwardOutlook.prep.map((line) => <li key={line}>{line}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {s.selectedForwardOutlook.risks?.length > 0 && (
+                    <div>
+                      <span style={{ fontSize: '9px', fontWeight: 900, color: '#fb7185', textTransform: 'uppercase' }}>Risks</span>
+                      <ul style={{ margin: '6px 0 0', paddingLeft: 16, fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                        {s.selectedForwardOutlook.risks.map((line) => <li key={line}>{line}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn-base btn-secondary"
+                  style={{ fontSize: '10px', padding: '8px 12px' }}
+                  onClick={() => s.openCatalystModal(s.selectedTicker, s.selectedForwardOutlook.catalyst)}
+                >
+                  {s.selectedForwardOutlook.catalyst ? 'Edit catalyst watch' : 'Add catalyst watch'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Header Description */}
           {s.holdings.length === 0 ? (
             <div className="tab-empty-placeholder-card animate-fade-in" style={{ marginTop: 0 }}>

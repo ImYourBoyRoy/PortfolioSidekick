@@ -7,12 +7,14 @@ import { useSidekick } from '../context/SidekickContext';
 
 export default function AppFooter() {
   const s = useSidekick();
+  const isLinked = s.hasCachedRobinhoodSession || Boolean(s.activeProfile?.robinhood_username);
+  const isLive = isLinked && !s.isSandbox;
 
   return (
       <footer className="app-footer">
         <div className="status-footer-badge-box">
-          <div className={`status-footer-indicator-light ${s.isSandbox ? 'status-sandbox-light' : 'status-live-light'}`}></div>
-          <span>Execution Mode: <strong className={s.isSandbox ? 'text-highlight-purple' : 'text-highlight-green'}>{s.isSandbox ? 'Offline Portfolio Tracking' : 'Live Robinhood Session Active'}</strong></span>
+          <div className={`status-footer-indicator-light ${isLive ? 'status-live-light' : 'status-sandbox-light'}`}></div>
+          <span>Execution Mode: <strong className={isLive ? 'text-highlight-green' : 'text-highlight-purple'}>{isLive ? 'Live Robinhood Session Active' : 'Offline Portfolio Tracking'}</strong></span>
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '10px' }}>

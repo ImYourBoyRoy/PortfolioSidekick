@@ -9,7 +9,15 @@ Write-Host "==========================================================" -Foregro
 Write-Host "    PORTFOLIO SIDEKICK TAURI WINDOWS COMPILER" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-$RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+# Script lives in scripts/ — repo root is one level up (was repo root when compile_windows.ps1 lived at ./).
+$RepoRoot = if ($PSScriptRoot) {
+    $parent = Split-Path -Parent $PSScriptRoot
+    if (Test-Path (Join-Path $parent "sidekick\package.json")) { $parent }
+    elseif (Test-Path (Join-Path $PSScriptRoot "sidekick\package.json")) { $PSScriptRoot }
+    else { $parent }
+} else {
+    (Get-Location).Path
+}
 Set-Location $RepoRoot
 Write-Host "Workspace: $RepoRoot" -ForegroundColor Gray
 

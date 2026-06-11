@@ -13,7 +13,8 @@ import {
   generateViabilityForecast,
   generateRecommendation,
 } from './advisor';
-import { calculateMarketStrength } from './strength';
+import { calculateMarketStrength, calculateLiveMarketStrength } from './strength';
+import { fetchLiveMarketRegime } from './marketRegime.js';
 import { fetchPublicHistoricalPrices, fetchPublicQuote } from './robinhood';
 import { refreshPortfolioPrices } from './liveQuotes';
 import { buildPortfolioDiagnostics, persistEquityDebugDump } from './portfolioDiagnostics';
@@ -242,7 +243,53 @@ export async function serverlessApiFetch(path, options = {}) {
   if (base === '/api/advisor/market-strength' && method === 'GET') {
     const timeframe = params.get('timeframe') || 'day';
     const sector = params.get('sector') || 'all';
+    const live = params.get('live') !== '0';
+    if (live) {
+      return { ok: true, status: 200, json: async () => calculateLiveMarketStrength(timeframe, sector) };
+    }
     return { ok: true, status: 200, json: async () => calculateMarketStrength(timeframe, sector) };
+  }
+
+  if (base === '/api/market/regime' && method === 'GET') {
+    const regime = await fetchLiveMarketRegime({ forceRefresh: params.get('refresh') === '1' });
+    return { ok: true, status: 200, json: async () => regime };
+  }
+
+  if (base === '/api/market/brief/refresh' && method === 'POST') {
+    const { refreshMacroBriefCache } = await import('./marketBrief.js');
+    const row = await refreshMacroBriefCache(localDb);
+    return { ok: true, status: 200, json: async () => ({ status: 'success', cache: row }) };
+  }
+
+  if (base === '/api/oracle/scorecards' && method === 'GET') {
+    const profileId = parseInt(params.get('profile_id') || '0', 10);
+    if (!profileId) {
+      return { ok: false, status: 400, json: async () => ({ detail: 'profile_id required' }) };
+    }
+    return { ok: true, status: 200, json: async () => localDb.getOracleScorecards(profileId) };
+  }
+
+  if (base === '/api/oracle/scorecards/process' && method === 'POST') {
+    const body = JSON.parse(options.body || '{}');
+    const profileId = parseInt(body.profile_id || '0', 10);
+    if (!profileId) {
+      return { ok: false, status: 400, json: async () => ({ detail: 'profile_id required' }) };
+    }
+    const { processDueScorecards } = await import('./oracleScorecard.js');
+    const snapshots = localDb.getOracleSnapshots(profileId);
+    const livePrices = body.live_prices || {};
+    const { snapshots: updated, scorecards: newCards } = processDueScorecards(snapshots, livePrices);
+    localDb.saveOracleSnapshots(profileId, updated);
+    if (newCards.length) localDb.appendOracleScorecards(profileId, newCards);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'success',
+        new_scorecards: newCards,
+        scorecards: localDb.getOracleScorecards(profileId),
+      }),
+    };
   }
 
   if (base === '/api/stocks/history' && method === 'GET') {
@@ -403,6 +450,72 @@ export async function serverlessApiFetch(path, options = {}) {
         sector: 'Other/Speculative',
       }),
     };
+  }
+
+  if (base === '/api/market/brief' && method === 'GET') {
+    const { buildInvestorBrief } = await import('./marketBrief.js');
+    return { ok: true, status: 200, json: async () => buildInvestorBrief() };
+  }
+
+  if (base === '/api/catalyst-watches' && method === 'GET') {
+    const profileId = parseInt(params.get('profile_id') || '0', 10);
+    if (!profileId) {
+      return { ok: false, status: 400, json: async () => ({ detail: 'profile_id required' }) };
+    }
+    return { ok: true, status: 200, json: async () => localDb.getCatalystWatches(profileId) };
+  }
+
+  if (base === '/api/catalyst-watches' && method === 'POST') {
+    const body = JSON.parse(options.body || '{}');
+    const profileId = parseInt(body.profile_id || '0', 10);
+    if (!profileId || !body.ticker) {
+      return { ok: false, status: 400, json: async () => ({ detail: 'profile_id and ticker required' }) };
+    }
+    const { createCatalystId, normalizeTickerList } = await import('./catalystWatch.js');
+    const row = localDb.saveCatalystWatch(profileId, {
+      id: body.id || createCatalystId(),
+      profile_id: profileId,
+      ticker: String(body.ticker).toUpperCase(),
+      title: String(body.title || 'Catalyst watch').trim(),
+      event_date: body.event_date || null,
+      bias: body.bias || 'watch',
+      associated_tickers: normalizeTickerList(body.associated_tickers),
+      notes: String(body.notes || '').trim(),
+      soften_abort: body.soften_abort !== false,
+      created_at: body.created_at || new Date().toISOString(),
+    });
+    return { ok: true, status: 200, json: async () => ({ status: 'success', watch: row }) };
+  }
+
+  if (base === '/api/catalyst-watches' && method === 'DELETE') {
+    const body = JSON.parse(options.body || '{}');
+    const profileId = parseInt(body.profile_id || '0', 10);
+    const watchId = body.id;
+    if (!profileId || !watchId) {
+      return { ok: false, status: 400, json: async () => ({ detail: 'profile_id and id required' }) };
+    }
+    const remaining = localDb.deleteCatalystWatch(profileId, watchId);
+    return { ok: true, status: 200, json: async () => ({ status: 'success', watches: remaining }) };
+  }
+
+  if (base === '/api/catalyst-watches/outlook' && method === 'GET') {
+    const profileId = parseInt(params.get('profile_id') || '0', 10);
+    const ticker = String(params.get('ticker') || '').toUpperCase();
+    const { findCatalystForTicker, computeForwardOutlook } = await import('./catalystWatch.js');
+    const watches = localDb.getCatalystWatches(profileId);
+    const catalyst = findCatalystForTicker(watches, ticker);
+    const holding = localDb.getHoldings(profileId).find((h) => h.ticker === ticker);
+    let advisorScore = null;
+    if (holding && Number(holding.current_price) > 0) {
+      const history = await fetchPublicHistoricalPrices(ticker, 'year');
+      const rec = generateRecommendation(profileId, ticker, history, holding.current_price);
+      advisorScore = rec.insufficient_data ? null : rec.score;
+    }
+    const outlook = computeForwardOutlook(
+      { advisor_score: advisorScore, advisor_action: null },
+      catalyst,
+    );
+    return { ok: true, status: 200, json: async () => outlook };
   }
 
   throw new Error(`Serverless route not implemented: ${method} ${path}`);

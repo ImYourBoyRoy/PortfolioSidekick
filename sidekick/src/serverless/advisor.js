@@ -9,6 +9,7 @@
  */
 
 import { localDb } from './database';
+import { getCachedMarketRegime } from './marketRegime.js';
 
 // ─── Configurable Indicator Engine ───
 // Default tuning for every technical indicator the advisor uses. Users can edit
@@ -307,15 +308,7 @@ export const getGutScore = (profileId, ticker, currentPrice) => {
 
 // ─── Market Regime Filter (Fast, Safe Fallback Mock for Offline Client) ───
 
-export const detectMarketRegime = () => {
-  return {
-    regime: null,
-    vix: null,
-    spy_above_200: null,
-    qqq_above_200: null,
-    regime_is_estimate: true,
-  };
-};
+export const detectMarketRegime = () => getCachedMarketRegime();
 
 // ─── Unified Recommender Scorer ───
 

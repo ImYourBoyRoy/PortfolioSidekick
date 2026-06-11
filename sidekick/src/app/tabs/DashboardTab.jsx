@@ -6,6 +6,7 @@
 import { TrendingUp, TrendingDown, LayoutDashboard, RefreshCw, Plus, Info, Sliders, Sparkles, Clipboard, Brain, MousePointerClick, ChevronDown, ChevronUp } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
 import { formatAdvisorAction, formatAdvisorScore, formatQuoteStatusLabel, hasAdvisorScore, isNonQuotableHolding, normalizeAdvisorForUi } from '../utils/holdingDisplay';
+import InvestorBriefPanel from '../components/InvestorBriefPanel';
 
 export default function DashboardTab() {
   const s = useSidekick();
@@ -20,12 +21,15 @@ export default function DashboardTab() {
     }
     : holdingRow;
 
+  const isRobinhoodLinked = s.hasCachedRobinhoodSession
+    || Boolean(s.activeProfile?.robinhood_username);
   const restoringPortfolio = s.holdings.length === 0 && (
     s.portfolioBootstrapping
     || s.syncing
-    || (s.hasCachedRobinhoodSession && !s.isSandbox)
+    || (isRobinhoodLinked && !s.isSandbox && !s.lastSyncTime)
   );
-  const showOnboardingHero = s.holdings.length === 0 && !restoringPortfolio;
+  const showLinkedEmpty = s.holdings.length === 0 && !restoringPortfolio && isRobinhoodLinked && !s.isSandbox;
+  const showOnboardingHero = s.holdings.length === 0 && !restoringPortfolio && !isRobinhoodLinked;
 
   return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
@@ -43,6 +47,24 @@ export default function DashboardTab() {
               <p style={{ fontSize: '10px', color: 'var(--text-muted)', margin: 0 }}>
                 On slower systems this can take a few seconds. Please wait before tapping Connect or Sync.
               </p>
+            </div>
+          ) : showLinkedEmpty ? (
+            <div className="glass-card animate-fade-in onboarding-hero-card" style={{ padding: '48px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, maxWidth: '720px', margin: '20px auto', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '24px', textAlign: 'center' }}>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: '950', color: '#fff', margin: 0 }}>
+                Robinhood Connected — No Stock Holdings
+              </h2>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', maxWidth: '480px', lineHeight: '1.6', margin: 0 }}>
+                Your session is active, but no stock or ETF positions were imported. Options and crypto are not synced. Tap below to retry, or add holdings manually.
+              </p>
+              <button
+                type="button"
+                onClick={() => s.triggerSync()}
+                className="glowing-sync-cta"
+                style={{ margin: 0, width: 'auto', touchAction: 'manipulation' }}
+              >
+                <RefreshCw style={{ width: 14, height: 14 }} />
+                Retry Sync
+              </button>
             </div>
           ) : showOnboardingHero ? (
             <div className="glass-card animate-fade-in onboarding-hero-card" style={{ padding: '48px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 32, maxWidth: '1280px', margin: '20px auto', border: '1px dashed rgba(167, 139, 250, 0.25)', boxShadow: '0 0 30px rgba(139, 92, 246, 0.05)', borderRadius: '24px' }}>
@@ -68,13 +90,15 @@ export default function DashboardTab() {
                   </p>
                 </div>
 
+                {s.debugMode && (
                 <div className="viability-target-card" style={{ display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left', padding: 20, background: 'rgba(167, 139, 250, 0.01)', border: '1px solid rgba(167, 139, 250, 0.08)' }}>
-                  <span style={{ fontSize: '9px', color: 'var(--color-oracle)', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pathway 2 — Swift</span>
+                  <span style={{ fontSize: '9px', color: 'var(--color-oracle)', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pathway 2 — Debug</span>
                   <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '850', color: '#fff' }}>Clipboard Paste Import</h4>
                   <p style={{ margin: 0, fontSize: '10.5px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-                    Copy holding lists directly from Robinhood's web portal or email. Our regex parsing captures average cost and shares instantly.
+                    Copy holding lists directly from Robinhood's web portal or email. Enable Developer Debug Mode in Settings to use this pathway.
                   </p>
                 </div>
+                )}
 
                 <div className="viability-target-card" style={{ display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left', padding: 20, background: 'rgba(255, 255, 255, 0.01)', border: '1px solid rgba(255,255,255,0.03)' }}>
                   <span style={{ fontSize: '9px', color: 'var(--text-muted)', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pathway 3 — Risk-Free</span>
@@ -118,6 +142,7 @@ export default function DashboardTab() {
                   Connect Robinhood Account for Tracking
                 </button>
 
+                {s.debugMode && (
                 <button
                   onClick={() => s.setIsImportOpen(true)}
                   className="font-size-btn"
@@ -126,6 +151,7 @@ export default function DashboardTab() {
                   <Clipboard style={{ width: 14, height: 14 }} />
                   Paste Clipboard Assets
                 </button>
+                )}
 
                 <button
                   onClick={s.handleSeedMockAssets}
@@ -139,6 +165,8 @@ export default function DashboardTab() {
             </div>
           ) : (
             <>
+              <InvestorBriefPanel compact={s.holdings.length > 6} />
+
               {/* Main Account Metrics Summary Row */}
               <section className="metrics-deck">
                 <div className="glass-card metric-card" data-tooltip={s.summary.equity_source === 'robinhood'

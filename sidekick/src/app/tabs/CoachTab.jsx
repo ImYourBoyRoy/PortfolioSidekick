@@ -96,7 +96,7 @@ export default function CoachTab() {
           </div>
 
           {/* Expanded Visual Coach Academy Breakdown */}
-          {s.advisorData ? (
+          {s.advisorData?.scores && s.advisorData?.metrics ? (
             <section style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
               <div className="academy-section-header">
                 <Sparkles style={{ width: 18, height: 18, color: '#34d399' }} />

@@ -1,0 +1,47 @@
+{
+  "as_of": "2026-06-11",
+  "events": [
+    {
+      "id": "spacex-ipo-spcx",
+      "title": "SpaceX IPO (SPCX) — Nasdaq debut",
+      "event_date": "2026-06-12",
+      "category": "ipo",
+      "bias": "watch",
+      "summary": "SpaceX targets a ~$1.75T valuation in the largest IPO on record. Retail allocation is unusually high (~30%). Innovation and space ETFs (ARKK, ARKX, UFO) often trade the sentiment read — not direct SPCX exposure.",
+      "affected_tickers": ["ARKK", "ARKX", "UFO", "RKLB", "ASTS", "LUNR", "SPCE", "TSLA", "NVDA", "QQQ", "PLTR"],
+      "associated_tickers": ["SPCX", "UFO", "ARKX", "RKLB", "TSLA", "QQQ"],
+      "themes": ["space", "innovation", "ai_infra", "retail_sentiment"],
+      "investor_prep": [
+        "Treat day-one pop as sentiment, not proof of fair value — plan entries after volatility settles.",
+        "Watch associated space names for sympathy moves before/after listing.",
+        "If holding ARKK, decide core vs trading size before the open."
+      ],
+      "risks": [
+        "IPO euphoria can gap innovation ETFs up then fade within days.",
+        "High retail float increases whipsaw risk on disappointment."
+      ],
+      "priority": 1
+    },
+    {
+      "id": "fomc-warsh-jun-2026",
+      "title": "FOMC — Kevin Warsh's first meeting as Fed Chair",
+      "event_date": "2026-06-17",
+      "category": "fed",
+      "bias": "watch",
+      "summary": "Markets expect rates on hold (3.50–3.75%) but focus on tone: less easing bias, possible dot-plot changes. Futures have shifted toward hike odds by year-end — higher-for-longer hurts long-duration growth.",
+      "affected_tickers": ["SPY", "QQQ", "IWM", "TLT", "ARKK", "NVDA", "AMD", "PLTR", "QBTS", "RGTI", "IONQ", "XLK"],
+      "associated_tickers": ["SPY", "QQQ", "TLT", "XLK"],
+      "themes": ["rates", "growth", "volatility"],
+      "investor_prep": [
+        "Reduce oversized rate-sensitive growth into the meeting if conviction is already soft.",
+        "Read the statement for neutral vs easing bias — often moves QQQ more than the headline hold.",
+        "Pair Fed week with catalyst holds: don't double leverage into binary macro."
+      ],
+      "risks": [
+        "Hawkish surprise can hit ARKK / quantum / long-duration tech in one session.",
+        "Bond yield spikes raise financing costs for capex-heavy AI names."
+      ],
+      "priority": 1
+    }
+  ]
+}

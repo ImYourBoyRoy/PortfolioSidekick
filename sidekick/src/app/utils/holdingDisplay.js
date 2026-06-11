@@ -3,6 +3,12 @@
  * UI helpers for holdings with nullable advisor / P&L fields.
  */
 
+import {
+  effectiveZoneFromCatalyst,
+  findCatalystForTicker,
+  technicalZoneFromScore,
+} from '../../serverless/catalystWatch';
+
 export function isNonQuotableHolding(holding) {
   return holding?.non_quotable === true
     || holding?.quote_status === 'non_quotable'
@@ -34,6 +40,13 @@ export function formatQuoteStatusLabel(holding) {
 export function formatAdvisorScore(holding, digits = 0) {
   if (!hasAdvisorScore(holding)) return '—';
   return `${holding.advisor_score.toFixed(digits)}%`;
+}
+
+export function classifyHoldingZone(holding, catalystWatches = []) {
+  const technical = technicalZoneFromScore(holding?.advisor_score);
+  const catalyst = findCatalystForTicker(catalystWatches, holding?.ticker);
+  const effective = effectiveZoneFromCatalyst(catalyst, technical);
+  return { technical, effective, catalyst };
 }
 
 export function formatAdvisorAction(holding) {

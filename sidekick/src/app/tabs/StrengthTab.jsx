@@ -3,9 +3,10 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
-import { TrendingUp, TrendingDown, ShieldAlert, Plus, X, CheckCircle, Sparkles, AlertOctagon, AlertTriangle, Award, ArrowUpRight, ArrowDownRight, Repeat } from 'lucide-react';
+import { TrendingUp, TrendingDown, ShieldAlert, Plus, X, CheckCircle, Sparkles, AlertOctagon, AlertTriangle, Award, ArrowUpRight, ArrowDownRight, Repeat, Calendar } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
-import { formatAdvisorScore, hasAdvisorScore } from '../utils/holdingDisplay';
+import { classifyHoldingZone, formatAdvisorScore, hasAdvisorScore } from '../utils/holdingDisplay';
+import { formatCatalystCountdown } from '../../serverless/catalystWatch';
 
 export default function StrengthTab() {
   const s = useSidekick();
@@ -19,7 +20,7 @@ export default function StrengthTab() {
               Owned Asset Classification Deck
             </h3>
             <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '0 0 12px 0' }}>
-              Identifies structural strength and vulnerabilities across your active holdings, categorizing assets into Keeps, Monitors, and Aborts based on dynamic advisor technical scores.
+              Technical conviction zones (Keep / Monitor / Abort). Catalyst watches can soften Abort into <strong style={{ color: '#fbbf24' }}>Catalyst Hold</strong> when you are prepping for a forward event.
             </p>
             {s.marketStrengthData?.data_synthetic && (
               <p style={{ fontSize: '10px', color: '#fbbf24', margin: '0 0 20px 0', padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(251, 191, 36, 0.35)', background: 'rgba(251, 191, 36, 0.08)' }}>
@@ -151,9 +152,72 @@ export default function StrengthTab() {
                   );
                 })()}
 
+                {/* 🟡 Catalyst Hold Zone */}
+                {(() => {
+                  const catalystHolds = s.holdings.filter((h) => {
+                    if (!hasAdvisorScore(h)) return false;
+                    const { effective } = classifyHoldingZone(h, s.catalystWatches);
+                    return effective === 'catalyst_hold';
+                  });
+                  if (catalystHolds.length === 0) return null;
+                  return (
+                    <div className="zone-card" style={{ border: '1px solid rgba(251, 191, 36, 0.35)', background: 'rgba(251, 191, 36, 0.04)' }}>
+                      <div className="zone-header">
+                        <div className="zone-title" style={{ color: '#fbbf24' }}>
+                          <Sparkles style={{ width: 16, height: 16 }} />
+                          Catalyst Hold
+                        </div>
+                        <span className="zone-badge">{catalystHolds.length}</span>
+                      </div>
+                      <div className="zone-asset-list">
+                        {catalystHolds.map((h) => {
+                          const { catalyst } = classifyHoldingZone(h, s.catalystWatches);
+                          return (
+                            <div key={h.id} className="zone-asset-row">
+                              <div className="zone-asset-meta">
+                                <div className="asset-symbol-block">
+                                  <span className="asset-symbol-text">{h.ticker}</span>
+                                  <span className="asset-shares-text" style={{ color: '#fcd34d' }}>
+                                    {catalyst?.title} · {formatCatalystCountdown(catalyst)}
+                                  </span>
+                                </div>
+                                <div className="asset-score-badge" style={{ background: 'rgba(251,191,36,0.12)', color: '#fbbf24' }}>
+                                  <span style={{ fontSize: '8px', display: 'block' }}>Tech</span>
+                                  {formatAdvisorScore(h)}
+                                </div>
+                              </div>
+                              <div className="zone-asset-actions">
+                                <button
+                                  type="button"
+                                  onClick={() => s.openCatalystModal(h.ticker, catalyst)}
+                                  className="zone-action-btn zone-shift-btn"
+                                  style={{ color: '#fbbf24' }}
+                                >
+                                  Edit watch
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { s.setSelectedTicker(h.ticker); s.setActiveTab('strategy'); }}
+                                  className="zone-action-btn zone-shift-btn"
+                                >
+                                  Forward prep
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* 🔴 Abort Zone */}
                 {(() => {
-                  const aborts = s.holdings.filter(h => hasAdvisorScore(h) && h.advisor_score < 35);
+                  const aborts = s.holdings.filter((h) => {
+                    if (!hasAdvisorScore(h) || h.advisor_score >= 35) return false;
+                    const { effective } = classifyHoldingZone(h, s.catalystWatches);
+                    return effective === 'abort';
+                  });
                   return (
                     <div className="zone-card abort-card-outline">
                       <div className="zone-header">
@@ -166,7 +230,7 @@ export default function StrengthTab() {
                       <div className="zone-asset-list">
                         {aborts.length === 0 ? (
                           <div style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', margin: 'auto 0' }}>
-                            Zero holdings flagged for Abort. Good!
+                            Zero pure Abort flags. Catalyst holds may still show above.
                           </div>
                         ) : (
                           aborts.map(h => (
@@ -176,7 +240,8 @@ export default function StrengthTab() {
                                   <span className="asset-symbol-text">{h.ticker}</span>
                                   <span className="asset-shares-text">{h.shares} Shares @ ${h.avg_buy_price.toFixed(2)}</span>
                                 </div>
-                                <div className="asset-score-badge abort-score">
+                                <div className="asset-score-badge abort-score" title="Advisor conviction score (0–100). Below 35 suggests reducing exposure.">
+                                  <span style={{ fontSize: '8px', display: 'block', opacity: 0.85 }}>Conviction</span>
                                   {formatAdvisorScore(h)}
                                 </div>
                               </div>
@@ -186,16 +251,24 @@ export default function StrengthTab() {
                                 </span>
                                 <div className="ranker-action-triggers">
                                   <button
+                                    type="button"
+                                    onClick={() => s.openCatalystModal(h.ticker)}
+                                    className="zone-action-btn zone-shift-btn"
+                                    style={{ color: '#fbbf24' }}
+                                  >
+                                    <Sparkles style={{ width: 10, height: 10 }} />
+                                    Catalyst
+                                  </button>
+                                  <button
                                     onClick={() => {
                                       s.setSelectedTicker(h.ticker);
                                       s.setActiveTab("strategy");
-                                      s.showToast("warning", `Weakness Alert: Shift capital from ${h.ticker} to a stronger asset.`);
                                     }}
                                     className="zone-action-btn zone-shift-btn"
                                     style={{ color: '#fb7185' }}
                                   >
                                     <Repeat style={{ width: 10, height: 10 }} />
-                                    Shift Funds
+                                    Shift
                                   </button>
                                 </div>
                               </div>
@@ -206,6 +279,79 @@ export default function StrengthTab() {
                     </div>
                   );
                 })()}
+              </div>
+            )}
+
+            {s.activeCatalystWatches?.length > 0 && (
+              <div className="glass-card" style={{ marginTop: 16, padding: 16, border: '1px solid rgba(251, 191, 36, 0.2)' }}>
+                <h4 style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: 900, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Calendar style={{ width: 14, height: 14 }} />
+                  Active Catalyst Watches
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {s.activeCatalystWatches.map((c) => (
+                    <div key={c.id} style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                        <strong style={{ color: '#fff', fontSize: '12px' }}>{c.ticker}</strong>
+                        <span style={{ fontSize: '10px', color: '#fcd34d' }}>{formatCatalystCountdown(c)}</span>
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: 4 }}>{c.title}</div>
+                      {(c.associated_tickers || []).length > 0 && (
+                        <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          {c.associated_tickers.map((t) => (
+                            <span key={t} style={{ fontSize: '9px', padding: '2px 6px', borderRadius: 6, background: 'rgba(139,92,246,0.12)', color: '#c4b5fd', fontWeight: 800 }}>{t}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {s.holdings.length > 0 && s.wisestReallocationPicks?.length > 0 && (
+              <div className="glass-card" style={{ marginTop: 16, padding: 16, border: '1px solid rgba(52,211,153,0.2)', background: 'rgba(16,185,129,0.04)' }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', fontWeight: 900, color: '#6ee7b7', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <ArrowUpRight style={{ width: 14, height: 14 }} />
+                  Top 5 Shift Targets (Day + Week + Month)
+                </h4>
+                <p style={{ margin: '0 0 12px 0', fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  Highest composite conviction outside your current holdings — use when exiting Abort-zone names like ARKK.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {s.wisestReallocationPicks.map((pick, idx) => (
+                    <div key={pick.ticker} className="zone-asset-row" style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 10, padding: '10px 12px' }}>
+                      <div className="zone-asset-meta">
+                        <div className="asset-symbol-block">
+                          <span className="asset-symbol-text">#{idx + 1} {pick.ticker}</span>
+                          <span className="asset-shares-text">{pick.name}</span>
+                        </div>
+                        <div className="asset-score-badge" style={{ background: 'rgba(16,185,129,0.12)', color: '#6ee7b7' }}>
+                          <span style={{ fontSize: '8px', display: 'block' }}>Composite</span>
+                          {pick.composite_score}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 10, fontSize: '9px', color: 'var(--text-muted)', marginTop: 6, flexWrap: 'wrap' }}>
+                        <span>Day: {pick.day_pct > 0 ? '+' : ''}{pick.day_pct}%</span>
+                        <span>Week: {pick.week_pct > 0 ? '+' : ''}{pick.week_pct}%</span>
+                        <span>Month: {pick.month_pct > 0 ? '+' : ''}{pick.month_pct}%</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            s.setSelectedTicker(pick.ticker);
+                            s.setActiveTab('strategy');
+                            s.showToast('info', `Review shift plan for ${pick.ticker}`);
+                          }}
+                          className="zone-action-btn zone-shift-btn"
+                          style={{ marginLeft: 'auto' }}
+                        >
+                          <Repeat style={{ width: 10, height: 10 }} />
+                          Plan Shift
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

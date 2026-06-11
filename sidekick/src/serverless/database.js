@@ -260,12 +260,13 @@ export const localDb = {
   },
 
   logAction: (profileId, actionType, ticker, shares, price, metadata = {}) => {
+    const normalizedType = String(actionType || 'adjust').toLowerCase().trim();
     run(
       `INSERT INTO user_actions (profile_id, action_type, ticker, shares, price, metadata_json, timestamp)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         profileId,
-        actionType,
+        normalizedType,
         ticker.toUpperCase().trim(),
         parseFloat(shares),
         parseFloat(price),
@@ -274,6 +275,75 @@ export const localDb = {
       ]
     );
     return queryOne('SELECT * FROM user_actions WHERE id = last_insert_rowid()');
+  },
+
+  /** One-time backfill when a profile has holdings but no logged actions yet. */
+  seedShadowCoachFromHoldings: (profileId) => {
+    const existing = localDb.getActions(profileId);
+    if (existing.length > 0) return 0;
+    const holdings = localDb.getHoldings(profileId);
+    let seeded = 0;
+    for (const h of holdings) {
+      if (!(parseFloat(h.shares) > 0)) continue;
+      localDb.logAction(profileId, 'buy', h.ticker, h.shares, h.avg_buy_price, {
+        source: 'robinhood_sync',
+        notes: 'Initial portfolio snapshot',
+      });
+      seeded += 1;
+    }
+    return seeded;
+  },
+
+  /** Compare pre-sync holdings to incoming Robinhood payload and log buy/sell/adjust events. */
+  logHoldingsSyncDiff: (profileId, incomingHoldings = []) => {
+    const previous = localDb.getHoldings(profileId);
+    const prevMap = new Map(previous.map((h) => [String(h.ticker).toUpperCase(), h]));
+    const nextMap = new Map(
+      incomingHoldings.map((h) => [String(h.ticker).toUpperCase(), h]),
+    );
+    const allTickers = new Set([...prevMap.keys(), ...nextMap.keys()]);
+    let logged = 0;
+
+    for (const ticker of allTickers) {
+      const prev = prevMap.get(ticker);
+      const next = nextMap.get(ticker);
+      const prevShares = parseFloat(prev?.shares || 0);
+      const nextShares = parseFloat(next?.shares || 0);
+      const price = parseFloat(next?.avg_buy_price || prev?.avg_buy_price || next?.current_price || 0);
+
+      if (prevShares <= 0 && nextShares > 0) {
+        localDb.logAction(profileId, 'buy', ticker, nextShares, price, {
+          source: 'robinhood_sync',
+          notes: 'New position from Robinhood sync',
+        });
+        logged += 1;
+      } else if (prevShares > 0 && nextShares <= 0) {
+        localDb.logAction(profileId, 'sell', ticker, prevShares, price, {
+          source: 'robinhood_sync',
+          notes: 'Position closed via Robinhood sync',
+        });
+        logged += 1;
+      } else if (prevShares > 0 && nextShares > 0 && Math.abs(nextShares - prevShares) > 0.0001) {
+        const delta = nextShares - prevShares;
+        const type = delta > 0 ? 'buy' : 'sell';
+        localDb.logAction(profileId, type, ticker, Math.abs(delta), price, {
+          source: 'robinhood_sync',
+          notes: 'Share count changed via Robinhood sync',
+        });
+        logged += 1;
+      } else if (
+        prevShares > 0
+        && nextShares > 0
+        && Math.abs(parseFloat(next?.avg_buy_price || 0) - parseFloat(prev?.avg_buy_price || 0)) > 0.01
+      ) {
+        localDb.logAction(profileId, 'adjust', ticker, nextShares, price, {
+          source: 'robinhood_sync',
+          notes: 'Cost basis updated via Robinhood sync',
+        });
+        logged += 1;
+      }
+    }
+    return logged;
   },
 
   analyzeActions: (profileId) => {
@@ -294,9 +364,10 @@ export const localDb = {
       };
     }
 
-    const buys = profileActions.filter((a) => a.action_type === 'buy');
-    const sells = profileActions.filter((a) => a.action_type === 'sell');
-    const adjusts = profileActions.filter((a) => a.action_type === 'adjust');
+    const actionKind = (a) => String(a.action_type || '').toLowerCase();
+    const buys = profileActions.filter((a) => actionKind(a) === 'buy');
+    const sells = profileActions.filter((a) => actionKind(a) === 'sell');
+    const adjusts = profileActions.filter((a) => actionKind(a) === 'adjust');
     const winningSells = sells.filter((s) => s.metadata?.pnl_pct > 0);
     const losingSells = sells.filter((s) => s.metadata?.pnl_pct < 0);
     const winRate = sells.length > 0 ? (winningSells.length / sells.length * 100).toFixed(1) : 0;
@@ -368,6 +439,103 @@ export const localDb = {
       recent_7d: recentActions.length,
       insights,
     };
+  },
+
+  getCatalystWatches: (profileId) => {
+    const settings = localDb.getSettings();
+    const map = settings.catalystWatchesByProfile || {};
+    return (map[profileId] || []).map((c) => ({
+      ...c,
+      ticker: String(c.ticker || '').toUpperCase(),
+      associated_tickers: Array.isArray(c.associated_tickers) ? c.associated_tickers : [],
+    }));
+  },
+
+  saveCatalystWatch: (profileId, watch) => {
+    const settings = localDb.getSettings();
+    const map = { ...(settings.catalystWatchesByProfile || {}) };
+    const list = [...(map[profileId] || [])];
+    const idx = list.findIndex((c) => c.id === watch.id);
+    const row = { ...watch, profile_id: profileId };
+    if (idx >= 0) list[idx] = row;
+    else list.push(row);
+    map[profileId] = list;
+    localDb.saveSettings({ catalystWatchesByProfile: map });
+    return row;
+  },
+
+  deleteCatalystWatch: (profileId, watchId) => {
+    const settings = localDb.getSettings();
+    const map = { ...(settings.catalystWatchesByProfile || {}) };
+    map[profileId] = (map[profileId] || []).filter((c) => c.id !== watchId);
+    localDb.saveSettings({ catalystWatchesByProfile: map });
+    return map[profileId] || [];
+  },
+
+  getOracleSnapshots: (profileId) => {
+    const settings = localDb.getSettings();
+    const map = settings.oracleSnapshotsByProfile || {};
+    return map[profileId] || [];
+  },
+
+  saveOracleSnapshots: (profileId, snapshots) => {
+    const settings = localDb.getSettings();
+    const map = { ...(settings.oracleSnapshotsByProfile || {}) };
+    map[profileId] = snapshots;
+    localDb.saveSettings({ oracleSnapshotsByProfile: map });
+    return snapshots;
+  },
+
+  getOracleScorecards: (profileId) => {
+    const settings = localDb.getSettings();
+    const map = settings.oracleScorecardsByProfile || {};
+    return map[profileId] || [];
+  },
+
+  appendOracleScorecards: (profileId, cards) => {
+    const settings = localDb.getSettings();
+    const map = { ...(settings.oracleScorecardsByProfile || {}) };
+    const list = [...(map[profileId] || []), ...cards];
+    map[profileId] = list.slice(-40);
+    localDb.saveSettings({ oracleScorecardsByProfile: map });
+    return map[profileId];
+  },
+
+  getOracleWeakSessions: (profileId) => {
+    const settings = localDb.getSettings();
+    const map = settings.oracleWeakSessionsByProfile || {};
+    return map[profileId] || {};
+  },
+
+  touchOracleWeakSession: (profileId, ticker, advisorScore) => {
+    const settings = localDb.getSettings();
+    const map = { ...(settings.oracleWeakSessionsByProfile || {}) };
+    const byTicker = { ...(map[profileId] || {}) };
+    const key = String(ticker || '').toUpperCase();
+    const today = new Date().toISOString().slice(0, 10);
+    const row = byTicker[key] || { count: 0, last_date: null };
+    if (advisorScore != null && advisorScore < 35) {
+      if (row.last_date !== today) {
+        row.count = Math.min(10, (row.count || 0) + 1);
+        row.last_date = today;
+      }
+    } else if (advisorScore != null && advisorScore >= 45) {
+      row.count = 0;
+      row.last_date = today;
+    }
+    byTicker[key] = row;
+    map[profileId] = byTicker;
+    localDb.saveSettings({ oracleWeakSessionsByProfile: map });
+    return row.count || 0;
+  },
+
+  getMacroBriefCache: () => {
+    const settings = localDb.getSettings();
+    return settings.macroBriefCache || null;
+  },
+
+  saveMacroBriefCache: (cache) => {
+    return localDb.saveSettings({ macroBriefCache: cache });
   },
 
   getSettings: () => {

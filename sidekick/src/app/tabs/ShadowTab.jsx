@@ -8,6 +8,7 @@ import { useSidekick } from '../context/SidekickContext';
 
 export default function ShadowTab() {
   const s = useSidekick();
+  const isLinked = s.hasCachedRobinhoodSession || Boolean(s.activeProfile?.robinhood_username);
 
   return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
@@ -103,18 +104,30 @@ export default function ShadowTab() {
               </div>
 
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', justifyContent: 'center', borderTop: '1px solid var(--border-light)', paddingTop: 20, width: '100%' }}>
+                {!isLinked ? (
+                  <button
+                    type="button"
+                    onClick={() => s.openRobinhoodLogin()}
+                    className="btn-base btn-primary"
+                  >
+                    <RefreshCw style={{ width: 14, height: 14 }} />
+                    Connect Robinhood Account
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => s.triggerSync()}
+                    className="btn-base btn-primary"
+                    disabled={s.syncing}
+                  >
+                    <RefreshCw className={s.syncing ? 'animate-spin' : ''} style={{ width: 14, height: 14 }} />
+                    Refresh Holdings
+                  </button>
+                )}
                 <button
-                  onClick={() => s.openRobinhoodLogin()}
-                  className="glowing-sync-cta"
-                  style={{ margin: 0, width: 'auto' }}
-                >
-                  <RefreshCw style={{ width: 14, height: 14 }} />
-                  Connect Robinhood Account
-                </button>
-                <button
+                  type="button"
                   onClick={s.handleSeedMockAssets}
-                  className="font-size-btn"
-                  style={{ padding: '12px 20px', borderRadius: '12px' }}
+                  className="btn-base btn-secondary"
                 >
                   <Sparkles style={{ width: 14, height: 14 }} />
                   Seed Sandbox Assets

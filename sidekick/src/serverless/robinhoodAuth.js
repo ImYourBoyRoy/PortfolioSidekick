@@ -10,6 +10,7 @@
  */
 
 import { Capacitor } from '@capacitor/core';
+import { RobinhoodSession } from '../plugins/robinhood-session/index.ts';
 import { APP_VERSION } from '../lib/appVersion';
 import {
   authHeader,
@@ -94,8 +95,8 @@ async function isDesktopRustAuth() {
   }
 }
 
-async function getVaultPlugin() {
-  const { RobinhoodSession } = await import('../plugins/robinhood-session');
+/** Capacitor vault plugin — static import avoids lazy-chunk await on the plugin proxy (Android). */
+function getVaultPlugin() {
   return RobinhoodSession;
 }
 
@@ -501,7 +502,11 @@ async function completeChallenge(pending, mfaCode, urls) {
 
 async function validateSession(session, urls) {
   const data = await requestGet(urls.positions, authHeader(session));
-  return Boolean(data?.results);
+  const valid = Boolean(data?.results);
+  if (!valid) {
+    await authLog(`validateSession failed — positions missing results (hasData=${Boolean(data)})`);
+  }
+  return valid;
 }
 
 async function refreshSession(session, urls) {
@@ -542,7 +547,7 @@ async function isAndroidNativeAuth() {
     && Capacitor.isPluginAvailable('RobinhoodSession');
 }
 
-async function normalizeNativeLoginResult(result, profileId, username, options = {}) {
+async function normalizeNativeLoginResult(result, profileId, username) {
   const normalized = {
     status: result?.status || 'error',
     mode: result?.mode || 'live',
@@ -555,11 +560,20 @@ async function normalizeNativeLoginResult(result, profileId, username, options =
   if (normalized.status === 'success') {
     memoryChallenges.delete(profileId);
     if (normalized.session) {
-      const vault = await getVaultPlugin();
-      await saveSessionSafe(vault, profileId, normalizeSession(normalized.session), username);
-      await clearChallengeSafe(vault, profileId);
-    } else if (options.continueMfa) {
-      await waitForRobinhoodSession(profileId, 8, 150);
+      const vault = getVaultPlugin();
+      const session = normalizeSession(normalized.session);
+      if (session) {
+        try {
+          await saveSessionSafe(vault, profileId, session, username);
+          await clearChallengeSafe(vault, profileId);
+        } catch (err) {
+          console.warn('[RobinhoodAuth] Vault session save failed; native vault may still have session.', err);
+          await waitForRobinhoodSession(profileId, 12, 200);
+        }
+        if (username) localDb.setRobinhoodUsername(profileId, username);
+      }
+    } else {
+      await waitForRobinhoodSession(profileId, 20, 250);
     }
   }
 
@@ -639,7 +653,6 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
 
   if (await isAndroidNativeAuth()) {
     await authLog(`android native login start profile=${profileId} continueMfa=${options.continueMfa === true}`);
-    const { RobinhoodSession } = await import('../plugins/robinhood-session');
     try {
       await authLog('invoking RobinhoodSession.robinhoodLogin');
       const timeoutMs = options.continueMfa === true ? 150000 : 60000;
@@ -655,7 +668,7 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
         'Native Robinhood login',
       );
       await authLog(`RobinhoodSession.robinhoodLogin returned status=${result?.status || 'unknown'}`);
-      return normalizeNativeLoginResult(result, profileId, username, options);
+      return normalizeNativeLoginResult(result, profileId, username);
     } catch (err) {
       await authLog(`RobinhoodSession.robinhoodLogin error: ${err?.message || err}`);
       const msg = err?.message || String(err);
@@ -676,7 +689,7 @@ export async function robinhoodLogin(profileId, username, password, mfaCode = nu
     }
   }
 
-  const vault = await getVaultPlugin();
+  const vault = getVaultPlugin();
 
   const urls = await buildRhUrls();
   const continueMfa = options.continueMfa === true || Boolean(mfaCode);
@@ -762,7 +775,7 @@ export async function robinhoodLogout(profileId) {
     await authLog(`logout profile=${profileId}`);
     await wipeSessionPortable(profileId);
   } else {
-    const vault = await getVaultPlugin();
+    const vault = getVaultPlugin();
     await clearChallengeSafe(vault, profileId);
     await vault.wipe({ profileId }).catch(() => {});
   }
@@ -778,7 +791,7 @@ async function loadStoredSession(profileId) {
     const username = await loadUsernamePortable(profileId);
     return { session, username };
   }
-  const vault = await getVaultPlugin();
+  const vault = getVaultPlugin();
   const username = (await vault.getUsername({ profileId }))?.username || null;
   const session = normalizeSession((await vault.loadSession({ profileId }))?.session);
   return { session, username };
@@ -789,7 +802,7 @@ async function persistRefreshedSession(profileId, session, username) {
     await saveSessionPortable(profileId, session, username || '');
     return;
   }
-  const vault = await getVaultPlugin();
+  const vault = getVaultPlugin();
   await saveSessionSafe(vault, profileId, session, username || '');
 }
 

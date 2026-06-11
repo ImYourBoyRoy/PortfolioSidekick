@@ -135,10 +135,16 @@ export const robinhoodClient = {
 
       if (data.holdings && Array.isArray(data.holdings)) {
         const hidden = new Set(localDb.getHiddenTickers(profileId));
-        for (const h of data.holdings) {
-          if (hidden.has(String(h.ticker).toUpperCase())) continue;
+        const visibleHoldings = data.holdings.filter(
+          (h) => !hidden.has(String(h.ticker).toUpperCase()),
+        );
+        localDb.logHoldingsSyncDiff(profileId, visibleHoldings);
+        for (const h of visibleHoldings) {
           const livePrice = h.price_stale ? null : h.current_price;
           localDb.updateHolding(profileId, h.ticker, h.shares, h.avg_buy_price, livePrice, { replacePrice: true });
+        }
+        if (localDb.getActions(profileId).length === 0) {
+          localDb.seedShadowCoachFromHoldings(profileId);
         }
         const settings = localDb.getSettings();
         if (settings.autoHideWarrants !== false) {

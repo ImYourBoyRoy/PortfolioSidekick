@@ -65,6 +65,112 @@ body {
   padding: 20px 24px 64px;
 }
 
+.app-shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.app-main {
+  min-width: 0;
+}
+
+.brand-app-icon {
+  border-radius: 12px;
+  box-shadow: 0 8px 20px -6px rgba(139, 92, 246, 0.4);
+  object-fit: cover;
+}
+
+.app-menu-btn-label {
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.app-sidebar {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-surface-solid);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.app-sidebar-backdrop {
+  display: none;
+}
+
+.app-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.app-sidebar-title {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.app-sidebar-profiles {
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.app-sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.app-sidebar-status {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.app-sidebar-status.live {
+  color: #34d399;
+}
+
+.btn-block {
+  width: 100%;
+  justify-content: center;
+}
+
+.btn-danger {
+  border-color: rgba(244, 63, 94, 0.2) !important;
+  color: #fb7185 !important;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.profile-btn-add {
+  color: var(--color-buy);
+  border-left: 1px solid var(--border-light);
+  padding-left: 10px !important;
+}
+
 /* Typography elements */
 h1, h2, h3, h4 {
   font-family: var(--font-heading);
@@ -234,12 +340,18 @@ button.brand-version-badge {
 /* Premium Tab-based Sub-Navigation Panel */
 .tab-navigation-wrapper {
   display: flex;
-  justify-content: center;
-  margin-bottom: 32px;
+  justify-content: stretch;
+  margin-bottom: 24px;
+  overflow: hidden;
 }
 
 .tab-nav-panel {
   display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
   background: rgba(13, 17, 26, 0.8);
   border: 1px solid var(--border-light);
   padding: 6px;
@@ -247,11 +359,15 @@ button.brand-version-badge {
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
 }
 
+.tab-nav-panel::-webkit-scrollbar {
+  display: none;
+}
+
 .tab-nav-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 20px;
+  padding: 10px 16px;
   background: transparent;
   border: none;
   color: var(--text-secondary);
@@ -261,6 +377,8 @@ button.brand-version-badge {
   border-radius: 12px;
   cursor: pointer;
   transition: var(--transition-smooth);
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .tab-nav-btn-active {
@@ -1389,71 +1507,93 @@ button.brand-version-badge {
   }
 }
 
-@media (max-width: 768px) {
+@media (min-width: 1025px) {
+  .app-menu-btn {
+    display: none;
+  }
+
+  .app-sidebar {
+    display: flex;
+  }
+}
+
+@media (max-width: 1024px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    padding: 12px 12px 32px;
+    gap: 0;
+  }
+
+  .app-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 200;
+    width: min(300px, 88vw);
+    max-height: none;
+    border-radius: 0 16px 16px 0;
+    transform: translateX(-105%);
+    transition: transform 0.25s ease;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+  }
+
+  .app-sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .app-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 199;
+    background: rgba(4, 7, 12, 0.55);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+
+  .app-sidebar-backdrop.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .navbar-header {
-    flex-direction: column;
-    gap: 16px;
-    padding: 16px 0;
-    margin-bottom: 24px;
-    text-align: center;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    margin-bottom: 16px;
+    text-align: left;
   }
-  
+
   .brand-wrapper {
-    flex-direction: column;
-    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    flex-direction: row;
+    gap: 12px;
   }
-  
+
   .brand-title {
-    font-size: 1.3rem;
+    font-size: 1.1rem;
+    flex-wrap: wrap;
   }
-  
+
   .brand-desc {
     font-size: 9px;
   }
-  
-  .header-controls {
-    flex-direction: column;
-    width: 100%;
-    gap: 12px;
+
+  .app-menu-btn {
+    flex-shrink: 0;
   }
-  
-  .profile-selector-box {
-    width: 100%;
-    justify-content: center;
-  }
-  
-  .profile-btn {
-    padding: 6px 12px;
-    font-size: 10px;
-    flex: 1;
-    text-align: center;
-    justify-content: center;
-  }
-  
-  .btn-base {
-    width: 100%;
-    justify-content: center;
-  }
-  
+
   .tab-navigation-wrapper {
-    margin-bottom: 24px;
+    margin-bottom: 16px;
   }
-  
-  .tab-nav-panel {
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 4px;
-    padding: 4px;
-    border-radius: 12px;
-    width: 100%;
-  }
-  
+
   .tab-nav-btn {
     padding: 8px 12px;
     font-size: 10px;
-    flex: 1;
-    text-align: center;
-    justify-content: center;
   }
   
   .holdings-container {
@@ -2322,19 +2462,54 @@ body {
   bottom: 125%;
 }
 
+/* Tab content region — sync overlay scoped here so header/tabs stay interactive */
+.tab-content-shell {
+  position: relative;
+  min-height: 360px;
+}
+
+.tab-loading-fallback {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 /* ==========================================================================
-   FULLSCREEN SYNCING OVERLAY
+   SYNCING OVERLAY (tab content only — not header/nav)
    ========================================================================== */
 .sync-overlay-fullscreen {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 99999;
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(4, 7, 12, 0.85);
+  background: rgba(4, 7, 12, 0.88);
   backdrop-filter: blur(16px);
   animation: sync-fade-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.sync-overlay-cancel-btn {
+  margin-top: 8px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.sync-overlay-cancel-btn:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 @keyframes sync-fade-in {
@@ -2429,22 +2604,21 @@ body {
    GLOWING SYNC CTA & EMPTY PLACEHOLDER STYLES
    ========================================================================== */
 .glowing-sync-cta {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 14px 32px;
-  border-radius: 14px;
-  border: 1px solid rgba(16, 185, 129, 0.4);
-  background: rgba(16, 185, 129, 0.08);
-  color: #34d399;
-  font-family: var(--font-heading);
-  font-size: 12px;
-  font-weight: 900;
+  gap: 8px;
+  padding: 9px 18px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 800;
   cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  text-shadow: 0 0 8px rgba(16, 185, 129, 0.2);
-  animation: glowing-cta-pulse 2s infinite;
+  transition: var(--transition-smooth);
+  box-shadow: 0 4px 15px -3px rgba(16, 185, 129, 0.35);
 }
 
 @keyframes glowing-cta-pulse {
@@ -2461,9 +2635,8 @@ body {
 }
 
 .glowing-sync-cta:hover {
-  background: rgba(16, 185, 129, 0.18);
-  border-color: #34d399;
   transform: translateY(-1px);
+  box-shadow: 0 6px 20px -3px rgba(16, 185, 129, 0.5);
 }
 
 .tab-empty-placeholder-card {

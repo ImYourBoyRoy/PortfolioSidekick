@@ -1,27 +1,20 @@
 // ./sidekick/src/serverless/news.js
 /**
- * Portfolio Sidekick Serverless Market News
- * Fetches recent major-market headlines directly from the public Yahoo Finance
- * search endpoint (same HTTPS host already used for quotes — works on desktop
- * and Android native without an external server). Headlines are de-duplicated and grouped
- * into Today / This Week / This Month / This Year buckets.
- *
- * Inputs:  optional list of extra ticker symbols (e.g. the user's holdings/watchlist).
- * Outputs: { buckets: { today, week, month, year }, total, fetchedAt }.
- *
- * Created by: Roy Dawson IV
+ * Market news via Yahoo Finance search API + RSS fallback (Android-safe native HTTP).
  */
+import { nativeHttpGet, nativeHttpGetText } from './nativeHttp.js';
 
-import { nativeHttpGet } from './nativeHttp.js';
-
-// Broad market proxies always queried so there is meaningful macro coverage
-// even when the user has no holdings yet.
 const MARKET_SYMBOLS = ['^GSPC', '^IXIC', '^DJI', 'SPY', 'QQQ'];
-
 const DAY_MS = 86400000;
 
+const YAHOO_HEADERS = {
+  Accept: 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+};
+
 const normalizeItem = (raw) => {
-  const ts = raw.providerPublishTime ? raw.providerPublishTime * 1000 : Date.now();
+  const ts = raw.providerPublishTime ? raw.providerPublishTime * 1000 : (raw.timestamp || Date.now());
   return {
     id: raw.uuid || raw.link || `${raw.title}-${ts}`,
     title: (raw.title || '').trim(),
@@ -45,31 +38,63 @@ const bucketByRecency = (items) => {
   return buckets;
 };
 
-/**
- * Fetch and group recent market news.
- * @param {string[]} extraSymbols - additional tickers (holdings/watchlist) to enrich coverage.
- * @returns {Promise<{buckets: object, total: number, fetchedAt: number, error?: string}>}
- */
+function parseRssItems(xmlText, symbol) {
+  if (!xmlText || typeof DOMParser === 'undefined') return [];
+  const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+  const items = [...doc.querySelectorAll('item')];
+  return items.map((node) => {
+    const title = node.querySelector('title')?.textContent?.trim() || '';
+    const link = node.querySelector('link')?.textContent?.trim() || '';
+    const pub = node.querySelector('pubDate')?.textContent?.trim() || '';
+    const ts = pub ? Date.parse(pub) : Date.now();
+    return normalizeItem({
+      title,
+      link,
+      publisher: 'Yahoo Finance',
+      providerPublishTime: Math.floor(ts / 1000),
+      relatedTickers: [symbol.replace('^', '')],
+    });
+  }).filter((i) => i.title);
+}
+
+async function fetchYahooSearchNews(sym) {
+  const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+  for (const host of hosts) {
+    try {
+      const url = `https://${host}/v1/finance/search?q=${encodeURIComponent(sym)}&newsCount=12&quotesCount=0&enableFuzzyQuery=false&recommendCount=0`;
+      const data = await nativeHttpGet(url, { timeoutMs: 20000, headers: YAHOO_HEADERS });
+      if (Array.isArray(data?.news)) {
+        return data.news.map(normalizeItem);
+      }
+    } catch {
+      // Try next host.
+    }
+  }
+  return [];
+}
+
+async function fetchYahooRssNews(sym) {
+  try {
+    const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(sym)}&region=US&lang=en-US`;
+    const xml = await nativeHttpGetText(url, { timeoutMs: 20000, headers: YAHOO_HEADERS });
+    return parseRssItems(xml, sym);
+  } catch {
+    return [];
+  }
+}
+
 export const fetchMarketNews = async (extraSymbols = []) => {
   const symbols = [...new Set([...MARKET_SYMBOLS, ...extraSymbols.map((s) => s.toUpperCase())])].slice(0, 10);
-
   const collected = [];
-  await Promise.all(
-    symbols.map(async (sym) => {
-      try {
-        const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(sym)}&newsCount=12&quotesCount=0&enableFuzzyQuery=false&recommendCount=0`;
-        const data = await nativeHttpGet(url, { timeoutMs: 20000 });
-        if (!data) return;
-        if (Array.isArray(data.news)) {
-          for (const n of data.news) collected.push(normalizeItem(n));
-        }
-      } catch {
-        // Per-symbol failures are non-fatal; other symbols may still resolve.
-      }
-    })
-  );
 
-  // De-duplicate by id (and by title as a fallback) then sort newest-first.
+  await Promise.all(symbols.map(async (sym) => {
+    const fromSearch = await fetchYahooSearchNews(sym);
+    collected.push(...fromSearch);
+    if (fromSearch.length === 0) {
+      collected.push(...await fetchYahooRssNews(sym));
+    }
+  }));
+
   const seen = new Set();
   const unique = [];
   for (const item of collected) {

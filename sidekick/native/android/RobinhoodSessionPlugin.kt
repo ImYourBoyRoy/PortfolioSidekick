@@ -54,7 +54,7 @@ class RobinhoodSessionPlugin : Plugin() {
                     }
                 }
 
-                val result = RobinhoodAuthNative.withLoginLock(profileKey) {
+                var result = RobinhoodAuthNative.withLoginLock(profileKey) {
                     RobinhoodAuthNative.login(
                         profileKey,
                         username,
@@ -62,14 +62,35 @@ class RobinhoodSessionPlugin : Plugin() {
                         mfaCode,
                         continueMfa,
                     )
+                }.toMutableMap()
+
+                if (result["status"] == "success" && result["session"] == null) {
+                    vault.load(profileId)?.let { stored ->
+                        val sessionMap = linkedMapOf<String, String>()
+                        sessionMap["token_type"] = stored.optString("token_type").ifEmpty { "Bearer" }
+                        sessionMap["access_token"] = stored.optString("access_token")
+                        sessionMap["refresh_token"] = stored.optString("refresh_token")
+                        sessionMap["device_token"] = stored.optString("device_token")
+                        if (sessionMap["access_token"]?.isNotEmpty() == true) {
+                            result["session"] = sessionMap
+                        }
+                    }
                 }
 
                 if (!continueMfa && result["status"] == "mfa_required") {
                     RobinhoodAuthNative.pendingSnapshot(profileKey)?.let { snapshot ->
                         vault.saveChallenge(profileId, snapshot)
                     }
-                } else if (result["status"] == "success" && result["session"] != null) {
+                } else if (result["status"] == "success") {
                     vault.clearChallenge(profileId)
+                    @Suppress("UNCHECKED_CAST")
+                    val session = result["session"] as? Map<String, String>
+                    if (session != null) {
+                        val json = JSONObject()
+                        session.forEach { (key, value) -> json.put(key, value) }
+                        vault.save(profileId, json)
+                        if (username.isNotEmpty()) vault.saveUsername(profileId, username)
+                    }
                 }
 
                 bridge.activity.runOnUiThread {

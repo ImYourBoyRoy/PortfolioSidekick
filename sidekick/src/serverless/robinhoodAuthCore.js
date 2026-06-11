@@ -8,6 +8,7 @@
  */
 
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { RobinhoodSession } from '../plugins/robinhood-session/index.ts';
 import { isTauriShellSync, readStorageFile, writeStorageFile } from './storagePaths.js';
 
 export const RH_CLIENT_ID = 'c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS';
@@ -104,7 +105,6 @@ export async function resetAuthHttpSession() {
   }
   if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('RobinhoodSession')) {
     try {
-      const { RobinhoodSession } = await import('../plugins/robinhood-session/index.ts');
       await RobinhoodSession.httpReset();
     } catch (err) {
       console.warn('[RobinhoodAuth] Android httpReset failed:', err);
@@ -308,7 +308,6 @@ async function httpRequest(
   }
 
   if (transport === 'android-native') {
-    const { RobinhoodSession } = await import('../plugins/robinhood-session/index.ts');
     const headerObj = { ...mergedHeaders };
     delete headerObj.Cookie;
 

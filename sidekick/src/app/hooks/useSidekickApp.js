@@ -3,7 +3,15 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   localDb, generateRecommendation, fetchPublicHistoricalPrices, fetchPublicQuote,
   robinhoodClient, evolveWeights, generateViabilityForecast, calculateMarketStrength,
-  calculateAtr, DEFAULT_INDICATORS, RISK_PROFILES, INDICATOR_META, getIndicatorConfig,
+  calculateLiveMarketStrength, calculateAtr, DEFAULT_INDICATORS, RISK_PROFILES, INDICATOR_META, getIndicatorConfig,
+  computeWisestReallocationPicks,
+  createCatalystId, normalizeTickerList, computeForwardOutlook, findCatalystForTicker,
+  catalystNewsTickers, isCatalystActive,
+  buildInvestorBrief, enrichOutlookWithMacro, getPortfolioMacroAlerts,
+  suggestCatalystFromMacro, macroBriefNewsTickers, buildScenarioOracle,
+  fetchLiveMarketRegime, getCachedMarketRegime, regimeConfidenceAdjust,
+  buildFalsifierRules, evaluateFalsifierRules, applyFalsifierOverlay,
+  createOracleSnapshot, shouldCreateSnapshot, processDueScorecards, refreshMacroBriefCache,
   fetchMarketNews, formatNewsTime, fetchCongressTrades, formatCongressTradeDate, formatCongressSyncStatus,
   STOCK_ACT_MAX_LAG_DAYS, checkForAppUpdate, openUpdateDownload, copyUpdateDownloadUrl, getPreferredUpdateUrl,
 } from '../../serverless';
@@ -17,7 +25,7 @@ import { buildGuessAnalytics } from '../../serverless/guessAnalytics';
 import { enrichHoldingsWithAdvisor } from '../../serverless/holdingAdvisor';
 import { attachHoldingIntegrity } from '../../serverless/dataIntegrity';
 import { formatCurrency, getCoachActionCutoff } from '../utils/formatters';
-import { normalizeAdvisorForUi } from '../utils/holdingDisplay';
+import { classifyHoldingZone } from '../utils/holdingDisplay';
 import { useChartPaths } from './useChartPaths';
 
 export function useSidekickApp() {
@@ -55,12 +63,18 @@ export function useSidekickApp() {
     try {
       let data;
       try {
-        const res = await sidekickFetch(`/advisor/market-strength?timeframe=${strengthTimeframe}&sector=${strengthSector}`);
+        const res = await sidekickFetch(
+          `/advisor/market-strength?timeframe=${strengthTimeframe}&sector=${strengthSector}&live=1`,
+        );
         if (!res.ok) throw new Error("API non-OK");
         data = await res.json();
       } catch (err) {
         console.warn("Serverless fallback: API strength query failed, running serverless engine:", err.message);
-        data = calculateMarketStrength(strengthTimeframe, strengthSector);
+        try {
+          data = await calculateLiveMarketStrength(strengthTimeframe, strengthSector);
+        } catch {
+          data = calculateMarketStrength(strengthTimeframe, strengthSector);
+        }
       }
       setMarketStrengthData(data);
     } catch (err) {
@@ -148,12 +162,22 @@ export function useSidekickApp() {
   const portfolioRestoreRef = useRef({ profileId: null, attempted: false });
   const quoteFallbackRef = useRef({ active: false, lastToastAt: 0 });
   const portfolioBootstrappingRef = useRef(false);
+  const syncCancelRef = useRef(false);
+  const SYNC_TIMEOUT_MS = 90_000;
   const [portfolioBootstrapping, setPortfolioBootstrapping] = useState(false);
   const [hasCachedRobinhoodSession, setHasCachedRobinhoodSession] = useState(false);
   const [autoRestoreNonce, setAutoRestoreNonce] = useState(0);
   const [equityDiagnostic, setEquityDiagnostic] = useState(null);
   const [equityDiagnosticLoading, setEquityDiagnosticLoading] = useState(false);
   const [hiddenHoldingsNonce, setHiddenHoldingsNonce] = useState(0);
+  const [debugMode, setDebugModeState] = useState(
+    () => localDb.getSettings().debugMode === true,
+  );
+  const persistDebugMode = useCallback((enabled) => {
+    setDebugModeState(enabled);
+    localDb.saveSettings({ debugMode: enabled });
+  }, []);
+
   const [autoHideWarrants, setAutoHideWarrantsState] = useState(
     () => localDb.getSettings().autoHideWarrants !== false,
   );
@@ -168,6 +192,10 @@ export function useSidekickApp() {
     setHiddenHoldingsNonce((n) => n + 1);
   }, []);
 
+  const [marketRegime, setMarketRegime] = useState(() => getCachedMarketRegime());
+  const [oracleScorecards, setOracleScorecards] = useState([]);
+  const [catalystWatches, setCatalystWatches] = useState([]);
+
   useEffect(() => {
     let cancelled = false;
     void probeDesktopAuth().then((probe) => {
@@ -177,8 +205,50 @@ export function useSidekickApp() {
       cancelled = true;
     };
   }, []);
+
+  const fetchMarketRegime = useCallback(async () => {
+    try {
+      const res = await sidekickFetch('/market/regime');
+      if (res.ok) {
+        setMarketRegime(await res.json());
+        return;
+      }
+    } catch {
+      // fall through
+    }
+    try {
+      setMarketRegime(await fetchLiveMarketRegime());
+    } catch {
+      setMarketRegime(getCachedMarketRegime());
+    }
+  }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void fetchMarketRegime();
+      void refreshMacroBriefCache(localDb);
+    });
+  }, [fetchMarketRegime]);
+
+  useEffect(() => {
+    if (!activeProfile?.id) return;
+    queueMicrotask(() => {
+      setOracleScorecards(localDb.getOracleScorecards(activeProfile.id));
+    });
+  }, [activeProfile?.id]);
   
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [catalystModalOpen, setCatalystModalOpen] = useState(false);
+  const [catalystForm, setCatalystForm] = useState({
+    id: null,
+    ticker: '',
+    title: '',
+    event_date: null,
+    bias: 'watch',
+    associated_tickers: '',
+    notes: '',
+    soften_abort: true,
+  });
   const [clipboardText, setClipboardText] = useState("");
   
   const [guessForm, setGuessForm] = useState({ target_price: "", timeframe_days: 30 });
@@ -239,6 +309,11 @@ export function useSidekickApp() {
     localDb.saveSettings({ fontSize: fontSizeOffset, highContrast: true });
   }, [fontSizeOffset, highContrast]);
 
+  const fontSizeOffsetRef = useRef(fontSizeOffset);
+  useEffect(() => {
+    fontSizeOffsetRef.current = fontSizeOffset;
+  }, [fontSizeOffset]);
+
   const adjustFontSize = useCallback((direction) => {
     setFontSizeOffset(prev => {
       const next = prev + direction;
@@ -246,7 +321,9 @@ export function useSidekickApp() {
     });
   }, []);
 
-  // Native Zoom Keyboard and Gesture Event Listeners
+  const zoomScale = useMemo(() => 1 + fontSizeOffset * 0.05, [fontSizeOffset]);
+
+  // Zoom: Ctrl/Cmd +/- / 0, ctrl+wheel, two-finger pinch
   useEffect(() => {
     const handleKeyDown = (e) => {
       const activeEl = document.activeElement;
@@ -290,9 +367,41 @@ export function useSidekickApp() {
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("wheel", handleWheel, { passive: false });
 
+    let pinchStart = null;
+    const pinchDist = (touches) => {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.hypot(dx, dy);
+    };
+    const onTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        pinchStart = { dist: pinchDist(e.touches), offset: fontSizeOffsetRef.current };
+      }
+    };
+    const onTouchMove = (e) => {
+      if (!pinchStart || e.touches.length !== 2) return;
+      const ratio = pinchDist(e.touches) / pinchStart.dist;
+      const delta = Math.round((ratio - 1) * 8);
+      const next = Math.max(-3, Math.min(5, pinchStart.offset + delta));
+      if (next !== fontSizeOffsetRef.current) {
+        e.preventDefault();
+        setFontSizeOffset(next);
+      }
+    };
+    const onTouchEnd = () => { pinchStart = null; };
+
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
+    document.addEventListener('touchcancel', onTouchEnd);
+
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("wheel", handleWheel);
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+      document.removeEventListener('touchcancel', onTouchEnd);
     };
   }, [adjustFontSize]);
 
@@ -357,9 +466,17 @@ export function useSidekickApp() {
   const loadMarketNews = useCallback(async () => {
     setNewsLoading(true);
     try {
+      const strengthDeck = calculateMarketStrength('day', 'all');
+      const moverTickers = [
+        ...(strengthDeck.top_gainers || []).map((m) => m.ticker),
+        ...(strengthDeck.worst_decliners || []).map((m) => m.ticker),
+      ];
       const extra = [
         ...holdings.map(h => h.ticker),
         ...watchlist.map(w => w.ticker),
+        ...moverTickers,
+        ...catalystNewsTickers(catalystWatches),
+        ...macroBriefNewsTickers(),
       ];
       const result = await fetchMarketNews(extra);
       setNewsData(result);
@@ -373,7 +490,7 @@ export function useSidekickApp() {
     } finally {
       setNewsLoading(false);
     }
-  }, [holdings, watchlist]);
+  }, [holdings, watchlist, catalystWatches]);
 
   const openNewsLink = useCallback((url) => {
     if (!url) return;
@@ -482,7 +599,7 @@ export function useSidekickApp() {
 
   // Auto-refresh congressional disclosures when the local cache window expires.
   useEffect(() => {
-    if (activeTab !== 'news' || congressLoading || !congressData?.nextRefreshAt) return undefined;
+    if (!['news', 'insider'].includes(activeTab) || congressLoading || !congressData?.nextRefreshAt) return undefined;
     const delay = Math.max(0, congressData.nextRefreshAt - Date.now());
     const timer = setTimeout(() => void loadCongressTrades(true), delay);
     return () => clearTimeout(timer);
@@ -502,7 +619,7 @@ export function useSidekickApp() {
         void loadMarketNews();
       });
     }
-    if (activeTab === "news" && !congressData && !congressLoading) {
+    if (activeTab === "insider" && !congressData && !congressLoading) {
       queueMicrotask(() => {
         void loadCongressTrades();
       });
@@ -520,6 +637,124 @@ export function useSidekickApp() {
       setRiskProfile(saved?.riskProfile || "balanced");
     });
   }, [activeProfile]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      if (!activeProfile) {
+        setCatalystWatches([]);
+        return;
+      }
+      setCatalystWatches(localDb.getCatalystWatches(activeProfile.id));
+    });
+  }, [activeProfile]);
+
+  const refreshCatalystWatches = useCallback(() => {
+    if (!activeProfile) return;
+    setCatalystWatches(localDb.getCatalystWatches(activeProfile.id));
+  }, [activeProfile]);
+
+  const investorBrief = useMemo(() => buildInvestorBrief(), []);
+
+  const portfolioMacroAlerts = useMemo(
+    () => getPortfolioMacroAlerts(holdings),
+    [holdings],
+  );
+
+  const openCatalystModal = useCallback((ticker, existing = null) => {
+    const t = String(ticker || '').toUpperCase();
+    const seed = existing || suggestCatalystFromMacro(t);
+    if (seed) {
+      setCatalystForm({
+        id: seed.id || null,
+        ticker: t,
+        title: seed.title || '',
+        event_date: seed.event_date ? String(seed.event_date).slice(0, 10) : null,
+        bias: seed.bias || 'watch',
+        associated_tickers: Array.isArray(seed.associated_tickers)
+          ? seed.associated_tickers.join(', ')
+          : (seed.associated_tickers || ''),
+        notes: seed.notes || '',
+        soften_abort: seed.soften_abort !== false,
+      });
+    } else {
+      setCatalystForm({
+        id: null,
+        ticker: t,
+        title: '',
+        event_date: null,
+        bias: 'watch',
+        associated_tickers: '',
+        notes: '',
+        soften_abort: true,
+      });
+    }
+    setCatalystModalOpen(true);
+  }, []);
+
+  const closeCatalystModal = useCallback(() => {
+    setCatalystModalOpen(false);
+  }, []);
+
+  const handleSaveCatalystWatch = useCallback(async (e) => {
+    e.preventDefault();
+    if (!activeProfile || !catalystForm.ticker || !catalystForm.title.trim()) return;
+    setLoading(true);
+    try {
+      const payload = {
+        id: catalystForm.id || createCatalystId(),
+        profile_id: activeProfile.id,
+        ticker: catalystForm.ticker.toUpperCase(),
+        title: catalystForm.title.trim(),
+        event_date: catalystForm.event_date || null,
+        bias: catalystForm.bias,
+        associated_tickers: normalizeTickerList(catalystForm.associated_tickers),
+        notes: catalystForm.notes.trim(),
+        soften_abort: catalystForm.soften_abort,
+      };
+      try {
+        const res = await sidekickFetch('/catalyst-watches', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...payload, profile_id: activeProfile.id }),
+        });
+        if (!res.ok) throw new Error('API save failed');
+      } catch {
+        localDb.saveCatalystWatch(activeProfile.id, {
+          ...payload,
+          created_at: new Date().toISOString(),
+        });
+      }
+      refreshCatalystWatches();
+      closeCatalystModal();
+      showToast(`Catalyst watch saved for ${payload.ticker}.`, 'success');
+    } catch (err) {
+      showToast(err.message || 'Could not save catalyst watch.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [activeProfile, catalystForm, refreshCatalystWatches, closeCatalystModal, showToast]);
+
+  const handleDeleteCatalystWatch = useCallback(async (watchId) => {
+    if (!activeProfile || !watchId) return;
+    setLoading(true);
+    try {
+      try {
+        const res = await sidekickFetch('/catalyst-watches', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile_id: activeProfile.id, id: watchId }),
+        });
+        if (!res.ok) throw new Error('API delete failed');
+      } catch {
+        localDb.deleteCatalystWatch(activeProfile.id, watchId);
+      }
+      refreshCatalystWatches();
+      closeCatalystModal();
+      showToast('Catalyst watch removed.', 'info');
+    } finally {
+      setLoading(false);
+    }
+  }, [activeProfile, refreshCatalystWatches, closeCatalystModal, showToast]);
 
   // Override standard window.alert with custom glassmorphic toasts
   const alert = useCallback((msg) => {
@@ -860,17 +1095,22 @@ export function useSidekickApp() {
         }
 
         if (activeProfile.robinhood_username && !isAuthenticated) {
-          setIsSandbox(true);
           const inLoginGrace = Date.now() < loginGraceUntilRef.current;
           const bootstrapping = portfolioBootstrappingRef.current;
-          if (!isLoginOpen && !loginSucceededRef.current && !inLoginGrace && !bootstrapping) {
-            showToast("Robinhood session expired. Tap Sync Account to reconnect, or stay offline.", "warning");
-            setLoginForm((prev) => ({
-              ...prev,
-              username: activeProfile.robinhood_username,
-              password: "",
-              mfa_code: "",
-            }));
+          if (inLoginGrace || loginSucceededRef.current || bootstrapping) {
+            setHasCachedRobinhoodSession(true);
+            setIsSandbox(false);
+          } else {
+            setIsSandbox(true);
+            if (!isLoginOpen) {
+              showToast("Robinhood session expired. Tap Sync Account to reconnect, or stay offline.", "warning");
+              setLoginForm((prev) => ({
+                ...prev,
+                username: activeProfile.robinhood_username,
+                password: "",
+                mfa_code: "",
+              }));
+            }
           }
         } else if (isAuthenticated) {
           setIsSandbox(false);
@@ -1040,10 +1280,12 @@ export function useSidekickApp() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Diagnostic request failed');
       setEquityDiagnostic(data);
-      if (saveToDisk && data.saved_to) {
-        showToast(`Equity diagnostic saved to ${data.saved_to}`, 'success', 9000);
-      } else {
-        showToast('Equity diagnostic complete — see Advanced Settings for details.', 'success');
+      if (debugMode) {
+        if (saveToDisk && data.saved_to) {
+          showToast(`Equity diagnostic saved to ${data.saved_to}`, 'success', 9000);
+        } else {
+          showToast('Equity diagnostic complete — see Settings (debug mode) for details.', 'success');
+        }
       }
       return data;
     } catch (err) {
@@ -1187,7 +1429,7 @@ export function useSidekickApp() {
         dataAdv = generateRecommendation(activeProfile.id, selectedTicker, dataHist, livePrice);
       }
       
-      setAdvisorData(normalizeAdvisorForUi(dataAdv));
+      setAdvisorData(dataAdv?.insufficient_data ? null : dataAdv);
       
       // Fetch Multi-Timeframe Viability Forecast
       let dataViability;
@@ -1279,6 +1521,7 @@ export function useSidekickApp() {
     if (!activeProfile) return;
     setCoachLoading(true);
     try {
+      localDb.seedShadowCoachFromHoldings(activeProfile.id);
       let analysisData;
       let actionsData;
       try {
@@ -1535,69 +1778,153 @@ export function useSidekickApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- interval refresh uses latest fetch closures by design
   }, [activeProfile, strengthTimeframe, strengthSector]);
 
+  const cancelSync = useCallback(() => {
+    syncCancelRef.current = true;
+    setSyncing(false);
+    setSyncStepIndex(0);
+    setPortfolioBootstrapping(false);
+    showToast('Sync cancelled. Tap Sync Account to try again.', 'info');
+  }, [showToast]);
+
+  const raceSyncDeadline = useCallback((promise, label, deadlineMs) => {
+    const remaining = Math.max(0, deadlineMs - Date.now());
+    if (remaining <= 0) {
+      return Promise.reject(new Error(`${label} timed out after 90 seconds.`));
+    }
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`${label} timed out after 90 seconds.`)), remaining);
+      }),
+    ]);
+  }, []);
+
+  const applyAuthenticatedStatus = useCallback((statusData) => {
+    setIsSandbox(false);
+    if (statusData.username && !activeProfile?.robinhood_username) {
+      setActiveProfile((prev) => (prev ? { ...prev, robinhood_username: statusData.username } : prev));
+      setProfiles((prev) => prev.map((p) => (
+        p.id === activeProfile?.id ? { ...p, robinhood_username: statusData.username } : p
+      )));
+    }
+  }, [activeProfile]);
+
   // Sync with Robinhood
   const triggerSync = async (overrideSandbox = null, options = {}) => {
     if (!activeProfile) return;
 
-    let canSyncLive = false;
-    if (options.afterLogin) {
-      canSyncLive = await waitForRobinhoodSession(activeProfile.id, 24, 250);
-    } else {
+    const isManual = !options.silent && !options.bootstrap;
+    syncCancelRef.current = false;
+    let overlayActive = false;
+    const syncDeadline = Date.now() + SYNC_TIMEOUT_MS;
+
+    const startOverlay = () => {
+      overlayActive = true;
+      setSyncStepIndex(0);
+      setSyncing(true);
+    };
+
+    const stopOverlay = () => {
+      if (!overlayActive) return;
+      overlayActive = false;
+      setSyncing(false);
+      setSyncStepIndex(0);
+    };
+
+    if (isManual) {
+      startOverlay();
+      showToast('Connecting to your saved Robinhood session…', 'info', 3500);
+    }
+
+    const resolveRobinhoodSession = async () => {
+      if (options.afterLogin) {
+        let ready = await waitForRobinhoodSession(activeProfile.id, 12, 200);
+        if (!ready) ready = await waitForRobinhoodSession(activeProfile.id, 8, 300);
+        if (ready) return true;
+        // Fresh login: native vault can lag validation — still attempt sync when linked.
+        return loginSucceededRef.current
+          || Boolean(activeProfile.robinhood_username)
+          || hasCachedRobinhoodSession;
+      }
+
+      const cachedSession = hasCachedRobinhoodSession || Boolean(activeProfile.robinhood_username);
+      if (cachedSession) {
+        const ready = await waitForRobinhoodSession(activeProfile.id, 20, 250);
+        if (ready) return true;
+      }
+
       try {
         const statusRes = await sidekickFetch(`/auth/status?profile_id=${activeProfile.id}`);
         if (statusRes.ok) {
           const statusData = await statusRes.json();
           if (statusData.authenticated) {
-            canSyncLive = true;
-            setIsSandbox(false);
-            if (statusData.username && !activeProfile.robinhood_username) {
-              setActiveProfile((prev) => (prev ? { ...prev, robinhood_username: statusData.username } : prev));
-              setProfiles((prev) => prev.map((p) => (
-                p.id === activeProfile.id ? { ...p, robinhood_username: statusData.username } : p
-              )));
-            }
+            applyAuthenticatedStatus(statusData);
+            return true;
           }
         }
       } catch {
         // Fall through to login prompt when no live session.
       }
-    }
+      return false;
+    };
 
-    if (!canSyncLive) {
-      if (!options.silent && !options.bootstrap) {
-        if (!options.afterLogin) {
-          openRobinhoodLogin();
-          const hadSession = Boolean(activeProfile.robinhood_username);
-          showToast(
-            hadSession
-              ? 'Robinhood session expired. Sign in again to sync live holdings.'
-              : 'Sign in with Robinhood to sync your stock and ETF positions.',
-            'info'
-          );
-        } else {
-          showToast("Connected, but the encrypted vault is still saving. Tap Sync Account once more.", "warning", 8000);
-        }
-      }
-      return;
-    }
-
-    setSyncStepIndex(0);
-    setSyncing(true);
-    const targetSandbox = overrideSandbox !== null ? overrideSandbox : false;
     try {
-      const data = await robinhoodClient.syncHoldings(activeProfile.id, targetSandbox);
+      const canSyncLive = await raceSyncDeadline(
+        resolveRobinhoodSession(),
+        'Session check',
+        syncDeadline,
+      );
+
+      if (syncCancelRef.current) return;
+
+      if (!canSyncLive) {
+        if (!options.silent && !options.bootstrap) {
+          if (!options.afterLogin) {
+            openRobinhoodLogin();
+            const hadSession = Boolean(activeProfile.robinhood_username) || hasCachedRobinhoodSession;
+            showToast(
+              hadSession
+                ? 'Robinhood session expired. Sign in again to sync live holdings.'
+                : 'Sign in with Robinhood to sync your stock and ETF positions.',
+              'info',
+            );
+          } else {
+            showToast(
+              "Signed in, but live sync could not start yet. Tap Sync Account — if it fails, check adb logcat -s RobinhoodAuth.",
+              "warning",
+              10000,
+            );
+          }
+        }
+        return;
+      }
+
+      if (!overlayActive) startOverlay();
+
+      const targetSandbox = overrideSandbox !== null ? overrideSandbox : false;
+      const data = await raceSyncDeadline(
+        robinhoodClient.syncHoldings(activeProfile.id, targetSandbox),
+        'Robinhood sync',
+        syncDeadline,
+      );
+
+      if (syncCancelRef.current) return;
 
       if (!options.silent) {
         if (data.synced_count > 0) {
           showToast(`Successfully synced ${data.synced_count} active positions from Robinhood!`, "success");
         } else {
-          showToast("Sync completed: 0 active stock holdings found. Options and crypto are not imported — add stocks manually or paste a holdings list.", "warning", 7000);
+          showToast(
+            debugMode
+              ? "Sync completed: 0 active stock holdings found. Options and crypto are not imported — add stocks manually or paste a holdings list."
+              : "Sync completed: 0 active stock holdings found. Options and crypto are not imported.",
+            "warning",
+            7000,
+          );
         }
       }
 
-      // Close the fullscreen overlay as soon as Robinhood holdings are fetched.
-      setSyncing(false);
-      setSyncStepIndex(0);
+      stopOverlay();
 
       loginGraceUntilRef.current = Date.now() + 30_000;
 
@@ -1612,12 +1939,26 @@ export function useSidekickApp() {
         fetchMarketStrength(),
         selectedTicker ? fetchStockHistoryAndAdvisor() : Promise.resolve(),
       ]);
-      void runEquityDiagnostic(true);
+      if (debugMode) {
+        void runEquityDiagnostic(true);
+      }
     } catch (err) {
+      if (!syncCancelRef.current && !options.silent) {
+        showToast(err.message || "Error linking with Robinhood client.", "error");
+      }
       console.error("Sync error:", err);
-      showToast(err.message || "Error linking with Robinhood client.", "error");
-      setSyncing(false);
-      setSyncStepIndex(0);
+    } finally {
+      stopOverlay();
+      if (options.afterLogin || options.bootstrap) {
+        setPortfolioBootstrapping(false);
+      }
+      if (!syncCancelRef.current && activeProfile && (options.afterLogin || overlayActive)) {
+        try {
+          await fetchPortfolio();
+        } catch (refreshErr) {
+          console.warn('Post-sync portfolio refresh failed:', refreshErr);
+        }
+      }
     }
   };
 
@@ -1711,7 +2052,19 @@ export function useSidekickApp() {
       loginGraceUntilRef.current = Date.now() + 45_000;
       mfaPollInFlightRef.current = false;
       const newSandbox = data.mode === "sandbox";
+      const linkedUsername = loginForm.username?.trim() || activeProfile?.robinhood_username || "";
       setIsSandbox(newSandbox);
+      if (!newSandbox) {
+        setHasCachedRobinhoodSession(true);
+        setPortfolioBootstrapping(true);
+        if (activeProfile?.id && linkedUsername) {
+          localDb.setRobinhoodUsername(activeProfile.id, linkedUsername);
+          setActiveProfile((prev) => (prev ? { ...prev, robinhood_username: linkedUsername } : prev));
+          setProfiles((prev) => prev.map((p) => (
+            p.id === activeProfile.id ? { ...p, robinhood_username: linkedUsername } : p
+          )));
+        }
+      }
       setIsLoginOpen(false);
       setLoginForm({ username: "", password: "", mfa_code: "" });
       setLoginStatus({ status: "", message: "" });
@@ -2092,6 +2445,142 @@ export function useSidekickApp() {
     }
   };
 
+  const wisestReallocationPicks = useMemo(
+    () => computeWisestReallocationPicks(5, holdings.map((h) => h.ticker)),
+    [holdings],
+  );
+
+  const activeCatalystWatches = useMemo(
+    () => catalystWatches.filter((c) => isCatalystActive(c)),
+    [catalystWatches],
+  );
+
+  const selectedHolding = useMemo(
+    () => holdings.find((h) => h.ticker.toUpperCase() === selectedTicker.toUpperCase()) || null,
+    [holdings, selectedTicker],
+  );
+
+  const selectedForwardOutlook = useMemo(() => {
+    const catalyst = findCatalystForTicker(catalystWatches, selectedTicker);
+    const base = computeForwardOutlook(
+      selectedHolding || { advisor_score: advisorData?.score ?? null },
+      catalyst,
+    );
+    return enrichOutlookWithMacro(base, selectedTicker);
+  }, [catalystWatches, selectedTicker, selectedHolding, advisorData]);
+
+  const [weakSessionTick, setWeakSessionTick] = useState(0);
+
+  const weakSessionCount = useMemo(() => {
+    void weakSessionTick;
+    if (!activeProfile?.id) return 0;
+    const map = localDb.getOracleWeakSessions(activeProfile.id);
+    return map[String(selectedTicker).toUpperCase()]?.count || 0;
+  }, [activeProfile?.id, selectedTicker, weakSessionTick]);
+
+  useEffect(() => {
+    if (!activeProfile?.id) return;
+    const advisor = selectedHolding?.advisor_score ?? advisorData?.score ?? null;
+    if (advisor == null) return;
+    localDb.touchOracleWeakSession(activeProfile.id, selectedTicker, advisor);
+    queueMicrotask(() => setWeakSessionTick((n) => n + 1));
+  }, [activeProfile?.id, selectedTicker, advisorData?.score, selectedHolding?.advisor_score]);
+
+  const scenarioOracle = useMemo(() => {
+    const base = buildScenarioOracle({
+      ticker: selectedTicker,
+      currentPrice: selectedHolding?.current_price ?? chartData?.[chartData.length - 1]?.close_price,
+      advisorScore: selectedHolding?.advisor_score ?? advisorData?.score ?? null,
+      viability: viabilityData,
+      forwardOutlook: selectedForwardOutlook,
+      guessAnalytics: analytics,
+      priceStale: selectedHolding?.price_stale === true,
+      horizon: viabilityHorizon,
+      regime: marketRegime,
+    });
+    if (!base || base.oracle_stance === 'INSUFFICIENT_DATA') return base;
+
+    const advisor = selectedHolding?.advisor_score ?? advisorData?.score ?? null;
+    const rules = buildFalsifierRules({
+      ...base.levels,
+      advisorScore: advisor,
+      weakSessionCount,
+    });
+    const falsifierEval = evaluateFalsifierRules({
+      currentPrice: base.current_price,
+      rules,
+      advisorScore: advisor,
+    });
+    const regimeAdjust = regimeConfidenceAdjust(marketRegime);
+    return applyFalsifierOverlay(base, falsifierEval, { ...regimeAdjust, regime: marketRegime });
+  }, [
+    selectedTicker, selectedHolding, advisorData, viabilityData,
+    selectedForwardOutlook, analytics, chartData, viabilityHorizon,
+    marketRegime, weakSessionCount,
+  ]);
+
+  const processOracleScorecards = useCallback(async () => {
+    if (!activeProfile?.id) return;
+    const livePrices = {};
+    for (const h of holdings) {
+      if (h.current_price > 0) livePrices[h.ticker] = h.current_price;
+    }
+    try {
+      const res = await sidekickFetch('/oracle/scorecards/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: activeProfile.id, live_prices: livePrices }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setOracleScorecards(data.scorecards || localDb.getOracleScorecards(activeProfile.id));
+        if (data.new_scorecards?.length) {
+          showToast(`Oracle graded ${data.new_scorecards.length} post-event scorecard(s)`, 'info');
+        }
+        return;
+      }
+    } catch {
+      // local fallback
+    }
+    const snapshots = localDb.getOracleSnapshots(activeProfile.id);
+    const { snapshots: updated, scorecards: newCards } = processDueScorecards(snapshots, livePrices);
+    localDb.saveOracleSnapshots(activeProfile.id, updated);
+    if (newCards.length) {
+      localDb.appendOracleScorecards(activeProfile.id, newCards);
+      setOracleScorecards(localDb.getOracleScorecards(activeProfile.id));
+      showToast(`Oracle graded ${newCards.length} post-event scorecard(s)`, 'info');
+    }
+  }, [activeProfile, holdings, showToast]);
+
+  const oracleSnapshotEventDate = useMemo(
+    () => selectedForwardOutlook?.macro_events?.[0]?.event_date
+      || selectedForwardOutlook?.catalyst?.event_date,
+    [selectedForwardOutlook],
+  );
+  const scenarioOracleStance = scenarioOracle?.oracle_stance;
+
+  useEffect(() => {
+    if (!activeProfile?.id || !scenarioOracle?.ticker || scenarioOracleStance === 'INSUFFICIENT_DATA') return;
+    const snapshots = localDb.getOracleSnapshots(activeProfile.id);
+    if (!shouldCreateSnapshot(snapshots, selectedTicker, oracleSnapshotEventDate)) return;
+    const snap = { ...createOracleSnapshot(scenarioOracle, selectedForwardOutlook), status: 'open' };
+    localDb.saveOracleSnapshots(activeProfile.id, [...snapshots, snap].slice(-30));
+  }, [
+    activeProfile?.id,
+    selectedTicker,
+    scenarioOracleStance,
+    oracleSnapshotEventDate,
+    scenarioOracle,
+    selectedForwardOutlook,
+  ]);
+
+  useEffect(() => {
+    if (!activeProfile?.id || holdings.length === 0) return;
+    queueMicrotask(() => {
+      void processOracleScorecards();
+    });
+  }, [lastSyncTime, activeProfile, holdings.length, processOracleScorecards]);
+
   return {
     activeTab, setActiveTab, strengthTimeframe, setStrengthTimeframe, strengthSector, setStrengthSector,
     marketStrengthData, strengthLoading, coachLoading, sandboxWatchlist, setSandboxWatchlist,
@@ -2114,10 +2603,10 @@ export function useSidekickApp() {
     watchlistForm, setWatchlistForm, sectorConcentrations, setSectorConcentrations,
     strategyBrackets, setStrategyBrackets, evolutionMetrics, setEvolutionMetrics,
     shifterForm, setShifterForm, strategyLoading, isSandbox, setIsSandbox, loading, setLoading,
-    syncing, setSyncing, syncStepIndex, portfolioBootstrapping, hasCachedRobinhoodSession,
+    syncing, setSyncing, syncStepIndex, portfolioBootstrapping, hasCachedRobinhoodSession, cancelSync,
     toasts, showToast, dismissToast, lastSyncTime, setLastSyncTime,
     shadowCoachData, setShadowCoachData, actionHistory, setActionHistory, coachTimeFilter, setCoachTimeFilter,
-    fontSizeOffset, setFontSizeOffset, adjustFontSize, highContrast: true,
+    fontSizeOffset, setFontSizeOffset, adjustFontSize, zoomScale, highContrast: true,
     persistIndicatorSettings, applyRiskProfile, updateIndicatorField, resetIndicatorDefaults,
     memoizedChartPaths, allAvailableTickers, handleCycleTicker, isSyncStale, formatLastSync,
     handleSeedMockAssets, fetchProfiles, handleCreateProfile, handleDeleteProfile,
@@ -2129,6 +2618,13 @@ export function useSidekickApp() {
     handleHideHolding, handleUnhideHolding, handleAdjustHolding, handleForceEvolve,
     alert, formatCurrency, formatNewsTime, getCoachActionCutoff, APP_VERSION,
     RISK_PROFILES, INDICATOR_META, DEFAULT_INDICATORS, calculateAtr, calculateMarketStrength,
+    computeWisestReallocationPicks, wisestReallocationPicks,
+    catalystWatches, activeCatalystWatches, catalystModalOpen, catalystForm, setCatalystForm,
+    openCatalystModal, closeCatalystModal, handleSaveCatalystWatch, handleDeleteCatalystWatch,
+    refreshCatalystWatches, selectedForwardOutlook, classifyHoldingZone,
+    investorBrief, portfolioMacroAlerts, suggestCatalystFromMacro, scenarioOracle,
+    marketRegime, fetchMarketRegime, oracleScorecards, processOracleScorecards,
+    debugMode, persistDebugMode,
     localDb, sidekickFetch, fetchPublicQuote, generateViabilityForecast, evolveWeights, generateRecommendation,
   };
 }

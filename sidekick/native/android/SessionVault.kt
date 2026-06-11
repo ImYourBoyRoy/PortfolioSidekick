@@ -8,7 +8,7 @@ class SessionVault(private val context: Context) {
         context.getSharedPreferences("sidekick_rh_vault_$profileId", Context.MODE_PRIVATE)
 
     private fun putEncrypted(profileId: Int, key: String, value: String) {
-        prefs(profileId).edit().putString(key, VaultCrypto.encrypt(value)).apply()
+        prefs(profileId).edit().putString(key, VaultCrypto.encrypt(value)).commit()
     }
 
     private fun getEncrypted(profileId: Int, key: String): String? {
@@ -30,7 +30,7 @@ class SessionVault(private val context: Context) {
     }
 
     fun wipe(profileId: Int) {
-        prefs(profileId).edit().clear().apply()
+        prefs(profileId).edit().clear().commit()
     }
 
     fun saveChallenge(profileId: Int, payload: JSONObject) {
@@ -47,7 +47,7 @@ class SessionVault(private val context: Context) {
     }
 
     fun clearChallenge(profileId: Int) {
-        prefs(profileId).edit().remove("pending_challenge").apply()
+        prefs(profileId).edit().remove("pending_challenge").commit()
     }
 
     fun saveUsername(profileId: Int, username: String) {
