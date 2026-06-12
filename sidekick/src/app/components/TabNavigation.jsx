@@ -4,10 +4,10 @@
  * Created by: Roy Dawson IV
  */
 import { TrendingUp, LayoutDashboard, Sliders, Brain, Target, Eye, Settings, Newspaper, Landmark } from 'lucide-react';
-import { useSidekick } from '../context/SidekickContext';
+import { useShell } from '../context/SidekickContext';
 
 export default function TabNavigation() {
-  const s = useSidekick();
+  const s = useShell();
 
   return (
       <div className="tab-navigation-wrapper">

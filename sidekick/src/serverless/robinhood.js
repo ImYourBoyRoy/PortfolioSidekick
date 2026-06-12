@@ -12,6 +12,7 @@ import { isSandboxUsername } from './authUtils';
 import { mockChartBasePrice } from './portfolioConstants';
 import { robinhoodLogin, robinhoodLogout as rhLogout } from './robinhoodAuth';
 import { fetchPublicQuote, fetchYahooChartJson } from './yahooQuotes.js';
+import { isQuoteUnsupportedSymbol } from './dataIntegrity.js';
 
 export { fetchPublicQuote } from './yahooQuotes.js';
 
@@ -148,7 +149,6 @@ export const robinhoodClient = {
         }
         const settings = localDb.getSettings();
         if (settings.autoHideWarrants !== false) {
-          const { isQuoteUnsupportedSymbol } = await import('./dataIntegrity.js');
           for (const h of data.holdings) {
             if (isQuoteUnsupportedSymbol(h.ticker)) {
               localDb.hideTicker(profileId, h.ticker);

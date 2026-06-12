@@ -1,7 +1,7 @@
 // ./sidekick/src/serverless/holdingAdvisor.js
 /**
  * Real advisor scores for portfolio holdings via generateRecommendation + Yahoo history.
- * Cached to limit API load during quote pulse refreshes.
+ * History is cached separately from price so quote pulses do not re-fetch year charts.
  *
  * Created by: Roy Dawson IV
  */
@@ -9,8 +9,20 @@
 import { generateRecommendation } from './advisor';
 import { fetchPublicHistoricalPrices } from './robinhood';
 
+const HISTORY_CACHE_MS = 60 * 60 * 1000;
 const ADVISOR_CACHE_MS = 5 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 180;
+const historyCache = new Map();
 const advisorCache = new Map();
+
+function lruSet(map, key, value) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  while (map.size > MAX_CACHE_ENTRIES) {
+    const oldest = map.keys().next().value;
+    map.delete(oldest);
+  }
+}
 
 async function mapPool(items, mapper, concurrency = 4) {
   if (!items.length) return [];
@@ -37,6 +49,19 @@ function unavailable(reason) {
   };
 }
 
+export async function getCachedTickerHistory(ticker, { force = false } = {}) {
+  const key = String(ticker || '').toUpperCase();
+  if (!force) {
+    const cached = historyCache.get(key);
+    if (cached && Date.now() - cached.at < HISTORY_CACHE_MS) {
+      return cached.data;
+    }
+  }
+  const history = await fetchPublicHistoricalPrices(key, 'year');
+  lruSet(historyCache, key, { at: Date.now(), data: history });
+  return history;
+}
+
 /**
  * Resolve BUY/HOLD/SELL from live price history for one holding.
  */
@@ -49,20 +74,20 @@ export async function resolveHoldingAdvisor(profileId, holding, { force = false 
   }
 
   const ticker = String(holding.ticker || '').toUpperCase();
-  const cacheKey = `${profileId}:${ticker}:${holding.current_price}`;
+  const cacheKey = `${profileId}:${ticker}`;
   if (!force) {
     const cached = advisorCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < ADVISOR_CACHE_MS) {
+    if (cached && Date.now() - cached.at < ADVISOR_CACHE_MS && cached.price === holding.current_price) {
       return cached.data;
     }
   }
 
-  const history = await fetchPublicHistoricalPrices(ticker, 'year');
+  const history = await getCachedTickerHistory(ticker, { force });
   const rec = generateRecommendation(profileId, ticker, history, holding.current_price);
 
   if (rec.insufficient_data || rec.score == null || rec.action == null) {
     const data = unavailable(rec.message || 'Insufficient history for advisor model.');
-    advisorCache.set(cacheKey, { at: Date.now(), data });
+    lruSet(advisorCache, cacheKey, { at: Date.now(), price: holding.current_price, data });
     return data;
   }
 
@@ -73,7 +98,7 @@ export async function resolveHoldingAdvisor(profileId, holding, { force = false 
     advisor_unavailable: false,
     advisor_reason: null,
   };
-  advisorCache.set(cacheKey, { at: Date.now(), data });
+  lruSet(advisorCache, cacheKey, { at: Date.now(), price: holding.current_price, data });
   return data;
 }
 
@@ -83,7 +108,7 @@ export async function enrichHoldingsWithAdvisor(profileId, holdings, options = {
   const advisorRows = await mapPool(
     eligible,
     (h) => resolveHoldingAdvisor(profileId, h, options),
-    4,
+    options.concurrency ?? 4,
   );
   const byTicker = new Map(eligible.map((h, i) => [h.ticker.toUpperCase(), advisorRows[i]]));
   return holdings.map((h) => {
@@ -96,4 +121,5 @@ export async function enrichHoldingsWithAdvisor(profileId, holdings, options = {
 
 export function clearAdvisorCache() {
   advisorCache.clear();
+  historyCache.clear();
 }

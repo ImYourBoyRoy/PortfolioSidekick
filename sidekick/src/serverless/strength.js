@@ -7,6 +7,8 @@
  * Created by: Roy Dawson IV
  */
 
+import { fetchYahooDaySnapshot } from './yahooQuotes.js';
+
 // Master 35 Ticker Universe
 const ASSET_UNIVERSE = [
   // Technology
@@ -231,6 +233,9 @@ export async function calculateLiveMarketStrength(timeframe = 'day', sector = 'a
   }
 
   const universe = ASSET_UNIVERSE.filter((a) => sec === 'all' || a.sectors.includes(sec));
+  const syntheticByTicker = new Map(
+    calculateMarketStrength('day', 'all').all_assets.map((a) => [a.ticker, a]),
+  );
   const scoredAssets = [];
   let liveHits = 0;
 
@@ -239,7 +244,6 @@ export async function calculateLiveMarketStrength(timeframe = 'day', sector = 'a
     const snaps = await Promise.all(
       batch.map(async (asset) => {
         try {
-          const { fetchYahooDaySnapshot } = await import('./yahooQuotes.js');
           return await fetchYahooDaySnapshot(asset.ticker);
         } catch {
           return null;
@@ -264,7 +268,7 @@ export async function calculateLiveMarketStrength(timeframe = 'day', sector = 'a
           live: true,
         });
       } else {
-        const fallback = calculateMarketStrength('day', 'all').all_assets.find((a) => a.ticker === asset.ticker);
+        const fallback = syntheticByTicker.get(asset.ticker);
         if (fallback) scoredAssets.push({ ...fallback, live: false });
       }
     }

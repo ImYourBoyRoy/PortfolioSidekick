@@ -4,10 +4,10 @@
  * Created by: Roy Dawson IV
  */
 import { X, CheckCircle, Info, AlertOctagon, AlertTriangle } from 'lucide-react';
-import { useSidekick } from '../context/SidekickContext';
+import { useShell } from '../context/SidekickContext';
 
 export default function ToastStack() {
-  const s = useSidekick();
+  const s = useShell();
 
   return (
       <div className="toast-container">

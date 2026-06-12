@@ -5,6 +5,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: './',
+  build: {
+    // Tauri/Capacitor ship a single app bundle; serverless engine is intentionally in the main chunk.
+    chunkSizeWarningLimit: 700,
+  },
   server: {
     proxy: {
       '/robinhood-api': {

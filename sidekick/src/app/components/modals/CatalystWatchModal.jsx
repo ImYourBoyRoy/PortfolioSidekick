@@ -3,7 +3,7 @@
  * Add or edit a forward-looking catalyst watch on a holding.
  */
 import { X, Calendar, Link2, Sparkles } from 'lucide-react';
-import { useSidekick } from '../../context/SidekickContext';
+import { useShell, useOracle } from '../../context/SidekickContext';
 
 const BIAS_OPTIONS = [
   { id: 'bullish', label: 'Bullish — prep to add / hold through' },
@@ -12,13 +12,14 @@ const BIAS_OPTIONS = [
 ];
 
 export default function CatalystWatchModal() {
-  const s = useSidekick();
-  if (!s.catalystModalOpen) return null;
+  const { catalystModalOpen, loading } = useShell();
+  const o = useOracle();
+  if (!catalystModalOpen) return null;
 
-  const form = s.catalystForm;
+  const form = o.catalystForm;
 
   return (
-    <div className="modal-overlay" onClick={() => s.closeCatalystModal()}>
+    <div className="modal-overlay" onClick={() => o.closeCatalystModal()}>
       <div className="modal-content glass-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
         <div className="modal-header">
           <div>
@@ -30,13 +31,13 @@ export default function CatalystWatchModal() {
               Forward event overlay. Softens Abort signals when enabled — technicals stay visible.
             </p>
           </div>
-          <button type="button" className="btn-icon" onClick={() => s.closeCatalystModal()} aria-label="Close">
+          <button type="button" className="btn-icon" onClick={() => o.closeCatalystModal()} aria-label="Close">
             <X style={{ width: 16, height: 16 }} />
           </button>
         </div>
 
         <form
-          onSubmit={s.handleSaveCatalystWatch}
+          onSubmit={o.handleSaveCatalystWatch}
           style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}
         >
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
@@ -44,7 +45,7 @@ export default function CatalystWatchModal() {
             <input
               type="text"
               value={form.title}
-              onChange={(e) => s.setCatalystForm((f) => ({ ...f, title: e.target.value }))}
+              onChange={(e) => o.setCatalystForm((f) => ({ ...f, title: e.target.value }))}
               placeholder="e.g. SpaceX IPO — innovation ETF sentiment lift"
               required
               style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border-light)', background: 'rgba(0,0,0,0.2)', color: '#fff', fontSize: '12px' }}
@@ -58,7 +59,7 @@ export default function CatalystWatchModal() {
             <input
               type="date"
               value={form.event_date || ''}
-              onChange={(e) => s.setCatalystForm((f) => ({ ...f, event_date: e.target.value || null }))}
+              onChange={(e) => o.setCatalystForm((f) => ({ ...f, event_date: e.target.value || null }))}
               style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border-light)', background: 'rgba(0,0,0,0.2)', color: '#fff', fontSize: '12px' }}
             />
           </label>
@@ -72,7 +73,7 @@ export default function CatalystWatchModal() {
                     type="radio"
                     name="catalyst-bias"
                     checked={form.bias === opt.id}
-                    onChange={() => s.setCatalystForm((f) => ({ ...f, bias: opt.id }))}
+                    onChange={() => o.setCatalystForm((f) => ({ ...f, bias: opt.id }))}
                   />
                   {opt.label}
                 </label>
@@ -87,7 +88,7 @@ export default function CatalystWatchModal() {
             <input
               type="text"
               value={form.associated_tickers}
-              onChange={(e) => s.setCatalystForm((f) => ({ ...f, associated_tickers: e.target.value }))}
+              onChange={(e) => o.setCatalystForm((f) => ({ ...f, associated_tickers: e.target.value }))}
               placeholder="SPCX, TSLA, QQQ"
               style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border-light)', background: 'rgba(0,0,0,0.2)', color: '#fff', fontSize: '12px' }}
             />
@@ -100,7 +101,7 @@ export default function CatalystWatchModal() {
             Notes
             <textarea
               value={form.notes}
-              onChange={(e) => s.setCatalystForm((f) => ({ ...f, notes: e.target.value }))}
+              onChange={(e) => o.setCatalystForm((f) => ({ ...f, notes: e.target.value }))}
               rows={3}
               placeholder="Thesis, sizing plan, what would invalidate the trade…"
               style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border-light)', background: 'rgba(0,0,0,0.2)', color: '#fff', fontSize: '12px', resize: 'vertical' }}
@@ -111,20 +112,20 @@ export default function CatalystWatchModal() {
             <input
               type="checkbox"
               checked={form.soften_abort}
-              onChange={(e) => s.setCatalystForm((f) => ({ ...f, soften_abort: e.target.checked }))}
+              onChange={(e) => o.setCatalystForm((f) => ({ ...f, soften_abort: e.target.checked }))}
             />
             Soften Abort zone while catalyst is active (show as Catalyst Hold)
           </label>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-            <button type="submit" className="btn-base btn-primary" disabled={s.loading}>
+            <button type="submit" className="btn-base btn-primary" disabled={loading}>
               Save Catalyst Watch
             </button>
             {form.id && (
               <button
                 type="button"
                 className="btn-base btn-secondary btn-danger"
-                onClick={() => s.handleDeleteCatalystWatch(form.id)}
+                onClick={() => o.handleDeleteCatalystWatch(form.id)}
               >
                 Remove
               </button>

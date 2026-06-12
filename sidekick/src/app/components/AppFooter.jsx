@@ -3,12 +3,13 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
-import { useSidekick } from '../context/SidekickContext';
+import { useProfiles, usePortfolio } from '../context/SidekickContext';
 
 export default function AppFooter() {
-  const s = useSidekick();
-  const isLinked = s.hasCachedRobinhoodSession || Boolean(s.activeProfile?.robinhood_username);
-  const isLive = isLinked && !s.isSandbox;
+  const { activeProfile } = useProfiles();
+  const { hasCachedRobinhoodSession, isSandbox } = usePortfolio();
+  const isLinked = hasCachedRobinhoodSession || Boolean(activeProfile?.robinhood_username);
+  const isLive = isLinked && !isSandbox;
 
   return (
       <footer className="app-footer">

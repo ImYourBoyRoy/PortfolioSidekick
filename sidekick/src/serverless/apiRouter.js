@@ -26,6 +26,15 @@ import {
   robinhoodStatus,
   robinhoodSyncHoldings,
 } from './robinhoodAuth';
+import { buildInvestorBrief, refreshMacroBriefCache } from './marketBrief.js';
+import { processDueScorecards } from './oracleScorecard.js';
+import {
+  createCatalystId,
+  normalizeTickerList,
+  findCatalystForTicker,
+  computeForwardOutlook,
+} from './catalystWatch.js';
+import { parseJsonBody, badJsonResponse, notFoundResponse } from './apiHelpers.js';
 
 function pluginErrorMessage(err, fallback) {
   if (!err) return fallback;
@@ -42,7 +51,8 @@ export async function serverlessApiFetch(path, options = {}) {
   const params = new URLSearchParams(path.includes('?') ? path.split('?')[1] : '');
 
   if (base === '/api/auth/login' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     let data;
     try {
       data = await robinhoodLogin(
@@ -59,7 +69,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/auth/logout' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     let data;
     try {
       data = await robinhoodLogout(body.profile_id);
@@ -81,7 +92,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/portfolio/sync' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     try {
       const data = await robinhoodSyncHoldings(body.profile_id);
       if (data.holdings && Array.isArray(data.holdings)) {
@@ -133,7 +145,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/profiles' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const created = localDb.createProfile(body.name);
     return { ok: true, status: 200, json: async () => created };
   }
@@ -147,7 +160,9 @@ export async function serverlessApiFetch(path, options = {}) {
 
   if (base === '/api/portfolio/holdings' && method === 'GET') {
     const profileId = parseInt(params.get('profile_id') || '0', 10);
-    const payload = await refreshPortfolioPrices(profileId);
+    const pulse = params.get('pulse') === '1';
+    const forceAdvisor = params.get('force_advisor') === '1';
+    const payload = await refreshPortfolioPrices(profileId, { pulse, forceAdvisor });
     return { ok: true, status: 200, json: async () => payload };
   }
 
@@ -180,7 +195,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/portfolio/holdings' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     let price = body.current_price;
     if (!(Number(price) > 0)) {
       const quoted = await fetchPublicQuote(body.ticker);
@@ -201,7 +217,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/portfolio/holdings/hide' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const profileId = parseInt(body.profile_id || '0', 10);
     const ticker = String(body.ticker || '').toUpperCase().trim();
     if (!profileId || !ticker) {
@@ -212,7 +229,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/portfolio/holdings/unhide' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const profileId = parseInt(body.profile_id || '0', 10);
     const ticker = String(body.ticker || '').toUpperCase().trim();
     if (!profileId || !ticker) {
@@ -232,7 +250,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/portfolio/holdings/clear' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const rows = localDb.getHoldings(body.profile_id);
     for (const h of rows) {
       localDb.updateHolding(body.profile_id, h.ticker, 0, h.avg_buy_price, h.current_price);
@@ -256,7 +275,6 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/market/brief/refresh' && method === 'POST') {
-    const { refreshMacroBriefCache } = await import('./marketBrief.js');
     const row = await refreshMacroBriefCache(localDb);
     return { ok: true, status: 200, json: async () => ({ status: 'success', cache: row }) };
   }
@@ -270,12 +288,12 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/oracle/scorecards/process' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const profileId = parseInt(body.profile_id || '0', 10);
     if (!profileId) {
       return { ok: false, status: 400, json: async () => ({ detail: 'profile_id required' }) };
     }
-    const { processDueScorecards } = await import('./oracleScorecard.js');
     const snapshots = localDb.getOracleSnapshots(profileId);
     const livePrices = body.live_prices || {};
     const { snapshots: updated, scorecards: newCards } = processDueScorecards(snapshots, livePrices);
@@ -336,7 +354,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/advisor/evolve' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const history = await fetchPublicHistoricalPrices(body.ticker, 'year');
     const res = evolveWeights(body.profile_id, body.ticker, history);
     return { ok: true, status: 200, json: async () => res };
@@ -349,7 +368,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/watchlist' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     localDb.addToWatchlist(body.profile_id, body.ticker, body.notes || '');
     return { ok: true, status: 200, json: async () => ({ status: 'success', ticker: body.ticker }) };
   }
@@ -369,7 +389,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/guesses' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const price = await fetchPublicQuote(body.ticker);
     const guess = localDb.createGuess(body.profile_id, body.ticker, body.target_price, price, body.timeframe_days);
     return { ok: true, status: 200, json: async () => ({ status: 'success', guess_id: guess.id }) };
@@ -395,7 +416,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/shadow-coach/actions' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const row = localDb.logAction(
       body.profile_id,
       body.action_type,
@@ -453,7 +475,6 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/market/brief' && method === 'GET') {
-    const { buildInvestorBrief } = await import('./marketBrief.js');
     return { ok: true, status: 200, json: async () => buildInvestorBrief() };
   }
 
@@ -466,12 +487,12 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/catalyst-watches' && method === 'POST') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const profileId = parseInt(body.profile_id || '0', 10);
     if (!profileId || !body.ticker) {
       return { ok: false, status: 400, json: async () => ({ detail: 'profile_id and ticker required' }) };
     }
-    const { createCatalystId, normalizeTickerList } = await import('./catalystWatch.js');
     const row = localDb.saveCatalystWatch(profileId, {
       id: body.id || createCatalystId(),
       profile_id: profileId,
@@ -488,7 +509,8 @@ export async function serverlessApiFetch(path, options = {}) {
   }
 
   if (base === '/api/catalyst-watches' && method === 'DELETE') {
-    const body = JSON.parse(options.body || '{}');
+    const body = parseJsonBody(options.body);
+    if (body === null) return badJsonResponse();
     const profileId = parseInt(body.profile_id || '0', 10);
     const watchId = body.id;
     if (!profileId || !watchId) {
@@ -501,7 +523,6 @@ export async function serverlessApiFetch(path, options = {}) {
   if (base === '/api/catalyst-watches/outlook' && method === 'GET') {
     const profileId = parseInt(params.get('profile_id') || '0', 10);
     const ticker = String(params.get('ticker') || '').toUpperCase();
-    const { findCatalystForTicker, computeForwardOutlook } = await import('./catalystWatch.js');
     const watches = localDb.getCatalystWatches(profileId);
     const catalyst = findCatalystForTicker(watches, ticker);
     const holding = localDb.getHoldings(profileId).find((h) => h.ticker === ticker);
@@ -518,5 +539,5 @@ export async function serverlessApiFetch(path, options = {}) {
     return { ok: true, status: 200, json: async () => outlook };
   }
 
-  throw new Error(`Serverless route not implemented: ${method} ${path}`);
+  return notFoundResponse(method, base);
 }

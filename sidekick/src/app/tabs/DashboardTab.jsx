@@ -24,9 +24,7 @@ export default function DashboardTab() {
   const isRobinhoodLinked = s.hasCachedRobinhoodSession
     || Boolean(s.activeProfile?.robinhood_username);
   const restoringPortfolio = s.holdings.length === 0 && (
-    s.portfolioBootstrapping
-    || s.syncing
-    || (isRobinhoodLinked && !s.isSandbox && !s.lastSyncTime)
+    s.portfolioBootstrapping || s.syncing || s.holdingsLoading || !s.holdingsHydrated
   );
   const showLinkedEmpty = s.holdings.length === 0 && !restoringPortfolio && isRobinhoodLinked && !s.isSandbox;
   const showOnboardingHero = s.holdings.length === 0 && !restoringPortfolio && !isRobinhoodLinked;
@@ -39,10 +37,12 @@ export default function DashboardTab() {
                 <RefreshCw className="animate-spin" style={{ width: 32, height: 32, color: '#34d399' }} />
               </div>
               <h2 style={{ fontSize: '1.5rem', fontWeight: '950', color: '#fff', margin: 0 }}>
-                Restoring Your Portfolio
+                {s.syncing ? 'Syncing Your Portfolio' : 'Loading Your Portfolio'}
               </h2>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', maxWidth: '480px', lineHeight: '1.6', margin: 0 }}>
-                A secure Robinhood session is already saved on this device. We are loading holdings and refreshing live quotes — no need to sign in again.
+                {s.syncing
+                  ? 'Importing stock and ETF positions from Robinhood and refreshing live quotes. This may take a few seconds.'
+                  : 'A secure Robinhood session is already saved on this device. We are loading holdings and refreshing live quotes — no need to sign in again.'}
               </p>
               <p style={{ fontSize: '10px', color: 'var(--text-muted)', margin: 0 }}>
                 On slower systems this can take a few seconds. Please wait before tapping Connect or Sync.

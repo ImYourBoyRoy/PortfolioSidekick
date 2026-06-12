@@ -3,7 +3,7 @@
  * Macro investor brief — this week's events, themes, and portfolio-specific alerts.
  */
 import { Calendar, AlertTriangle, Sparkles, TrendingUp, Radio } from 'lucide-react';
-import { useSidekick } from '../context/SidekickContext';
+import { useOracle, usePortfolio } from '../context/SidekickContext';
 
 const CATEGORY_COLORS = {
   ipo: '#a78bfa',
@@ -16,8 +16,9 @@ const CATEGORY_COLORS = {
 };
 
 export default function InvestorBriefPanel({ compact = false }) {
-  const s = useSidekick();
-  const brief = s.investorBrief;
+  const o = useOracle();
+  const { holdings } = usePortfolio();
+  const brief = o.investorBrief;
   if (!brief?.events?.length) return null;
 
   return (
@@ -101,14 +102,14 @@ export default function InvestorBriefPanel({ compact = false }) {
         })}
       </div>
 
-      {s.portfolioMacroAlerts?.length > 0 && (
+      {o.portfolioMacroAlerts?.length > 0 && (
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
           <h4 style={{ margin: '0 0 8px', fontSize: '10px', fontWeight: 900, color: '#fbbf24', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 6 }}>
             <AlertTriangle style={{ width: 12, height: 12 }} />
             Your holdings in the crosshairs
           </h4>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {s.portfolioMacroAlerts.slice(0, compact ? 4 : 8).map((a) => (
+            {o.portfolioMacroAlerts.slice(0, compact ? 4 : 8).map((a) => (
               <div key={a.ticker} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', fontSize: '10px' }}>
                 <span style={{ fontWeight: 800, color: '#fff' }}>{a.ticker}</span>
                 <span style={{ color: 'var(--text-muted)', flex: 1, minWidth: 120 }}>
@@ -122,8 +123,8 @@ export default function InvestorBriefPanel({ compact = false }) {
                   className="zone-action-btn"
                   style={{ fontSize: '9px', padding: '4px 8px', color: '#c4b5fd' }}
                   onClick={() => {
-                    const sug = s.suggestCatalystFromMacro(a.ticker);
-                    s.openCatalystModal(a.ticker, sug);
+                    const sug = o.suggestCatalystFromMacro(a.ticker);
+                    o.openCatalystModal(a.ticker, sug);
                   }}
                 >
                   <Sparkles style={{ width: 10, height: 10 }} />
@@ -135,7 +136,7 @@ export default function InvestorBriefPanel({ compact = false }) {
         </div>
       )}
 
-      {!compact && s.holdings.length > 0 && (
+      {!compact && holdings.length > 0 && (
         <p style={{ margin: '12px 0 0', fontSize: '9.5px', color: 'var(--text-muted)', lineHeight: 1.5, display: 'flex', alignItems: 'flex-start', gap: 6 }}>
           <TrendingUp style={{ width: 12, height: 12, flexShrink: 0, marginTop: 1, color: '#34d399' }} />
           Sidekick blends live technical conviction with this macro calendar in Strategy → Forward Prep. Add a Catalyst Watch to override Abort when you disagree with the tape.

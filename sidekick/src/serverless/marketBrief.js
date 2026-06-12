@@ -6,6 +6,9 @@
  * Created by: Roy Dawson IV
  */
 
+import bundledMacroBrief from './macroBrief.bundle.json';
+import { nativeHttpGetText } from './nativeHttp.js';
+
 const MS_DAY = 86400000;
 
 /** @typedef {'ipo'|'fed'|'inflation'|'earnings'|'options'|'geopolitical'|'sector'} MacroCategory */
@@ -51,7 +54,7 @@ export function applyMacroBriefPayload(payload) {
  * @param {import('./database').localDb} [db]
  */
 export async function refreshMacroBriefCache(db) {
-  const bundled = await import('./macroBrief.bundle.json').then((m) => m.default || m).catch(() => null);
+  const bundled = bundledMacroBrief;
   if (bundled?.events?.length) {
     applyMacroBriefPayload(bundled);
     if (db?.saveMacroBriefCache) {
@@ -66,17 +69,7 @@ export async function refreshMacroBriefCache(db) {
   }
 
   try {
-    const { Capacitor } = await import('@capacitor/core');
-    let text;
-    if (Capacitor.isNativePlatform()) {
-      const { CapacitorHttp } = await import('@capacitor/core');
-      const res = await CapacitorHttp.get({ url: MACRO_BRIEF_REMOTE_URL, connectTimeout: 20000, readTimeout: 20000 });
-      text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-    } else {
-      const res = await fetch(MACRO_BRIEF_REMOTE_URL, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      text = await res.text();
-    }
+    const text = await nativeHttpGetText(MACRO_BRIEF_REMOTE_URL, { timeoutMs: 20000 });
     const remote = JSON.parse(text);
     if (remote?.events?.length) {
       applyMacroBriefPayload(remote);

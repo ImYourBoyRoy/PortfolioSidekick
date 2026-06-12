@@ -5,15 +5,17 @@
  */
 import { useEffect, useState } from 'react';
 import { Brain } from 'lucide-react';
-import { useSidekick } from '../context/SidekickContext';
+import { usePortfolio } from '../context/SidekickContext';
 
 const CANCEL_AFTER_MS = 60_000;
 
 export default function SyncOverlay() {
-  const s = useSidekick();
+  const {
+    portfolioBootstrapping, syncing, syncStepIndex, cancelSync,
+  } = usePortfolio();
   const [cancelReady, setCancelReady] = useState(false);
 
-  const isBootstrap = s.portfolioBootstrapping && !s.syncing;
+  const isBootstrap = portfolioBootstrapping && !syncing;
 
   useEffect(() => {
     const timer = setTimeout(() => setCancelReady(true), CANCEL_AFTER_MS);
@@ -48,11 +50,11 @@ export default function SyncOverlay() {
 
         {!isBootstrap && (
           <p className="sync-step-fade-text">
-            {s.syncStepIndex === 0 && 'Securing encrypted network tunnel to Robinhood APIs...'}
-            {s.syncStepIndex === 1 && 'Authenticating local session with secure challenge tokens...'}
-            {s.syncStepIndex === 2 && 'Retrieving portfolio asset positions and historical metrics...'}
-            {s.syncStepIndex === 3 && 'Calibrating Multi-Horizon quantitative Trade Viability Oracle...'}
-            {s.syncStepIndex === 4 && 'Synthesizing AI coaching insights in local Shadow Coach DB...'}
+            {syncStepIndex === 0 && 'Securing encrypted network tunnel to Robinhood APIs...'}
+            {syncStepIndex === 1 && 'Authenticating local session with secure challenge tokens...'}
+            {syncStepIndex === 2 && 'Retrieving portfolio asset positions and historical metrics...'}
+            {syncStepIndex === 3 && 'Calibrating Multi-Horizon quantitative Trade Viability Oracle...'}
+            {syncStepIndex === 4 && 'Synthesizing AI coaching insights in local Shadow Coach DB...'}
           </p>
         )}
 
@@ -64,7 +66,7 @@ export default function SyncOverlay() {
           <button
             type="button"
             className="sync-overlay-cancel-btn"
-            onClick={() => s.cancelSync()}
+            onClick={() => cancelSync()}
           >
             Cancel sync
           </button>

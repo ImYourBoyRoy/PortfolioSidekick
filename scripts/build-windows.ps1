@@ -55,6 +55,11 @@ if (-not $failed) {
 }
 
 if (-not $failed) {
+    npm run test
+    if ($LASTEXITCODE -ne 0) { $failed = $true }
+}
+
+if (-not $failed) {
     npm run build
     if ($LASTEXITCODE -ne 0) { $failed = $true }
 }

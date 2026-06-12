@@ -14,6 +14,7 @@ import { migrateFromLocalStorage } from './migrateFromLocalStorage.js';
 let sqlDb = null;
 let initPromise = null;
 let persistTimer = null;
+const PERSIST_DEBOUNCE_MS = 2500;
 
 function schedulePersist() {
   if (!sqlDb) return;
@@ -25,7 +26,7 @@ function schedulePersist() {
     } catch (err) {
       console.error('[SQLite] Persist failed:', err);
     }
-  }, 400);
+  }, PERSIST_DEBOUNCE_MS);
 }
 
 function applySchema(db) {

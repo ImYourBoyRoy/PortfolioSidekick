@@ -4,10 +4,10 @@
  * Created by: Roy Dawson IV
  */
 import { Plus, Brain } from 'lucide-react';
-import { useSidekick } from '../context/SidekickContext';
+import { useProfiles } from '../context/SidekickContext';
 
 export default function WelcomeScreen() {
-  const s = useSidekick();
+  const s = useProfiles();
 
   return (
       <div className="app-container" style={{ display: 'flex', minHeight: '85vh', alignItems: 'center', justifyContent: 'center' }}>

@@ -11,7 +11,26 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-function parseJsonText(text) {
+/** CapacitorHttp may return pre-parsed JSON objects instead of raw strings. */
+export function coerceHttpBodyToText(raw) {
+  if (typeof raw === 'string') return raw;
+  if (raw === null || raw === undefined) return '';
+  if (typeof raw === 'object' && !(raw instanceof ArrayBuffer)) {
+    try {
+      return JSON.stringify(raw);
+    } catch {
+      return String(raw);
+    }
+  }
+  return String(raw);
+}
+
+/** @returns {object|null} */
+export function parseHttpJsonBody(raw) {
+  if (raw !== null && typeof raw === 'object' && !(raw instanceof ArrayBuffer)) {
+    return raw;
+  }
+  const text = coerceHttpBodyToText(raw);
   if (!text) return null;
   try {
     return JSON.parse(text);
@@ -161,7 +180,7 @@ export class NativeHttpSession {
  */
 export async function nativeHttpGetText(url, { timeoutMs = 45000, headers = {} } = {}) {
   const res = await nativeRequest('GET', url, { timeoutMs, headers, responseType: 'text' });
-  return typeof res.data === 'string' ? res.data : String(res.data ?? '');
+  return coerceHttpBodyToText(res.data);
 }
 
 /**
@@ -202,8 +221,16 @@ export async function nativeHttpPostForm(url, formData, { timeoutMs = 45000, hea
  * @param {{ timeoutMs?: number, headers?: Record<string,string> }} [options]
  */
 export async function nativeHttpGet(url, { timeoutMs = 45000, headers = {} } = {}) {
-  const text = await nativeHttpGetText(url, { timeoutMs, headers });
-  const data = parseJsonText(text);
-  if (data === null) throw new Error(`Invalid JSON from ${url}`);
+  const res = await nativeRequest('GET', url, { timeoutMs, headers, responseType: 'text' });
+  const data = parseHttpJsonBody(res.data);
+  if (data === null) {
+    const text = coerceHttpBodyToText(res.data).trim();
+    const snippet = text.slice(0, 160);
+    throw new Error(
+      snippet.startsWith('<')
+        ? `Non-JSON response from ${url}`
+        : `Invalid JSON from ${url}${snippet ? `: ${snippet}` : ''}`,
+    );
+  }
   return data;
 }

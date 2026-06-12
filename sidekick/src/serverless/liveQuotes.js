@@ -168,16 +168,73 @@ async function refreshWithRhFirst(profileId, rows, rhBatchPrices = {}, authentic
   return { rhApplied, yahooApplied };
 }
 
+const lastAdvisorSnapshot = new Map();
+
+function advisorFieldsFromHolding(h) {
+  return {
+    advisor_score: h.advisor_score ?? null,
+    advisor_action: h.advisor_action ?? null,
+    advisor_is_estimate: h.advisor_is_estimate === true,
+    advisor_unavailable: h.advisor_unavailable === true,
+    advisor_reason: h.advisor_reason ?? null,
+  };
+}
+
+function mergePulseAdvisor(preAdvisor, profileId) {
+  const snap = lastAdvisorSnapshot.get(profileId);
+  if (!snap || Date.now() - snap.at > 5 * 60 * 1000) return null;
+  return preAdvisor.map((h) => ({
+    ...h,
+    ...(snap.byTicker.get(h.ticker.toUpperCase()) || unavailableAdvisorFields()),
+  }));
+}
+
+function unavailableAdvisorFields() {
+  return {
+    advisor_score: null,
+    advisor_action: null,
+    advisor_is_estimate: false,
+    advisor_unavailable: true,
+    advisor_reason: 'Advisor refresh deferred during quote pulse.',
+  };
+}
+
+function storeAdvisorSnapshot(profileId, portfolio) {
+  lastAdvisorSnapshot.set(profileId, {
+    at: Date.now(),
+    byTicker: new Map(portfolio.map((h) => [h.ticker.toUpperCase(), advisorFieldsFromHolding(h)])),
+  });
+}
+
+const pulseRefreshInFlight = new Map();
+
 /**
  * Refresh holding prices and build portfolio summary aligned with Robinhood net equity when linked.
+ * @param {number} profileId
+ * @param {{ pulse?: boolean, forceAdvisor?: boolean }} [options]
  */
-export async function refreshPortfolioPrices(profileId) {
+export async function refreshPortfolioPrices(profileId, options = {}) {
+  if (options.pulse) {
+    const inflight = pulseRefreshInFlight.get(profileId);
+    if (inflight) return inflight;
+  }
+  const task = refreshPortfolioPricesInner(profileId, options);
+  if (options.pulse) {
+    pulseRefreshInFlight.set(profileId, task);
+    task.finally(() => {
+      if (pulseRefreshInFlight.get(profileId) === task) pulseRefreshInFlight.delete(profileId);
+    });
+  }
+  return task;
+}
+
+async function refreshPortfolioPricesInner(profileId, options = {}) {
   const hiddenTickers = new Set(localDb.getHiddenTickers(profileId));
   const rows = localDb.getHoldings(profileId).filter((h) => !hiddenTickers.has(h.ticker.toUpperCase()));
   let authState = { authenticated: false };
   try {
     authState = await resolveActiveRobinhoodSession(profileId);
-    if (!authState.authenticated) {
+    if (!authState.authenticated && !options.pulse) {
       const profile = localDb.getProfiles().find((p) => p.id === profileId);
       if (profile?.robinhood_username) {
         const ready = await waitForRobinhoodSession(profileId, 10, 200);
@@ -292,7 +349,17 @@ export async function refreshPortfolioPrices(profileId) {
     });
   }
 
-  const portfolio = await enrichHoldingsWithAdvisor(profileId, preAdvisor);
+  let portfolio = null;
+  if (options.pulse && !options.forceAdvisor) {
+    portfolio = mergePulseAdvisor(preAdvisor, profileId);
+  }
+  if (!portfolio) {
+    portfolio = await enrichHoldingsWithAdvisor(profileId, preAdvisor, {
+      force: options.forceAdvisor === true,
+      concurrency: options.pulse ? 2 : 4,
+    });
+    storeAdvisorSnapshot(profileId, portfolio);
+  }
   const positionPnl = round2(
     portfolio.reduce((sum, h) => sum + (Number.isFinite(h.pnl) ? h.pnl : 0), 0),
   );

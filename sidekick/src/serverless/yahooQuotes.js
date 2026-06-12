@@ -6,7 +6,7 @@
  * Created by: Roy Dawson IV
  */
 
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 const YAHOO_QUOTE_HEADERS = {
   Accept: 'application/json',
@@ -48,7 +48,6 @@ export async function fetchYahooChartJson(url) {
   }
 
   if (Capacitor.isNativePlatform()) {
-    const { CapacitorHttp } = await import('@capacitor/core');
     const res = await CapacitorHttp.get({
       url,
       headers: YAHOO_QUOTE_HEADERS,

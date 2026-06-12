@@ -9,6 +9,9 @@ import { hasAdvisorScore } from '../utils/holdingDisplay';
 
 export default function StrategyTab() {
   const s = useSidekick();
+  const portfolioSettling = s.holdings.length === 0 && (
+    s.portfolioBootstrapping || s.syncing || s.holdingsLoading || !s.holdingsHydrated
+  );
 
   return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
@@ -170,6 +173,21 @@ export default function StrategyTab() {
 
           {/* Header Description */}
           {s.holdings.length === 0 ? (
+            portfolioSettling ? (
+              <div className="tab-empty-placeholder-card animate-fade-in" style={{ marginTop: 0 }}>
+                <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <RefreshCw className="animate-spin" style={{ width: 28, height: 28, color: '#34d399' }} />
+                </div>
+                <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '950', color: '#fff', letterSpacing: '-0.01em' }}>
+                    {s.syncing ? 'Syncing Your Holdings' : 'Loading Your Holdings'}
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', maxWidth: '480px', lineHeight: '1.6' }}>
+                    Importing positions and advisor data. Strategy tools unlock once holdings are ready.
+                  </p>
+                </div>
+              </div>
+            ) : (
             <div className="tab-empty-placeholder-card animate-fade-in" style={{ marginTop: 0 }}>
               <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(139, 92, 246, 0.05)', border: '1px solid rgba(139, 92, 246, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Sliders className="animate-pulse" style={{ width: 28, height: 28, color: 'var(--color-oracle)' }} />
@@ -202,6 +220,7 @@ export default function StrategyTab() {
                 </button>
               </div>
             </div>
+            )
           ) : (
             <>
               {/* 1. Overall Portfolio Health Score Deck */}

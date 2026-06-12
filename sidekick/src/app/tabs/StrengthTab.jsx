@@ -3,13 +3,16 @@
  * Extracted from App.jsx — state via useSidekick().
  * Created by: Roy Dawson IV
  */
-import { TrendingUp, TrendingDown, ShieldAlert, Plus, X, CheckCircle, Sparkles, AlertOctagon, AlertTriangle, Award, ArrowUpRight, ArrowDownRight, Repeat, Calendar } from 'lucide-react';
+import { TrendingUp, TrendingDown, ShieldAlert, Plus, X, CheckCircle, Sparkles, AlertOctagon, AlertTriangle, Award, ArrowUpRight, ArrowDownRight, Repeat, Calendar, RefreshCw } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
 import { classifyHoldingZone, formatAdvisorScore, hasAdvisorScore } from '../utils/holdingDisplay';
 import { formatCatalystCountdown } from '../../serverless/catalystWatch';
 
 export default function StrengthTab() {
   const s = useSidekick();
+  const portfolioSettling = s.holdings.length === 0 && (
+    s.portfolioBootstrapping || s.syncing || s.holdingsLoading || !s.holdingsHydrated
+  );
 
   return (
         <div className="strength-analyzer-container animate-fade-in">
@@ -29,6 +32,17 @@ export default function StrengthTab() {
             )}
 
             {s.holdings.length === 0 ? (
+              portfolioSettling ? (
+                <div className="tab-empty-placeholder-card" style={{ padding: '32px 16px', textAlign: 'center' }}>
+                  <RefreshCw className="animate-spin" style={{ width: 36, height: 36, color: '#34d399', margin: '0 auto 12px' }} />
+                  <h4 style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-secondary)', margin: '0 0 6px 0' }}>
+                    {s.syncing ? 'Syncing holdings…' : 'Loading holdings…'}
+                  </h4>
+                  <p style={{ fontSize: '11px', color: 'var(--text-muted)', maxWidth: '420px', margin: '0 auto' }}>
+                    Pulling positions and live quotes. This only takes a moment after Robinhood connects.
+                  </p>
+                </div>
+              ) : (
               <div className="tab-empty-placeholder-card" style={{ padding: '32px 16px', textAlign: 'center' }}>
                 <ShieldAlert style={{ width: 36, height: 36, color: 'var(--text-muted)', margin: '0 auto 12px', opacity: 0.4 }} />
                 <h4 style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-secondary)', margin: '0 0 6px 0' }}>No Holdings Found to Analyze</h4>
@@ -44,6 +58,7 @@ export default function StrengthTab() {
                   Seed Sandbox Assets
                 </button>
               </div>
+              )
             ) : (
               <div className="strength-classifier-grid">
                 {/* 🟢 Keep Zone */}
@@ -83,7 +98,7 @@ export default function StrengthTab() {
                                   onClick={() => {
                                     s.setSelectedTicker(h.ticker);
                                     s.setActiveTab("coach");
-                                    s.showToast("info", `Analyzing ${h.ticker} charts...`);
+                                    s.showToast(`Analyzing ${h.ticker} charts...`, 'info');
                                   }}
                                   className="zone-action-btn zone-bracket-btn"
                                 >
@@ -136,7 +151,7 @@ export default function StrengthTab() {
                                   onClick={() => {
                                     s.setSelectedTicker(h.ticker);
                                     s.setActiveTab("strategy");
-                                    s.showToast("info", `Initiating Shift Planner for ${h.ticker}...`);
+                                    s.showToast(`Initiating Shift Planner for ${h.ticker}...`, 'info');
                                   }}
                                   className="zone-action-btn zone-shift-btn"
                                 >
@@ -340,7 +355,7 @@ export default function StrengthTab() {
                           onClick={() => {
                             s.setSelectedTicker(pick.ticker);
                             s.setActiveTab('strategy');
-                            s.showToast('info', `Review shift plan for ${pick.ticker}`);
+                            s.showToast(`Review shift plan for ${pick.ticker}`, 'info');
                           }}
                           className="zone-action-btn zone-shift-btn"
                           style={{ marginLeft: 'auto' }}
@@ -470,7 +485,7 @@ export default function StrengthTab() {
                               <button
                                 onClick={() => {
                                   if (s.sandboxWatchlist.some(w => w.ticker === item.ticker)) {
-                                    s.showToast("warning", `${item.ticker} is already in your Acquisition Sandbox!`);
+                                    s.showToast(`${item.ticker} is already in your Acquisition Sandbox!`, 'warning');
                                     return;
                                   }
                                   const newTarget = {
@@ -480,7 +495,7 @@ export default function StrengthTab() {
                                     targetPrice: item.price
                                   };
                                   s.setSandboxWatchlist(prev => [...prev, newTarget]);
-                                  s.showToast("success", `Added ${item.ticker} to Acquisition Sandbox!`);
+                                  s.showToast(`Added ${item.ticker} to Acquisition Sandbox!`, 'success');
                                 }}
                                 className="ranker-trigger-btn"
                                 title="Add to Sandbox Watchlist"
@@ -528,7 +543,7 @@ export default function StrengthTab() {
                               <button
                                 onClick={() => {
                                   if (s.sandboxWatchlist.some(w => w.ticker === item.ticker)) {
-                                    s.showToast("warning", `${item.ticker} is already in your Acquisition Sandbox!`);
+                                    s.showToast(`${item.ticker} is already in your Acquisition Sandbox!`, 'warning');
                                     return;
                                   }
                                   const newTarget = {
@@ -538,7 +553,7 @@ export default function StrengthTab() {
                                     targetPrice: item.price
                                   };
                                   s.setSandboxWatchlist(prev => [...prev, newTarget]);
-                                  s.showToast("success", `Added ${item.ticker} to Acquisition Sandbox!`);
+                                  s.showToast(`Added ${item.ticker} to Acquisition Sandbox!`, 'success');
                                 }}
                                 className="ranker-trigger-btn"
                                 title="Add to Sandbox Watchlist"
@@ -586,11 +601,11 @@ export default function StrengthTab() {
                   <button
                     onClick={async () => {
                       if (!s.newSandboxTicker.trim()) {
-                        s.showToast("error", "Please specify a ticker.");
+                        s.showToast('Please specify a ticker.', 'error');
                         return;
                       }
                       if (s.sandboxWatchlist.some(w => w.ticker === s.newSandboxTicker)) {
-                        s.showToast("warning", `${s.newSandboxTicker} is already in your Acquisition Sandbox.`);
+                        s.showToast(`${s.newSandboxTicker} is already in your Acquisition Sandbox.`, 'warning');
                         return;
                       }
                       try {
@@ -614,9 +629,9 @@ export default function StrengthTab() {
                         s.setSandboxWatchlist(prev => [...prev, newTarget]);
                         s.setNewSandboxTicker("");
                         s.setNewSandboxTargetPrice("");
-                        s.showToast("success", `Added ${newTarget.ticker} to Acquisition Sandbox!`);
+                        s.showToast(`Added ${newTarget.ticker} to Acquisition Sandbox!`, 'success');
                       } catch (err) {
-                        s.showToast("error", `Failed to resolve ticker details: ${err.message}`);
+                        s.showToast(`Failed to resolve ticker details: ${err.message}`, 'error');
                       }
                     }}
                     className="btn-base btn-primary sandbox-add-btn"
@@ -665,7 +680,7 @@ export default function StrengthTab() {
                               <button
                                 onClick={() => {
                                   s.setSandboxWatchlist(prev => prev.filter(w => w.ticker !== item.ticker));
-                                  s.showToast("info", `Removed ${item.ticker} from sandbox.`);
+                                  s.showToast(`Removed ${item.ticker} from sandbox.`, 'info');
                                 }}
                                 className="sandbox-delete-btn"
                               >
@@ -759,11 +774,11 @@ export default function StrengthTab() {
                         <button
                           onClick={() => {
                             if (totalCapitalToShift === 0) {
-                              s.showToast("warning", "No weak holdings found to shift from.");
+                              s.showToast('No weak holdings found to shift from.', 'warning');
                               return;
                             }
                             s.setActiveTab("strategy");
-                            s.showToast("success", "Loaded vulnerable holdings into Shift Planner!");
+                            s.showToast('Loaded vulnerable holdings into Shift Planner!', 'success');
                           }}
                           className="btn-base btn-primary font-size-btn"
                           style={{ width: '100%', marginTop: 8 }}

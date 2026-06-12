@@ -336,6 +336,9 @@ try {
         Write-Host "`n[2/8] lint" -ForegroundColor Yellow
         npm run lint
         if ($LASTEXITCODE -ne 0) { throw "lint failed" }
+        Write-Host "`n[2b/8] unit tests" -ForegroundColor Yellow
+        npm run test
+        if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
     } else {
         Write-Host "`n[2/8] lint skipped" -ForegroundColor Gray
     }

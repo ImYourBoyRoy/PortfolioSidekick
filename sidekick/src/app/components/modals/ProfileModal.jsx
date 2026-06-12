@@ -4,18 +4,19 @@
  * Created by: Roy Dawson IV
  */
 import { User, X } from 'lucide-react';
-import { useSidekick } from '../../context/SidekickContext';
+import { useShell, useProfiles } from '../../context/SidekickContext';
 
 export default function ProfileModal() {
-  const s = useSidekick();
+  const shell = useShell();
+  const s = useProfiles();
 
-  if (!s.isProfileModalOpen) return null;
+  if (!shell.isProfileModalOpen) return null;
 
   return (
         <div className="modal-overlay">
           <div className="glass-card modal-card">
             <button 
-              onClick={() => s.setIsProfileModalOpen(false)}
+              onClick={() => shell.setIsProfileModalOpen(false)}
               className="modal-close-btn"
             >
               <X style={{ width: 18, height: 18 }} />
@@ -31,7 +32,7 @@ export default function ProfileModal() {
 
             <form onSubmit={(e) => {
               e.preventDefault();
-              s.handleCreateProfile(s.modalProfileName, false);
+              s.handleCreateProfile(shell.modalProfileName, false);
             }} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div className="input-group">
                 <label className="input-label">Profile Name</label>
@@ -39,8 +40,8 @@ export default function ProfileModal() {
                   type="text"
                   required
                   placeholder="e.g. Main Portfolio, Swing Account, or Long-Term"
-                  value={s.modalProfileName}
-                  onChange={(e) => s.setModalProfileName(e.target.value)}
+                  value={shell.modalProfileName}
+                  onChange={(e) => shell.setModalProfileName(e.target.value)}
                   className="form-input-text"
                 />
               </div>

@@ -73,6 +73,7 @@ jobs:
           cd sidekick
           npm ci
           npm run lint
+          npm run test
           npm run build
 
       - name: Build Tauri Desktop Bundle
@@ -184,6 +185,7 @@ jobs:
           cd sidekick
           npm ci
           npm run lint
+          npm run test
           npm run build
 
       - name: Initialize Capacitor Android Platform
