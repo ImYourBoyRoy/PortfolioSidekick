@@ -802,42 +802,157 @@ async fn rh_http_request(
 }
 
 #[tauri::command]
-fn ps_launch_update(installer_filename: String) -> Result<String, String> {
-    let safe = sanitize_filename(&installer_filename)?;
-    let path = portable_data_directory()?.join(&safe);
-    if !path.is_file() {
-        return Err(format!("Update file not found: {safe}"));
+fn ps_apply_portable_update(
+    app: tauri::AppHandle,
+    staged_filename: String,
+) -> Result<String, String> {
+    let safe = sanitize_filename(&staged_filename)?;
+    let data_dir = portable_data_directory()?;
+    let staged = data_dir.join(&safe);
+    if !staged.is_file() {
+        return Err(format!("Staged update not found: {safe}"));
     }
+
+    let exe = std::env::current_exe().map_err(|e| format!("Could not resolve executable: {e}"))?;
+    let pid = std::process::id();
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new(&path)
+        let script_path = data_dir.join("apply-portable-update.ps1");
+        let exe_escaped = exe.display().to_string().replace('\'', "''");
+        let staged_escaped = staged.display().to_string().replace('\'', "''");
+        let script = format!(
+            "$ErrorActionPreference = 'Stop'\n\
+$watchPid = {pid}\n\
+$exe = '{exe_escaped}'\n\
+$new = '{staged_escaped}'\n\
+while (Get-Process -Id $watchPid -ErrorAction SilentlyContinue) {{ Start-Sleep -Seconds 1 }}\n\
+Copy-Item -LiteralPath $new -Destination $exe -Force\n\
+Start-Process -FilePath $exe\n\
+Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue\n\
+Remove-Item -LiteralPath $PSCommandPath -Force\n",
+            pid = pid,
+            exe_escaped = exe_escaped,
+            staged_escaped = staged_escaped,
+        );
+        std::fs::write(&script_path, script)
+            .map_err(|e| format!("Failed to write update helper script: {e}"))?;
+        std::process::Command::new("powershell")
+            .arg("-NoProfile")
+            .arg("-WindowStyle")
+            .arg("Hidden")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-File")
+            .arg(&script_path)
             .spawn()
-            .map_err(|e| format!("Failed to launch installer: {e}"))?;
+            .map_err(|e| format!("Failed to start portable update helper: {e}"))?;
     }
 
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open update archive: {e}"))?;
+        let script_path = data_dir.join("apply-portable-update.sh");
+        let exe_escaped = shell_single_quote(&exe.display().to_string());
+        let staged_escaped = shell_single_quote(&staged.display().to_string());
+        let script = format!(
+            "#!/bin/bash\n\
+set -euo pipefail\n\
+PID={pid}\n\
+EXE={exe_escaped}\n\
+STAGED={staged_escaped}\n\
+while kill -0 \"$PID\" 2>/dev/null; do sleep 1; done\n\
+APP=\"$(cd \"$(dirname \"$EXE\")/../../..\" && pwd)\"\n\
+TMP=\"$(mktemp -d)\"\n\
+if [[ \"$STAGED\" == *.zip ]]; then\n\
+  unzip -q -o \"$STAGED\" -d \"$TMP\"\n\
+  NEWAPP=\"$(find \"$TMP\" -name '*.app' -maxdepth 3 | head -1)\"\n\
+  if [[ -z \"$NEWAPP\" ]]; then exit 1; fi\n\
+  rm -rf \"$APP\"\n\
+  ditto \"$NEWAPP\" \"$APP\"\n\
+  open \"$APP\"\n\
+else\n\
+  cp -f \"$STAGED\" \"$EXE\"\n\
+  chmod +x \"$EXE\"\n\
+  open \"$EXE\"\n\
+fi\n\
+rm -rf \"$TMP\"\n\
+rm -f \"$STAGED\" \"$0\"\n",
+            pid = pid,
+            exe_escaped = exe_escaped,
+            staged_escaped = staged_escaped,
+        );
+        write_executable_shell_script(&script_path, &script)?;
+        spawn_detached_shell_script(&script_path)?;
     }
 
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open update archive: {e}"))?;
+        let script_path = data_dir.join("apply-portable-update.sh");
+        let exe_escaped = shell_single_quote(&exe.display().to_string());
+        let staged_escaped = shell_single_quote(&staged.display().to_string());
+        let script = format!(
+            "#!/bin/bash\n\
+set -euo pipefail\n\
+PID={pid}\n\
+EXE={exe_escaped}\n\
+STAGED={staged_escaped}\n\
+while kill -0 \"$PID\" 2>/dev/null; do sleep 1; done\n\
+TMP=\"$(mktemp -d)\"\n\
+if [[ \"$STAGED\" == *.tar.gz ]]; then\n\
+  tar -xzf \"$STAGED\" -C \"$TMP\"\n\
+  BIN=\"$(find \"$TMP\" -type f -perm -u+x | head -1)\"\n\
+  if [[ -z \"$BIN\" ]]; then BIN=\"$(find \"$TMP\" -type f | head -1)\"; fi\n\
+  if [[ -z \"$BIN\" ]]; then exit 1; fi\n\
+  cp -f \"$BIN\" \"$EXE\"\n\
+  chmod +x \"$EXE\"\n\
+else\n\
+  cp -f \"$STAGED\" \"$EXE\"\n\
+  chmod +x \"$EXE\"\n\
+fi\n\
+nohup \"$EXE\" >/dev/null 2>&1 &\n\
+rm -rf \"$TMP\"\n\
+rm -f \"$STAGED\" \"$0\"\n",
+            pid = pid,
+            exe_escaped = exe_escaped,
+            staged_escaped = staged_escaped,
+        );
+        write_executable_shell_script(&script_path, &script)?;
+        spawn_detached_shell_script(&script_path)?;
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
-        return Err("Self-update launch is only supported on desktop platforms.".into());
+        return Err("Portable self-update is only supported on desktop platforms.".into());
     }
 
-    Ok(path.to_string_lossy().to_string())
+    app.exit(0);
+    Ok("Portable update staged. Sidekick will restart with the new build.".into())
+}
+
+#[cfg(unix)]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(unix)]
+fn write_executable_shell_script(path: &std::path::Path, script: &str) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, script).map_err(|e| format!("Failed to write update helper script: {e}"))?;
+    let mut perms = std::fs::metadata(path)
+        .map_err(|e| e.to_string())?
+        .permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn spawn_detached_shell_script(path: &std::path::Path) -> Result<(), String> {
+    std::process::Command::new("/bin/bash")
+        .arg(path)
+        .spawn()
+        .map_err(|e| format!("Failed to start portable update helper: {e}"))?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -862,7 +977,7 @@ pub fn run() {
             rh_desktop_ready,
             rh_robinhood_login,
             rh_http_request,
-            ps_launch_update,
+            ps_apply_portable_update,
         ])
         .setup(|app| {
             if let Ok(data_dir) = portable_data_directory() {

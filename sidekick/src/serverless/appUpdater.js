@@ -1,8 +1,7 @@
 // ./sidekick/src/serverless/appUpdater.js
 /**
- * Download GitHub release artifacts and launch platform installers.
- * Windows/macOS/Linux: save beside portable data/ and open the installer/archive.
- * Android: opens the APK URL in the system browser for sideload install.
+ * Portable self-update — download GitHub release artifacts into data/ and swap
+ * the running binary on restart (desktop). Android opens the APK in the browser.
  *
  * Created by: Roy Dawson IV
  */
@@ -24,6 +23,17 @@ export function sanitizeUpdateFilename(name) {
 }
 
 /**
+ * @param {{ downloadName?: string | null, latestVersion?: string, platform?: string } | null | undefined} updateInfo
+ */
+export function buildStagedUpdateFilename(updateInfo) {
+  const version = String(updateInfo?.latestVersion || 'latest').replace(/^v/i, '');
+  const platform = updateInfo?.platform || 'update';
+  const downloadName = sanitizeUpdateFilename(updateInfo?.downloadName || '');
+  if (downloadName) return `update-staged-${version}-${downloadName}`;
+  return `update-staged-${version}-${platform}`;
+}
+
+/**
  * @param {{ downloadUrl?: string | null, downloadName?: string | null, latestVersion?: string, platform?: string } | null | undefined} updateInfo
  * @param {{ onProgress?: (message: string) => void }} [options]
  */
@@ -31,28 +41,26 @@ export async function downloadAndInstallUpdate(updateInfo, options = {}) {
   const url = updateInfo?.downloadUrl;
   if (!url) throw new Error('No platform download URL — open the GitHub release page instead.');
 
-  const filename = sanitizeUpdateFilename(
-    updateInfo.downloadName || `PortfolioSidekick-${updateInfo.platform || 'update'}-v${updateInfo.latestVersion || 'latest'}`,
-  );
+  const stagedFilename = buildStagedUpdateFilename(updateInfo);
   const onProgress = options.onProgress || (() => {});
 
   if (isDesktopShell()) {
     const { invoke, isTauri } = await import('@tauri-apps/api/core');
     if (!(await isTauri())) throw new Error('Desktop shell is not ready for self-update.');
 
-    onProgress('Downloading update from GitHub…');
+    onProgress('Downloading portable build from GitHub…');
     const buffer = await nativeHttpGetArrayBuffer(url, { timeoutMs: 300_000 });
     if (!buffer || buffer.byteLength < 1024) {
       throw new Error('Download failed or file was unexpectedly small.');
     }
 
-    onProgress('Saving installer beside your portable data folder…');
+    onProgress('Staging update beside your portable data folder…');
     const bytes = Array.from(new Uint8Array(buffer));
-    await invoke('portable_write_file', { filename, contents: bytes });
+    await invoke('portable_write_file', { filename: stagedFilename, contents: bytes });
 
-    onProgress('Launching installer — follow the prompts, then restart Sidekick.');
-    const launchedPath = await invoke('ps_launch_update', { installerFilename: filename });
-    return { mode: 'desktop_installer', path: launchedPath, filename };
+    onProgress('Applying update — Sidekick will close and restart automatically.');
+    await invoke('ps_apply_portable_update', { stagedFilename });
+    return { mode: 'desktop_portable_swap', filename: stagedFilename };
   }
 
   if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {

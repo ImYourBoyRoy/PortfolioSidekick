@@ -1,6 +1,6 @@
 // ./sidekick/src/serverless/appUpdater.test.js
 import { describe, expect, it } from 'vitest';
-import { canSelfInstallUpdate, sanitizeUpdateFilename } from './appUpdater.js';
+import { buildStagedUpdateFilename, canSelfInstallUpdate, sanitizeUpdateFilename } from './appUpdater.js';
 
 describe('appUpdater', () => {
   it('canSelfInstallUpdate covers all release platforms', () => {
@@ -14,5 +14,13 @@ describe('appUpdater', () => {
   it('sanitizeUpdateFilename strips unsafe characters', () => {
     expect(sanitizeUpdateFilename('PortfolioSidekick-Windows.exe')).toBe('PortfolioSidekick-Windows.exe');
     expect(sanitizeUpdateFilename('bad name!.apk')).toBe('bad_name_.apk');
+  });
+
+  it('buildStagedUpdateFilename keeps portable artifact names', () => {
+    expect(buildStagedUpdateFilename({
+      latestVersion: '1.7.35',
+      platform: 'windows',
+      downloadName: 'PortfolioSidekick-Windows.exe',
+    })).toBe('update-staged-1.7.35-PortfolioSidekick-Windows.exe');
   });
 });

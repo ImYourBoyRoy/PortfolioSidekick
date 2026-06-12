@@ -187,9 +187,9 @@ export function useSidekickMarket(shell, profilesDomain, portfolioDomain, bridge
       const result = await downloadAndInstallUpdate(updateInfo, {
         onProgress: (message) => showToast(message, 'info', 5000),
       });
-      if (result.mode === 'desktop_installer') {
+      if (result.mode === 'desktop_portable_swap') {
         showToast(
-          'Installer launched. Complete setup, then reopen Portfolio Sidekick.',
+          'Update staged. Portfolio Sidekick is closing and will restart with the new portable build.',
           'success',
           12000,
         );

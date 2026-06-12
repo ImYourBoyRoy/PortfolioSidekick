@@ -15,6 +15,7 @@
     "allow-rh-http-request",
     "allow-vault-read",
     "allow-vault-write",
+    "allow-ps-apply-portable-update",
     "fs:allow-exe-read-recursive",
     "fs:allow-exe-write-recursive",
     "fs:allow-appdata-read-recursive",
@@ -27,7 +28,10 @@
       "allow": [
         { "url": "https://api.robinhood.com/**" },
         { "url": "https://query1.finance.yahoo.com/**" },
-        { "url": "https://query2.finance.yahoo.com/**" }
+        { "url": "https://query2.finance.yahoo.com/**" },
+        { "url": "https://api.github.com/**" },
+        { "url": "https://github.com/**" },
+        { "url": "https://objects.githubusercontent.com/**" }
       ]
     }
   ]

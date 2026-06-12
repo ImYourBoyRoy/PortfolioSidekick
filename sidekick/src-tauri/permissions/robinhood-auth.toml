@@ -47,3 +47,8 @@ commands.allow = ["vault_read"]
 identifier = "allow-vault-write"
 description = "Write AES-256-GCM encrypted Robinhood session vault"
 commands.allow = ["vault_write"]
+
+[[permission]]
+identifier = "allow-ps-apply-portable-update"
+description = "Stage and apply a portable GitHub release swap beside the executable"
+commands.allow = ["ps_apply_portable_update"]

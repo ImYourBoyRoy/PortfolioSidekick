@@ -18,7 +18,7 @@ export default function UpdateBanner() {
       <div className="update-banner-copy">
         <strong>Update available — v{info.latestVersion}</strong>
         <span>
-          You are on v{info.currentVersion || s.APP_VERSION}. Install the latest {platformLabel} from GitHub to stay current.
+          You are on v{info.currentVersion || s.APP_VERSION}. Apply the portable {platformLabel} build — Sidekick restarts automatically on desktop.
         </span>
       </div>
       <div className="update-banner-actions">
@@ -33,7 +33,7 @@ export default function UpdateBanner() {
           ) : (
             <Download style={{ width: 14, height: 14 }} />
           )}
-          {s.updateInstalling ? 'Preparing…' : `Install v${info.latestVersion}`}
+          {s.updateInstalling ? 'Preparing…' : `Update to v${info.latestVersion}`}
         </button>
         <button
           type="button"

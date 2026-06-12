@@ -20,8 +20,8 @@ export default function SettingsTab() {
             <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
               Installed <strong style={{ color: '#fff' }}>v{s.APP_VERSION}</strong>
               {s.updateInfo?.platform ? ` · ${s.updateInfo.platform} build` : ''}.
-              Sidekick checks GitHub on startup and every few hours for newer Windows, macOS, Linux, and Android builds.
-              Use <strong style={{ color: '#fff' }}>Install</strong> to download and launch the updater automatically on desktop.
+              Sidekick checks GitHub on startup and every few hours for newer portable Windows, macOS, Linux, and Android builds.
+              On desktop, <strong style={{ color: '#fff' }}>Update</strong> downloads the new binary beside <code style={{ color: '#34d399' }}>data/</code> and swaps it when Sidekick restarts — your vault and SQLite stay put.
             </p>
             <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
               <button
@@ -52,7 +52,7 @@ export default function SettingsTab() {
                     }}
                   >
                     <Download style={{ width: 13, height: 13 }} />
-                    {s.updateInstalling ? 'Preparing…' : `Install v${s.updateInfo.latestVersion}`}
+                    {s.updateInstalling ? 'Preparing…' : `Update to v${s.updateInfo.latestVersion}`}
                   </button>
                   <button
                     type="button"

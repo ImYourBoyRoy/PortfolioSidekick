@@ -2659,7 +2659,7 @@ dependencies = [
 
 [[package]]
 name = "portfolio-sidekick"
-version = "1.7.34"
+version = "1.7.35"
 dependencies = [
  "aes-gcm",
  "log",
