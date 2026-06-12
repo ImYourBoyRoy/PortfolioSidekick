@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Portfolio Sidekick",
-  "version": "1.7.33",
+  "version": "1.7.34",
   "identifier": "com.imyourboyroy.portfoliosidekick",
   "build": {
     "frontendDist": "../dist",
@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https://api.robinhood.com https://query1.finance.yahoo.com https://query2.finance.yahoo.com https://*.finance.yahoo.com; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'"
+      "csp": "default-src 'self'; connect-src 'self' https://api.github.com https://github.com https://objects.githubusercontent.com https://api.robinhood.com https://query1.finance.yahoo.com https://query2.finance.yahoo.com https://*.finance.yahoo.com; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'"
     }
   },
   "bundle": {

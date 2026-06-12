@@ -801,6 +801,45 @@ async fn rh_http_request(
     })
 }
 
+#[tauri::command]
+fn ps_launch_update(installer_filename: String) -> Result<String, String> {
+    let safe = sanitize_filename(&installer_filename)?;
+    let path = portable_data_directory()?.join(&safe);
+    if !path.is_file() {
+        return Err(format!("Update file not found: {safe}"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to launch installer: {e}"))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open update archive: {e}"))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open update archive: {e}"))?;
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        return Err("Self-update launch is only supported on desktop platforms.".into());
+    }
+
+    Ok(path.to_string_lossy().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let client = build_robinhood_client().expect("Robinhood HTTP client must initialize");
@@ -823,6 +862,7 @@ pub fn run() {
             rh_desktop_ready,
             rh_robinhood_login,
             rh_http_request,
+            ps_launch_update,
         ])
         .setup(|app| {
             if let Ok(data_dir) = portable_data_directory() {

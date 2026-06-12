@@ -20,7 +20,8 @@ export default function SettingsTab() {
             <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
               Installed <strong style={{ color: '#fff' }}>v{s.APP_VERSION}</strong>
               {s.updateInfo?.platform ? ` · ${s.updateInfo.platform} build` : ''}.
-              Sidekick checks <a href="https://github.com/ImYourBoyRoy/PortfolioSidekick/releases/latest" target="_blank" rel="noopener noreferrer" style={{ color: '#34d399' }}>GitHub Releases</a> for newer Windows, macOS, Linux, and Android artifacts.
+              Sidekick checks GitHub on startup and every few hours for newer Windows, macOS, Linux, and Android builds.
+              Use <strong style={{ color: '#fff' }}>Install</strong> to download and launch the updater automatically on desktop.
             </p>
             <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
               <button
@@ -41,6 +42,20 @@ export default function SettingsTab() {
                 <>
                   <button
                     type="button"
+                    onClick={() => { void s.installLatestUpdate(); }}
+                    disabled={s.updateInstalling}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '11px', fontWeight: 800,
+                      padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                      background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(167,139,250,0.35)', color: '#ddd6fe',
+                      opacity: s.updateInstalling ? 0.7 : 1,
+                    }}
+                  >
+                    <Download style={{ width: 13, height: 13 }} />
+                    {s.updateInstalling ? 'Preparing…' : `Install v${s.updateInfo.latestVersion}`}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => { void s.downloadLatestUpdate(); }}
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: '11px', fontWeight: 800,
@@ -49,7 +64,7 @@ export default function SettingsTab() {
                     }}
                   >
                     <Download style={{ width: 13, height: 13 }} />
-                    Download v{s.updateInfo.latestVersion}
+                    Open in browser
                   </button>
                   <button
                     type="button"

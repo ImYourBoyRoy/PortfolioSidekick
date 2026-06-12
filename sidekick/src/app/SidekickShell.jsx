@@ -15,6 +15,7 @@ import TabNavigation from './components/TabNavigation';
 import AppFooter from './components/AppFooter';
 import ToastStack from './components/ToastStack';
 import SyncOverlay from './components/SyncOverlay';
+import UpdateBanner from './components/UpdateBanner';
 import TabErrorBoundary from './components/TabErrorBoundary';
 import ProfileModal from './components/modals/ProfileModal';
 import ImportModal from './components/modals/ImportModal';
@@ -67,6 +68,7 @@ export default function SidekickShell() {
 
       <div className="app-main">
         <AppHeader onMenuOpen={() => setSidebarOpen(true)} />
+        <UpdateBanner />
         <TabNavigation />
 
         <div className="tab-content-shell">

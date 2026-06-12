@@ -20,6 +20,7 @@ import {
   openUpdateDownload,
   copyUpdateDownloadUrl,
   getPreferredUpdateUrl,
+  downloadAndInstallUpdate,
 } from '../../../serverless';
 import { sidekickFetch } from '../../../lib/sidekickClient';
 import { APP_VERSION } from '../../../lib/appVersion';
@@ -51,6 +52,8 @@ export function useSidekickMarket(shell, profilesDomain, portfolioDomain, bridge
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
 
   const activeTabRef = useRef(activeTab);
   useEffect(() => {
@@ -142,18 +145,65 @@ export function useSidekickMarket(shell, profilesDomain, portfolioDomain, bridge
       const result = await checkForAppUpdate(APP_VERSION, { force });
       setUpdateInfo(result);
       if (result.updateAvailable) {
-        showToast(`Update v${result.latestVersion} is available on GitHub.`, 'info', 9000);
+        setUpdateBannerDismissed(false);
+        if (force) {
+          showToast(`Update v${result.latestVersion} is available on GitHub.`, 'info', 9000);
+        }
       } else if (force && !result.error) {
         showToast(`You are on the latest release (v${result.latestVersion || APP_VERSION}).`, 'success');
       }
+      return result;
     } catch (err) {
       const message = err?.message || 'Could not reach GitHub releases.';
       setUpdateInfo({ error: message, currentVersion: APP_VERSION, updateAvailable: false });
       if (force) showToast(message, 'warning');
+      return null;
     } finally {
       setUpdateChecking(false);
     }
   }, [showToast]);
+
+  const dismissUpdateBanner = useCallback(() => {
+    setUpdateBannerDismissed(true);
+  }, []);
+
+  const installLatestUpdate = useCallback(async () => {
+    if (!updateInfo?.updateAvailable) {
+      showToast('No update is available yet — check for updates first.', 'warning');
+      return;
+    }
+    if (!updateInfo.downloadUrl && !updateInfo.releaseUrl) {
+      showToast('No download URL for this platform. Open Settings for the release page.', 'warning');
+      return;
+    }
+    if (!updateInfo.downloadUrl) {
+      await openUpdateDownload(updateInfo.releaseUrl);
+      showToast('Opened the GitHub release page in your browser.', 'info', 7000);
+      return;
+    }
+
+    setUpdateInstalling(true);
+    try {
+      const result = await downloadAndInstallUpdate(updateInfo, {
+        onProgress: (message) => showToast(message, 'info', 5000),
+      });
+      if (result.mode === 'desktop_installer') {
+        showToast(
+          'Installer launched. Complete setup, then reopen Portfolio Sidekick.',
+          'success',
+          12000,
+        );
+      } else if (result.mode === 'android_browser') {
+        showToast(result.message || 'APK download opened — tap the file when it finishes.', 'info', 12000);
+      } else {
+        showToast('Download opened in your browser.', 'info', 7000);
+      }
+    } catch (err) {
+      showToast(err?.message || 'Self-update failed. Try Copy update link in Settings.', 'error', 10000);
+    } finally {
+      setUpdateInstalling(false);
+    }
+  }, [updateInfo, showToast]);
 
   const downloadLatestUpdate = useCallback(async () => {
     const url = getPreferredUpdateUrl(updateInfo);
@@ -223,9 +273,25 @@ export function useSidekickMarket(shell, profilesDomain, portfolioDomain, bridge
   }, [activeTab, congressData?.nextRefreshAt, congressLoading, loadCongressTrades]);
 
   useEffect(() => {
-    const timer = setTimeout(() => void checkForUpdates(false), 2500);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot startup update check
+    queueMicrotask(() => {
+      void checkForUpdates(false);
+    });
+
+    const interval = setInterval(() => {
+      if (document.hidden) return;
+      void checkForUpdates(false);
+    }, 4 * 60 * 60 * 1000);
+
+    const onVisible = () => {
+      if (!document.hidden) void checkForUpdates(false);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- startup + periodic GitHub release checks
   }, []);
 
   useEffect(() => {
@@ -292,7 +358,12 @@ export function useSidekickMarket(shell, profilesDomain, portfolioDomain, bridge
     formatRelativeTime,
     updateInfo,
     updateChecking,
+    updateInstalling,
+    updateBannerDismissed,
+    updateBannerVisible: Boolean(updateInfo?.updateAvailable && !updateBannerDismissed),
     checkForUpdates,
+    dismissUpdateBanner,
+    installLatestUpdate,
     downloadLatestUpdate,
     copyLatestUpdateLink,
     openNewsLink,
@@ -305,7 +376,8 @@ export function useSidekickMarket(shell, profilesDomain, portfolioDomain, bridge
     strengthTimeframe, strengthSector, marketStrengthData, strengthLoading,
     sandboxWatchlist, newSandboxTicker, newSandboxTargetPrice, fetchMarketStrength,
     newsData, newsLoading, loadMarketNews, congressData, congressLoading, loadCongressTrades,
-    congressSyncStatus, formatRelativeTime, updateInfo, updateChecking, checkForUpdates,
+    congressSyncStatus, formatRelativeTime, updateInfo, updateChecking, updateInstalling,
+    updateBannerDismissed, checkForUpdates, dismissUpdateBanner, installLatestUpdate,
     downloadLatestUpdate, copyLatestUpdateLink, openNewsLink, wisestReallocationPicks,
   ]);
 }

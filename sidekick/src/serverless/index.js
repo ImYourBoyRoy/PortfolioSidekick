@@ -34,3 +34,4 @@ export {
   detectUpdatePlatform,
   isNewerVersion,
 } from './updateChecker';
+export { canSelfInstallUpdate, downloadAndInstallUpdate } from './appUpdater';
