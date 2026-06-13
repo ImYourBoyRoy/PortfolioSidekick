@@ -18,9 +18,9 @@ describe('appUpdater', () => {
 
   it('buildStagedUpdateFilename keeps portable artifact names', () => {
     expect(buildStagedUpdateFilename({
-      latestVersion: '1.7.35',
+      latestVersion: '1.7.36',
       platform: 'windows',
       downloadName: 'PortfolioSidekick-Windows.exe',
-    })).toBe('update-staged-1.7.35-PortfolioSidekick-Windows.exe');
+    })).toBe('update-staged-1.7.36-PortfolioSidekick-Windows.exe');
   });
 });
