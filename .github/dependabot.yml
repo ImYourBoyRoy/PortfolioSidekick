@@ -1,4 +1,8 @@
 # Dependabot — monitor only active sidekick paths (no deleted backend/frontend).
+#
+# Cargo: exclude vendored [patch.crates-io] trees under patches/ — Dependabot treats
+# each nested Cargo.toml as its own project and proposes time 0.3.48, which breaks
+# the cookie/tauri coherence fix (see sidekick/src-tauri/patches/README.md).
 version: 2
 updates:
   - package-ecosystem: npm
@@ -12,9 +16,21 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    exclude-paths:
+      - "patches/**"
+    ignore:
+      - dependency-name: "tauri"
+      - dependency-name: "tauri-utils"
+      - dependency-name: "cookie"
+      - dependency-name: "time"
+        versions: [">= 0.3.48"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    ignore:
+      # Intentionally pinned to @master per AGENTS.md floating-toolchain policy.
+      - dependency-name: "dtolnay/rust-toolchain"
+      - dependency-name: "softprops/action-gh-release"
