@@ -6,12 +6,14 @@
 import { Info, Settings, Save, RotateCcw, ShieldCheck, Zap, Gauge, FileSearch, EyeOff, Eye, Download, RefreshCw, Package, Link2, ZoomIn, ZoomOut } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
 import { isAndroidNative } from '../../lib/sidekickClient';
+import LanguageSettings from '../components/LanguageSettings';
 
 export default function SettingsTab() {
   const s = useSidekick();
 
   return (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <LanguageSettings />
           <div className="glass-card" style={{ padding: 20 }}>
             <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Package style={{ width: 18, height: 18, color: '#34d399' }} />

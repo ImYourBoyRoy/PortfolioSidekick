@@ -6,13 +6,17 @@
 import { useEffect, useState } from 'react';
 import { Brain } from 'lucide-react';
 import { usePortfolio } from '../context/SidekickContext';
+import { useI18n } from '../../i18n';
 
 const CANCEL_AFTER_MS = 60_000;
+
+const SYNC_STEP_KEYS = ['sync.step0', 'sync.step1', 'sync.step2', 'sync.step3', 'sync.step4'];
 
 export default function SyncOverlay() {
   const {
     portfolioBootstrapping, syncing, syncStepIndex, cancelSync,
   } = usePortfolio();
+  const { t } = useI18n();
   const [cancelReady, setCancelReady] = useState(false);
 
   const isBootstrap = portfolioBootstrapping && !syncing;
@@ -22,15 +26,9 @@ export default function SyncOverlay() {
     return () => clearTimeout(timer);
   }, []);
 
-  const title = isBootstrap
-    ? 'Please Wait — Loading Portfolio'
-    : 'Active Robinhood Link In Progress';
-  const subtitle = isBootstrap
-    ? 'Restoring saved session'
-    : 'Synchronizing live positions';
-  const hint = isBootstrap
-    ? 'Your encrypted Robinhood session is on this device. We are restoring holdings and refreshing live quotes — this may take a few seconds.'
-    : 'Your Robinhood session is stored only on this device. Credentials are never synced to other platforms or cloud servers.';
+  const title = isBootstrap ? t('sync.titleBootstrap') : t('sync.titleSync');
+  const subtitle = isBootstrap ? t('sync.subtitleBootstrap') : t('sync.subtitleSync');
+  const hint = isBootstrap ? t('sync.hintBootstrap') : t('sync.hintSync');
 
   return (
     <div className="sync-overlay-fullscreen" role="status" aria-live="polite" aria-busy="true">
@@ -50,11 +48,7 @@ export default function SyncOverlay() {
 
         {!isBootstrap && (
           <p className="sync-step-fade-text">
-            {syncStepIndex === 0 && 'Securing encrypted network tunnel to Robinhood APIs...'}
-            {syncStepIndex === 1 && 'Authenticating local session with secure challenge tokens...'}
-            {syncStepIndex === 2 && 'Retrieving portfolio asset positions and historical metrics...'}
-            {syncStepIndex === 3 && 'Calibrating Multi-Horizon quantitative Trade Viability Oracle...'}
-            {syncStepIndex === 4 && 'Synthesizing AI coaching insights in local Shadow Coach DB...'}
+            {t(SYNC_STEP_KEYS[syncStepIndex] ?? SYNC_STEP_KEYS[0])}
           </p>
         )}
 
@@ -68,7 +62,7 @@ export default function SyncOverlay() {
             className="sync-overlay-cancel-btn"
             onClick={() => cancelSync()}
           >
-            Cancel sync
+            {t('sync.cancel')}
           </button>
         )}
       </div>

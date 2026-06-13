@@ -4,21 +4,28 @@
  */
 import { Download, RefreshCw, X } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
+import { useI18n } from '../../i18n';
 
 export default function UpdateBanner() {
   const s = useSidekick();
+  const { t } = useI18n();
   const info = s.updateInfo;
 
   if (!info?.updateAvailable || s.updateInstalling || !s.updateBannerVisible) return null;
 
-  const platformLabel = info.platform ? `${info.platform} build` : 'your platform';
+  const platformLabel = info.platform
+    ? t('update.platformBuild', { platform: info.platform })
+    : t('update.yourPlatform');
 
   return (
     <div className="update-banner animate-fade-in" role="status" aria-live="polite">
       <div className="update-banner-copy">
-        <strong>Update available — v{info.latestVersion}</strong>
+        <strong>{t('update.bannerTitle', { version: info.latestVersion })}</strong>
         <span>
-          You are on v{info.currentVersion || s.APP_VERSION}. Apply the portable {platformLabel} build — Sidekick restarts automatically on desktop.
+          {t('update.bannerBody', {
+            current: info.currentVersion || s.APP_VERSION,
+            platform: platformLabel,
+          })}
         </span>
       </div>
       <div className="update-banner-actions">
@@ -33,20 +40,22 @@ export default function UpdateBanner() {
           ) : (
             <Download style={{ width: 14, height: 14 }} />
           )}
-          {s.updateInstalling ? 'Preparing…' : `Update to v${info.latestVersion}`}
+          {s.updateInstalling
+            ? t('update.preparing')
+            : t('update.updateButton', { version: info.latestVersion })}
         </button>
         <button
           type="button"
           className="update-banner-btn"
           onClick={() => s.setActiveTab('settings')}
         >
-          Details
+          {t('update.details')}
         </button>
         <button
           type="button"
           className="update-banner-btn update-banner-btn-ghost"
           onClick={() => s.dismissUpdateBanner?.()}
-          aria-label="Dismiss update banner until next check"
+          aria-label={t('update.dismissAria')}
         >
           <X style={{ width: 14, height: 14 }} />
         </button>

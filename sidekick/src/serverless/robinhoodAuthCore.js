@@ -137,6 +137,7 @@ export async function getRobinhoodApiBase() {
 
 export async function buildRhUrls() {
   const base = await getRobinhoodApiBase();
+  const nummus = 'https://nummus.robinhood.com';
   return {
     login: `${base}/oauth2/token/`,
     pathfinder: `${base}/pathfinder/user_machine/`,
@@ -151,6 +152,10 @@ export async function buildRhUrls() {
     quotesBatch: (symbols) => `${base}/quotes/?symbols=${symbols.join(',')}`,
     portfolioByAccount: (accountNumber) => `${base}/portfolios/${accountNumber}/`,
     dividends: `${base}/dividends/`,
+    optionPositions: `${base}/options/positions/?nonzero=true`,
+    nummusHoldings: `${nummus}/holdings/`,
+    nummusAccounts: `${nummus}/accounts/`,
+    forexQuotes: (ids) => `${base}/marketdata/forex/quotes/?ids=${ids.join(',')}`,
   };
 }
 

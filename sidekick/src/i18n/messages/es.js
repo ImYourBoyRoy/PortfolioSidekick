@@ -1,0 +1,55 @@
+// ./sidekick/src/i18n/messages/es.js
+import { mergeLocale } from './mergeLocale.js';
+
+export default mergeLocale({
+  'tabs.overview': 'Resumen',
+  'tabs.coach': 'Gráfico Coach',
+  'tabs.oracle': 'Oráculo',
+  'tabs.strategy': 'Estrategia',
+  'tabs.strength': 'Fortaleza',
+  'tabs.shadow': 'Coach Sombra',
+  'tabs.news': 'Noticias',
+  'tabs.insider': 'Insiders',
+  'tabs.settings': 'Ajustes',
+  'welcome.title': 'Bienvenido a Portfolio Sidekick',
+  'welcome.subtitle':
+    'Crea tu perfil local y privado para seguir carteras, predecir movimientos y ajustar indicadores. ¡Conectar Robinhood es 100% opcional! Puedes usar la app solo como rastreador y simulador sin conexión. Todos los datos permanecen seguros en este dispositivo.',
+  'welcome.profileLabel': 'Nombre del perfil',
+  'welcome.profilePlaceholder': 'p. ej. Cartera principal',
+  'welcome.createButton': 'Crear perfil local',
+  'shell.loadingTab': 'Cargando pestaña…',
+  'header.taglineLinked': 'Robinhood en vivo · Local y privado',
+  'header.taglineLocal': 'Compañero local con privacidad',
+  'header.menu': 'Menú',
+  'header.updateAvailable': 'Actualización v{version} disponible',
+  'header.version': 'Versión de la app',
+  'sync.titleBootstrap': 'Espere — cargando cartera',
+  'sync.titleSync': 'Vinculación Robinhood en curso',
+  'sync.subtitleBootstrap': 'Restaurando sesión guardada',
+  'sync.subtitleSync': 'Sincronizando posiciones',
+  'sync.hintBootstrap':
+    'Tu sesión cifrada de Robinhood está en este dispositivo. Restauramos posiciones y cotizaciones — puede tardar unos segundos.',
+  'sync.hintSync':
+    'Tu sesión de Robinhood solo se guarda en este dispositivo. Las credenciales nunca se sincronizan con la nube.',
+  'sync.step0': 'Asegurando túnel cifrado a las APIs de Robinhood...',
+  'sync.step1': 'Autenticando sesión local con tokens seguros...',
+  'sync.step2': 'Obteniendo posiciones e historial...',
+  'sync.step3': 'Calibrando el Oráculo de viabilidad...',
+  'sync.step4': 'Sintetizando insights del Coach Sombra...',
+  'sync.cancel': 'Cancelar sincronización',
+  'update.bannerTitle': 'Actualización disponible — v{version}',
+  'update.bannerBody':
+    'Estás en v{current}. Aplica la compilación portable de {platform} — Sidekick se reinicia solo en escritorio.',
+  'update.preparing': 'Preparando…',
+  'update.updateButton': 'Actualizar a v{version}',
+  'update.details': 'Detalles',
+  'update.dismissAria': 'Ocultar aviso de actualización',
+  'update.platformBuild': 'compilación {platform}',
+  'update.yourPlatform': 'tu plataforma',
+  'settings.languageTitle': 'Idioma',
+  'settings.languageHint':
+    'Usa el idioma del dispositivo por defecto. Elige otro idioma abajo o «Sistema» para volver al del dispositivo.',
+  'settings.languageSelectLabel': 'Idioma de la interfaz',
+  'settings.languageSystem': 'Predeterminado del sistema ({language})',
+  'settings.languageCurrent': 'Mostrando {language}',
+});

@@ -1,0 +1,55 @@
+// ./sidekick/src/i18n/messages/vi-VN.js
+import { mergeLocale } from './mergeLocale.js';
+
+export default mergeLocale({
+  'tabs.overview': 'Tổng quan',
+  'tabs.coach': 'Biểu đồ Coach',
+  'tabs.oracle': 'Oracle',
+  'tabs.strategy': 'Chiến lược',
+  'tabs.strength': 'Sức mạnh',
+  'tabs.shadow': 'Shadow Coach',
+  'tabs.news': 'Tin tức',
+  'tabs.insider': 'Nội gián',
+  'tabs.settings': 'Cài đặt',
+  'welcome.title': 'Chào mừng đến Portfolio Sidekick',
+  'welcome.subtitle':
+    'Tạo hồ sơ cục bộ, riêng tư để theo dõi danh mục, dự đoán cổ phiếu và tinh chỉnh chỉ báo. Kết nối Robinhood hoàn toàn tùy chọn! Bạn có thể dùng ứng dụng chỉ để theo dõi và mô phỏng ngoại tuyến. Mọi dữ liệu chỉ lưu trên thiết bị này.',
+  'welcome.profileLabel': 'Tên hồ sơ',
+  'welcome.profilePlaceholder': 'vd. Danh mục chính',
+  'welcome.createButton': 'Tạo hồ sơ cục bộ',
+  'shell.loadingTab': 'Đang tải tab…',
+  'header.taglineLinked': 'Robinhood trực tiếp · Cục bộ & riêng tư',
+  'header.taglineLocal': 'Trợ lý cục bộ bảo vệ quyền riêng tư',
+  'header.menu': 'Menu',
+  'header.updateAvailable': 'Có bản cập nhật v{version}',
+  'header.version': 'Phiên bản ứng dụng',
+  'sync.titleBootstrap': 'Vui lòng đợi — đang tải danh mục',
+  'sync.titleSync': 'Đang liên kết Robinhood',
+  'sync.subtitleBootstrap': 'Khôi phục phiên đã lưu',
+  'sync.subtitleSync': 'Đồng bộ vị thế trực tiếp',
+  'sync.hintBootstrap':
+    'Phiên Robinhood đã mã hóa của bạn nằm trên thiết bị này. Chúng tôi đang khôi phục danh mục và làm mới báo giá — có thể mất vài giây.',
+  'sync.hintSync':
+    'Phiên Robinhood chỉ được lưu trên thiết bị này. Thông tin đăng nhập không bao giờ đồng bộ lên đám mây hay nền tảng khác.',
+  'sync.step0': 'Đang thiết lập kênh mã hóa tới API Robinhood...',
+  'sync.step1': 'Xác thực phiên cục bộ bằng token bảo mật...',
+  'sync.step2': 'Đang lấy vị thế tài sản và số liệu lịch sử...',
+  'sync.step3': 'Hiệu chuẩn Oracle khả năng giao dịch đa chu kỳ...',
+  'sync.step4': 'Tổng hợp insight huấn luyện trong cơ sở Shadow Coach cục bộ...',
+  'sync.cancel': 'Hủy đồng bộ',
+  'update.bannerTitle': 'Có bản cập nhật — v{version}',
+  'update.bannerBody':
+    'Bạn đang dùng v{current}. Áp dụng bản portable {platform} — Sidekick tự khởi động lại trên máy tính.',
+  'update.preparing': 'Đang chuẩn bị…',
+  'update.updateButton': 'Cập nhật lên v{version}',
+  'update.details': 'Chi tiết',
+  'update.dismissAria': 'Ẩn banner cập nhật đến lần kiểm tra sau',
+  'update.platformBuild': 'bản {platform}',
+  'update.yourPlatform': 'nền tảng của bạn',
+  'settings.languageTitle': 'Ngôn ngữ',
+  'settings.languageHint':
+    'Mặc định dùng ngôn ngữ thiết bị. Chọn ngôn ngữ bên dưới để ghi đè, hoặc chọn Mặc định hệ thống để theo thiết bị.',
+  'settings.languageSelectLabel': 'Ngôn ngữ hiển thị',
+  'settings.languageSystem': 'Mặc định hệ thống ({language})',
+  'settings.languageCurrent': 'Đang hiển thị {language}',
+});

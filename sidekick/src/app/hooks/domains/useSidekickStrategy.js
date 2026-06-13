@@ -140,7 +140,10 @@ export function useSidekickStrategy(shell, profilesDomain, portfolioDomain, brid
         dataHist = await res.json();
       } catch (apiErr) {
         console.warn('Serverless fallback: API stock history failed, reading public Quote:', apiErr.message);
-        dataHist = await fetchPublicHistoricalPrices(selectedTicker, 'year');
+        dataHist = await fetchPublicHistoricalPrices(selectedTicker, 'year', { minBars: 5 });
+        if (!dataHist?.length || dataHist.length < 5) {
+          dataHist = await fetchPublicHistoricalPrices(selectedTicker, 'month', { minBars: 1 });
+        }
       }
 
       setChartData(dataHist || []);
@@ -169,7 +172,7 @@ export function useSidekickStrategy(shell, profilesDomain, portfolioDomain, brid
         dataAdv = generateRecommendation(activeProfile.id, selectedTicker, dataHist, livePrice);
       }
 
-      setAdvisorData(dataAdv?.insufficient_data ? null : dataAdv);
+      setAdvisorData(dataAdv ?? null);
 
       let dataViability;
       try {

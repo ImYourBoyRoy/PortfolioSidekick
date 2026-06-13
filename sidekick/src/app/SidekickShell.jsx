@@ -21,6 +21,7 @@ import ProfileModal from './components/modals/ProfileModal';
 import ImportModal from './components/modals/ImportModal';
 import LoginModal from './components/modals/LoginModal';
 import CatalystWatchModal from './components/modals/CatalystWatchModal';
+import { useI18n } from '../i18n';
 
 const DashboardTab = lazy(() => import('./tabs/DashboardTab'));
 const CoachTab = lazy(() => import('./tabs/CoachTab'));
@@ -45,9 +46,10 @@ const TAB_PANELS = {
 };
 
 function TabLoadingFallback() {
+  const { t } = useI18n();
   return (
     <div className="glass-card" style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-      Loading tab…
+      {t('shell.loadingTab')}
     </div>
   );
 }

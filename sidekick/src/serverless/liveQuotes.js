@@ -11,12 +11,22 @@ import { fetchPublicQuote } from './robinhood';
 import { classifySector, computeSectorConcentrations } from './portfolioConstants';
 import { enrichHoldingsWithAdvisor } from './holdingAdvisor';
 import {
-  fetchRobinhoodAccountSummary,
+  fetchRobinhoodAccountContext,
   fetchRobinhoodLiveQuotes,
   fetchRobinhoodPositionMarks,
   resolveActiveRobinhoodSession,
   waitForRobinhoodSession,
 } from './robinhoodAuth';
+import {
+  resolveAccountHeaderEquity,
+  serializeAccountEquityLog,
+} from './accountHeaderEquity.js';
+import {
+  isMoney,
+  moneyFromNumber,
+  moneyFromString,
+  moneyToNumber,
+} from './money.js';
 import {
   attachHoldingIntegrity,
   coerceLivePrice,
@@ -128,7 +138,7 @@ export function describeQuoteMarkLabel(quoteSource, authenticated, yahooCount = 
 }
 
 /** Apply Robinhood marks first; Yahoo only when linked session still has gaps (or offline sandbox). */
-async function refreshWithRhFirst(profileId, rows, rhBatchPrices = {}, authenticated = false) {
+async function refreshWithRhFirst(profileId, rows, rhBatchPrices = {}, authenticated = false, quoteOptions = {}) {
   const targets = rows.filter((h) => !isQuoteUnsupportedSymbol(h.ticker));
   if (!targets.length) return { rhApplied: 0, yahooApplied: 0 };
 
@@ -150,7 +160,7 @@ async function refreshWithRhFirst(profileId, rows, rhBatchPrices = {}, authentic
         if (authenticated) {
           recordRhRequests(1);
           const sym = h.ticker.toUpperCase();
-          const rhRetry = await fetchRobinhoodLiveQuotes(profileId, [sym]);
+          const rhRetry = await fetchRobinhoodLiveQuotes(profileId, [sym], quoteOptions);
           const rhPrice = rhRetry?.[sym];
           if (rhPrice != null && applyLivePrice(profileId, h, rhPrice, 'robinhood')) {
             rhApplied += 1;
@@ -246,25 +256,38 @@ async function refreshPortfolioPricesInner(profileId, options = {}) {
   }
 
   let cashBalance = 0;
-  let rhReportedEquity = null;
+  let accountContext = null;
   let rhPortfolioMarketValue = null;
   let rhCashBreakdown = null;
   let equitySource = 'computed';
   let quoteSource = authState.authenticated ? 'robinhood' : 'yahoo';
   let rhBatchPrices = {};
   let rhPositionMarks = { bySymbol: {}, totalEquity: 0 };
+  let cryptoHoldings = [];
+  let cryptoLoadWarning = null;
+  let preferExtendedHours = false;
+  let headerResolution = null;
+  let pendingDividends = 0;
 
   if (authState.authenticated) {
-    recordRhRequests(2);
-    const account = await fetchRobinhoodAccountSummary(profileId);
-    if (account) {
-      cashBalance = account.cash || 0;
-      rhReportedEquity = account.reported_equity > 0 ? account.reported_equity : null;
-      rhPortfolioMarketValue = account.portfolio_market_value > 0 ? account.portfolio_market_value : null;
-      rhCashBreakdown = account.cash_breakdown || null;
+    recordRhRequests(4);
+    accountContext = await fetchRobinhoodAccountContext(profileId);
+    if (accountContext) {
+      cashBalance = accountContext.cash || 0;
+      rhPortfolioMarketValue = parseFloat(accountContext.portfolio?.market_value || '0') || null;
+      rhCashBreakdown = accountContext.cash_breakdown || null;
+      pendingDividends = accountContext.pending_dividends || 0;
+      cryptoHoldings = accountContext.crypto?.holdings || [];
+      cryptoLoadWarning = accountContext.crypto?.warning || null;
+      preferExtendedHours = Boolean(
+        accountContext.account?.extended_hours_portfolio_equity
+        || accountContext.portfolio?.extended_hours_equity,
+      );
     }
     rhPositionMarks = await fetchRobinhoodPositionMarks(profileId, hiddenTickers);
   }
+
+  const quoteOptions = { preferExtendedHours };
 
   if (authState.authenticated && rows.length > 0) {
     const symbols = rows
@@ -272,14 +295,14 @@ async function refreshPortfolioPricesInner(profileId, options = {}) {
       .map((h) => h.ticker.toUpperCase());
     if (symbols.length > 0) {
       recordRhRequests(Math.min(symbols.length + 1, 20));
-      const livePrices = await fetchRobinhoodLiveQuotes(profileId, symbols);
+      const livePrices = await fetchRobinhoodLiveQuotes(profileId, symbols, quoteOptions);
       if (livePrices && Object.keys(livePrices).length > 0) {
         rhBatchPrices = livePrices;
       }
     }
   }
 
-  await refreshWithRhFirst(profileId, rows, rhBatchPrices, authState.authenticated);
+  await refreshWithRhFirst(profileId, rows, rhBatchPrices, authState.authenticated, quoteOptions);
 
   // Second pass: RH retry first when linked; Yahoo only if still stale (sandbox uses Yahoo).
   const retryRows = localDb.getHoldings(profileId).filter((h) => !hiddenTickers.has(h.ticker.toUpperCase()));
@@ -291,7 +314,7 @@ async function refreshPortfolioPricesInner(profileId, options = {}) {
     if (authState.authenticated) {
       const sym = h.ticker.toUpperCase();
       recordRhRequests(1);
-      const rhRetry = await fetchRobinhoodLiveQuotes(profileId, [sym]);
+      const rhRetry = await fetchRobinhoodLiveQuotes(profileId, [sym], quoteOptions);
       const rhPrice = rhRetry?.[sym];
       if (rhPrice != null && applyLivePrice(profileId, h, rhPrice, 'robinhood')) continue;
     }
@@ -383,10 +406,37 @@ async function refreshPortfolioPricesInner(profileId, options = {}) {
     ? round2(rhAlignedPositions + cashBalance)
     : round2(positionsEquity + cashBalance);
 
-  // When linked, Robinhood portfolio_equity is the authoritative net equity (matches mobile app).
+  const manualBreakdown = {
+    stockEquity: moneyFromNumber(rhAlignedPositions),
+    cryptoEquity: accountContext?.crypto?.totalEquity || moneyFromString(accountContext?.account?.crypto_portfolio_equity),
+    optionEquity: accountContext?.options?.equity || null,
+    cash: moneyFromNumber(cashBalance),
+    cashHeldForOrders: moneyFromNumber(accountContext?.cash_held_for_orders),
+    cashHeldForOptionsCollateral: moneyFromNumber(accountContext?.cash_held_for_options_collateral),
+    pendingDividends: moneyFromNumber(pendingDividends),
+    cryptoLoaded: accountContext?.crypto?.loaded === true,
+    cryptoLoadWarning,
+    optionsLoaded: accountContext?.options?.loaded === true,
+    optionsWarning: accountContext?.options?.warning || null,
+  };
+
+  if (authState.authenticated && accountContext) {
+    headerResolution = resolveAccountHeaderEquity({
+      account: accountContext.account,
+      portfolio: accountContext.portfolio,
+      portfolioList: accountContext.portfolioList,
+      unifiedAccount: accountContext.account,
+      marketSession: preferExtendedHours ? 'extended' : 'auto',
+      manualBreakdown,
+    });
+    console.info('[AccountEquity] reconciliation', serializeAccountEquityLog(headerResolution));
+  }
+
   let totalEquity = positionsPlusCash;
-  if (authState.authenticated && rhReportedEquity != null && rhReportedEquity > 0) {
-    totalEquity = round2(rhReportedEquity);
+  let rhReportedEquity = null;
+  if (authState.authenticated && headerResolution && isMoney(headerResolution.value)) {
+    totalEquity = moneyToNumber(headerResolution.value);
+    rhReportedEquity = totalEquity;
     equitySource = 'robinhood';
   } else if (authState.authenticated) {
     equitySource = 'computed-rh-equity-missing';
@@ -410,6 +460,25 @@ async function refreshPortfolioPricesInner(profileId, options = {}) {
     equity_delta: rhReportedEquity != null ? round2(rhReportedEquity - positionsPlusCash) : null,
     quote_marks_delta: rhReportedEquity != null ? round2(rhReportedEquity - quoteMarksEquity) : null,
     equity_source: equitySource,
+    header_equity_source: headerResolution?.source || null,
+    header_equity_field: headerResolution?.sourceField || null,
+    header_equity_session: headerResolution?.session || null,
+    stock_market_value: round2(rhAlignedPositions),
+    crypto_market_value: moneyToNumber(manualBreakdown.cryptoEquity),
+    crypto_holdings: cryptoHoldings,
+    crypto_load_warning: cryptoLoadWarning,
+    options_warning: accountContext?.options?.warning || null,
+    options_position_count: accountContext?.options?.count || 0,
+    pending_dividends: round2(pendingDividends),
+    regular_hours_equity: headerResolution?.reconciliation?.regularHoursEquity != null
+      ? parseFloat(headerResolution.reconciliation.regularHoursEquity)
+      : null,
+    extended_hours_equity: headerResolution?.reconciliation?.extendedHoursEquity != null
+      ? parseFloat(headerResolution.reconciliation.extendedHoursEquity)
+      : null,
+    equity_reconciliation: headerResolution?.reconciliation || null,
+    equity_warnings: headerResolution?.warnings || [],
+    prefer_extended_hours_quotes: preferExtendedHours,
     hidden_ticker_count: hiddenTickers.size,
     non_quotable_count: nonQuotableCount,
     total_cost: round2(totalCost),

@@ -251,6 +251,21 @@ export function useSidekickPortfolio(shell, profilesDomain, bridgeApi) {
           rh_cash_breakdown: resData.rh_cash_breakdown ?? null,
           stale_price_count: resData.stale_price_count ?? 0,
           has_verified_live_prices: resData.has_verified_live_prices === true,
+          header_equity_source: resData.header_equity_source ?? null,
+          header_equity_field: resData.header_equity_field ?? null,
+          header_equity_session: resData.header_equity_session ?? null,
+          stock_market_value: resData.stock_market_value ?? resData.positions_equity ?? 0,
+          crypto_market_value: resData.crypto_market_value ?? null,
+          crypto_holdings: resData.crypto_holdings ?? [],
+          crypto_load_warning: resData.crypto_load_warning ?? null,
+          options_warning: resData.options_warning ?? null,
+          options_position_count: resData.options_position_count ?? 0,
+          pending_dividends: resData.pending_dividends ?? 0,
+          regular_hours_equity: resData.regular_hours_equity ?? null,
+          extended_hours_equity: resData.extended_hours_equity ?? null,
+          equity_reconciliation: resData.equity_reconciliation ?? null,
+          equity_warnings: resData.equity_warnings ?? [],
+          prefer_extended_hours_quotes: resData.prefer_extended_hours_quotes === true,
         });
 
         if (liveMode && resData.using_yahoo_fallback) {
@@ -396,18 +411,23 @@ export function useSidekickPortfolio(shell, profilesDomain, bridgeApi) {
           }
 
           let timing = 'Neutral Consolidation';
-          if (rec.metrics?.rsi <= 30) timing = 'Oversold Buy Trigger';
+          if (rec.insufficient_data) {
+            timing = rec.message || 'Insufficient history for advisor scoring';
+          } else if (rec.metrics?.rsi <= 30) timing = 'Oversold Buy Trigger';
           else if (rec.metrics?.rsi >= 70) timing = 'Overbought Exit Warning';
           else if (rec.action === 'BUY') timing = 'Bullish Entry Momentum';
           else if (rec.action === 'SELL') timing = 'Bearish Trend Exit';
           else if (rec.metrics?.rsi < 45) timing = 'Oversold Bounce Watch';
 
           return {
+            id: item.id,
             ticker: item.ticker,
+            added_at: item.added_at,
             notes: item.notes,
             current_price: livePrice,
-            recommendation: rec.action,
-            score: rec.score,
+            recommendation: rec.insufficient_data ? 'HOLD' : rec.action,
+            score: rec.insufficient_data ? null : rec.score,
+            advisor_message: rec.insufficient_data ? (rec.message || 'Insufficient price history') : null,
             timing,
           };
         };

@@ -57,7 +57,10 @@ export async function getCachedTickerHistory(ticker, { force = false } = {}) {
       return cached.data;
     }
   }
-  const history = await fetchPublicHistoricalPrices(key, 'year');
+  let history = await fetchPublicHistoricalPrices(key, 'year', { minBars: 5 });
+  if (history.length < 5) {
+    history = await fetchPublicHistoricalPrices(key, 'month', { minBars: 1 });
+  }
   lruSet(historyCache, key, { at: Date.now(), data: history });
   return history;
 }

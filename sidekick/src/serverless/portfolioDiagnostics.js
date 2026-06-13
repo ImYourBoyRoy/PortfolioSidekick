@@ -14,11 +14,11 @@ import { refreshPortfolioPrices } from './liveQuotes';
 import { fetchRobinhoodLiveQuotes } from './robinhoodAuth';
 import { accountNumberFromRecord, buildRobinhoodCashBreakdown } from './robinhoodAccount.js';
 import {
-  extractReportedNetEquity,
-  extractReportedNetEquityFromPortfolio,
   selectPrimaryPortfolio,
   selectPrimaryRobinhoodAccount,
 } from './robinhoodAccount.js';
+import { resolveAccountHeaderEquity } from './accountHeaderEquity.js';
+import { moneyFromNumber, moneyToNumber } from './money.js';
 import { authHeader, buildRhUrls, requestGet } from './robinhoodAuthCore.js';
 import { resolveActiveRobinhoodSession, robinhoodStatus } from './robinhoodAuth';
 import {
@@ -267,8 +267,33 @@ export async function buildPortfolioDiagnostics(profileId) {
     portfolios_extended_hours_equity: selectedPortfolio
       ? pickPositive(selectedPortfolio.extended_hours_equity)
       : null,
-    picked_net_equity: extractReportedNetEquity(selected)
-      || extractReportedNetEquityFromPortfolio(selectedPortfolio),
+    picked_net_equity: (() => {
+      const resolved = resolveAccountHeaderEquity({
+        account: selected,
+        portfolio: selectedPortfolio,
+        marketSession: 'auto',
+        manualBreakdown: {
+          stockEquity: moneyFromNumber(portfolioPayload.positions_equity),
+          cash: moneyFromNumber(portfolioPayload.cash_balance),
+          pendingDividends: moneyFromNumber(portfolioPayload.pending_dividends),
+        },
+      });
+      return moneyToNumber(resolved.value);
+    })(),
+    header_resolution: resolveAccountHeaderEquity({
+      account: selected,
+      portfolio: selectedPortfolio,
+      marketSession: 'auto',
+      manualBreakdown: {
+        stockEquity: moneyFromNumber(portfolioPayload.positions_equity),
+        cash: moneyFromNumber(portfolioPayload.cash_balance),
+        cryptoEquity: moneyFromNumber(portfolioPayload.crypto_market_value),
+        pendingDividends: moneyFromNumber(portfolioPayload.pending_dividends),
+        cryptoLoaded: portfolioPayload.crypto_holdings != null,
+        cryptoLoadWarning: portfolioPayload.crypto_load_warning,
+        optionsWarning: portfolioPayload.options_warning,
+      },
+    }),
   };
 
   const report = {

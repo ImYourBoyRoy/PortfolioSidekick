@@ -5,9 +5,11 @@
  */
 import { Plus, Brain } from 'lucide-react';
 import { useProfiles } from '../context/SidekickContext';
+import { useI18n } from '../../i18n';
 
 export default function WelcomeScreen() {
   const s = useProfiles();
+  const { t } = useI18n();
 
   return (
       <div className="app-container" style={{ display: 'flex', minHeight: '85vh', alignItems: 'center', justifyContent: 'center' }}>
@@ -16,9 +18,9 @@ export default function WelcomeScreen() {
             <Brain className="w-7 h-7 text-white" />
           </div>
           
-          <h2 style={{ fontSize: '1.75rem', fontWeight: '950', color: '#fff', marginBottom: '8px' }}>Welcome to Portfolio Sidekick</h2>
+          <h2 style={{ fontSize: '1.75rem', fontWeight: '950', color: '#fff', marginBottom: '8px' }}>{t('welcome.title')}</h2>
           <p style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.6', marginBottom: '32px' }}>
-            Create your local, private profile to begin tracking portfolios, predicting stock movements, and evolving indicator weights. <strong>Connecting a live Robinhood account is 100% optional!</strong> You can use this app purely as an offline tracker and simulator. All data remains strictly secure and isolated on this machine.
+            {t('welcome.subtitle')}
           </p>
 
           <form onSubmit={(e) => {
@@ -28,11 +30,11 @@ export default function WelcomeScreen() {
             }
           }} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div className="input-group" style={{ textAlign: 'left' }}>
-              <label className="input-label" style={{ textAlign: 'center', display: 'block', marginBottom: '8px' }}>Enter Profile Name</label>
+              <label className="input-label" style={{ textAlign: 'center', display: 'block', marginBottom: '8px' }}>{t('welcome.profileLabel')}</label>
               <input
                 type="text"
                 required
-                placeholder="e.g. Main Portfolio or Swing Trading"
+                placeholder={t('welcome.profilePlaceholder')}
                 value={s.newProfileName}
                 onChange={(e) => s.setNewProfileName(e.target.value)}
                 className="form-input-text"
@@ -42,7 +44,7 @@ export default function WelcomeScreen() {
 
             <button type="submit" className="btn-base btn-primary" style={{ padding: '14px', width: '100%', justifyContent: 'center', fontSize: '12px', borderRadius: '12px' }}>
               <Plus className="w-4 h-4" />
-              Create Local Profile
+              {t('welcome.createButton')}
             </button>
 
 

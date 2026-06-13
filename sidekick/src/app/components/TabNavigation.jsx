@@ -5,9 +5,11 @@
  */
 import { TrendingUp, LayoutDashboard, Sliders, Brain, Target, Eye, Settings, Newspaper, Landmark } from 'lucide-react';
 import { useShell } from '../context/SidekickContext';
+import { useI18n } from '../../i18n';
 
 export default function TabNavigation() {
   const s = useShell();
+  const { t } = useI18n();
 
   return (
       <div className="tab-navigation-wrapper">
@@ -17,63 +19,63 @@ export default function TabNavigation() {
             className={`tab-nav-btn ${s.activeTab === "dashboard" ? 'tab-nav-btn-active' : ''}`}
           >
             <LayoutDashboard style={{ width: 14, height: 14 }} />
-            Overview
+            {t('tabs.overview')}
           </button>
           <button
             onClick={() => s.setActiveTab("coach")}
             className={`tab-nav-btn ${s.activeTab === "coach" ? 'tab-nav-btn-active' : ''}`}
           >
             <TrendingUp style={{ width: 14, height: 14 }} />
-            Coach Chart
+            {t('tabs.coach')}
           </button>
           <button
             onClick={() => s.setActiveTab("oracle")}
             className={`tab-nav-btn ${s.activeTab === "oracle" ? 'tab-nav-btn-active' : ''}`}
           >
             <Brain style={{ width: 14, height: 14 }} />
-            Oracle
+            {t('tabs.oracle')}
           </button>
           <button
             onClick={() => s.setActiveTab("strategy")}
             className={`tab-nav-btn ${s.activeTab === "strategy" ? 'tab-nav-btn-active' : ''}`}
           >
             <Sliders style={{ width: 14, height: 14 }} />
-            Strategy
+            {t('tabs.strategy')}
           </button>
           <button
             onClick={() => s.setActiveTab("strength")}
             className={`tab-nav-btn ${s.activeTab === "strength" ? 'tab-nav-btn-active' : ''}`}
           >
             <Target style={{ width: 14, height: 14 }} />
-            Strength
+            {t('tabs.strength')}
           </button>
           <button
             onClick={() => s.setActiveTab("shadow")}
             className={`tab-nav-btn ${s.activeTab === "shadow" ? 'tab-nav-btn-active' : ''}`}
           >
             <Eye style={{ width: 14, height: 14 }} />
-            Shadow Coach
+            {t('tabs.shadow')}
           </button>
           <button
             onClick={() => s.setActiveTab("news")}
             className={`tab-nav-btn ${s.activeTab === "news" ? 'tab-nav-btn-active' : ''}`}
           >
             <Newspaper style={{ width: 14, height: 14 }} />
-            News
+            {t('tabs.news')}
           </button>
           <button
             onClick={() => s.setActiveTab("insider")}
             className={`tab-nav-btn ${s.activeTab === "insider" ? 'tab-nav-btn-active' : ''}`}
           >
             <Landmark style={{ width: 14, height: 14 }} />
-            Insider
+            {t('tabs.insider')}
           </button>
           <button
             onClick={() => s.setActiveTab("settings")}
             className={`tab-nav-btn ${s.activeTab === "settings" ? 'tab-nav-btn-active' : ''}`}
           >
             <Settings style={{ width: 14, height: 14 }} />
-            Settings
+            {t('tabs.settings')}
           </button>
         </div>
       </div>

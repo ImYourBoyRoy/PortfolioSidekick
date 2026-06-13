@@ -12,47 +12,91 @@ function pickPositive(...values) {
   return null;
 }
 
+/** Pick the highest valid equity field — Robinhood may leave portfolio_equity stale while extended_hours updates live. */
+export function pickBestNetEquity(record, fields) {
+  if (!record) return null;
+  let best = null;
+  for (const field of fields) {
+    const n = parseFloat(record[field]);
+    if (Number.isFinite(n) && n >= 0 && (best == null || n > best)) best = n;
+  }
+  return best;
+}
+
+const ACCOUNT_EQUITY_FIELDS = [
+  'portfolio_equity',
+  'extended_hours_portfolio_equity',
+  'last_core_portfolio_equity',
+  'equity',
+  'extended_hours_equity',
+];
+
+const PORTFOLIO_EQUITY_FIELDS = [
+  'equity',
+  'extended_hours_equity',
+  'last_core_equity',
+  'adjusted_equity',
+];
+
+function round2(n) {
+  return Math.round(Number(n) * 100) / 100;
+}
+
+function parseMoney(value) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Best net equity across /accounts/ and every /portfolios/ snapshot.
+ * Never let a lower portfolio-direct value override a higher account extended-hours field.
+ */
+export function resolveRobinhoodNetEquity(acct, portfolioSnapshots = []) {
+  const candidates = [];
+
+  const accountBest = extractReportedNetEquity(acct);
+  if (accountBest != null) candidates.push({ value: accountBest, source: 'accounts' });
+
+  for (const row of portfolioSnapshots) {
+    const pfBest = extractReportedNetEquityFromPortfolio(row?.portfolio);
+    if (pfBest != null) candidates.push({ value: pfBest, source: row.source || 'portfolio' });
+  }
+
+  // Crypto can be reported separately from stock portfolio_equity on the same account.
+  const crypto = parseMoney(acct?.crypto_portfolio_equity);
+  const brokerageCore = pickPositive(
+    parseMoney(acct?.portfolio_equity),
+    parseMoney(acct?.extended_hours_portfolio_equity),
+    parseMoney(acct?.last_core_portfolio_equity),
+  );
+  if (crypto != null && crypto > 0 && brokerageCore != null) {
+    candidates.push({ value: round2(brokerageCore + crypto), source: 'accounts+crypto' });
+  }
+
+  if (!candidates.length) return { equity: null, source: 'none' };
+  const winner = candidates.reduce((best, row) => (row.value > best.value ? row : best), candidates[0]);
+  return { equity: winner.value, source: winner.source };
+}
+
 /** Pick the investing account Robinhood users typically see in the app header. */
 export function selectPrimaryRobinhoodAccount(results) {
   if (!Array.isArray(results) || results.length === 0) return null;
   const active = results.filter((acct) => acct?.permanently_deactivated !== true && acct?.deactivated !== true);
   const pool = active.length > 0 ? active : results;
   return pool.reduce((best, acct) => {
-    const eq = pickPositive(
-      acct.portfolio_equity,
-      acct.extended_hours_portfolio_equity,
-      acct.equity,
-    ) || 0;
-    const bestEq = pickPositive(
-      best?.portfolio_equity,
-      best?.extended_hours_portfolio_equity,
-      best?.equity,
-    ) || 0;
+    const eq = pickBestNetEquity(acct, ACCOUNT_EQUITY_FIELDS) || 0;
+    const bestEq = pickBestNetEquity(best, ACCOUNT_EQUITY_FIELDS) || 0;
     return eq >= bestEq ? acct : best;
   }, pool[0]);
 }
 
 export function extractReportedNetEquity(acct) {
-  if (!acct) return null;
-  return pickPositive(
-    acct.portfolio_equity,
-    acct.extended_hours_portfolio_equity,
-    acct.last_core_portfolio_equity,
-    acct.equity,
-    acct.extended_hours_equity,
-  );
+  return pickBestNetEquity(acct, ACCOUNT_EQUITY_FIELDS);
 }
 
 /** Margin accounts often omit equity on /accounts/ — it lives on /portfolios/. */
 export function extractReportedNetEquityFromPortfolio(portfolio) {
-  if (!portfolio) return null;
-  return pickPositive(
-    portfolio.equity,
-    portfolio.extended_hours_equity,
-    portfolio.last_core_equity,
-    portfolio.adjusted_equity,
-    portfolio.market_value,
-  );
+  return pickBestNetEquity(portfolio, PORTFOLIO_EQUITY_FIELDS);
 }
 
 export function selectPrimaryPortfolio(results, preferredUrl = null) {
@@ -94,8 +138,7 @@ export function buildRobinhoodCashBreakdown(acct, portfolio = null) {
   const margin = acct?.margin_balances || {};
   const cash = extractPortfolioCash(acct);
   const marketValue = pickPositive(portfolio?.market_value, portfolio?.extended_hours_market_value) || 0;
-  const equity = extractReportedNetEquityFromPortfolio(portfolio)
-    || extractReportedNetEquity(acct)
+  const equity = resolveRobinhoodNetEquity(acct, portfolio ? [{ portfolio, source: 'portfolio' }] : []).equity
     || 0;
   return {
     cash,

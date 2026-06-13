@@ -64,10 +64,14 @@ function parseYahooHistoricalSeries(data) {
   return formatted;
 }
 
-export const fetchPublicHistoricalPrices = async (ticker, span = 'year', options = {}) => {
-  const allowSynthetic = options.allowSynthetic === true;
-  const formattedTicker = ticker.toUpperCase().trim();
-  const range = span === 'year' ? '1y' : (span === 'month' ? '1mo' : '5d');
+const HISTORY_RANGE_BY_SPAN = {
+  year: '1y',
+  month: '1mo',
+  week: '5d',
+  day: '5d',
+};
+
+async function fetchYahooHistoryRange(formattedTicker, range) {
   const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
   for (const host of hosts) {
     try {
@@ -77,8 +81,24 @@ export const fetchPublicHistoricalPrices = async (ticker, span = 'year', options
       if (formatted.length === 0) throw new Error('Empty history returned.');
       return formatted;
     } catch (err) {
-      console.warn(`[Robinhood] Yahoo history failed for ${formattedTicker} via ${host}: ${err.message}`);
+      console.warn(`[Robinhood] Yahoo history failed for ${formattedTicker} (${range}) via ${host}: ${err.message}`);
     }
+  }
+  return [];
+}
+
+export const fetchPublicHistoricalPrices = async (ticker, span = 'year', options = {}) => {
+  const allowSynthetic = options.allowSynthetic === true;
+  const minBars = Number.isFinite(options.minBars) ? options.minBars : 1;
+  const formattedTicker = ticker.toUpperCase().trim();
+  const primaryRange = HISTORY_RANGE_BY_SPAN[span] || HISTORY_RANGE_BY_SPAN.year;
+  const rangesToTry = span === 'year'
+    ? ['1y', '1mo', '5d']
+    : [primaryRange];
+
+  for (const range of rangesToTry) {
+    const formatted = await fetchYahooHistoryRange(formattedTicker, range);
+    if (formatted.length >= minBars) return formatted;
   }
   if (!allowSynthetic) {
     console.warn(`[Robinhood] Yahoo history exhausted for ${formattedTicker}. No synthetic fallback (live integrity mode).`);

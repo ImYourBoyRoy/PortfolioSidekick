@@ -39,12 +39,11 @@ import {
   accountNumberFromRecord,
   buildRobinhoodCashBreakdown,
   extractPortfolioCash,
-  extractReportedNetEquity,
-  extractReportedNetEquityFromPortfolio,
   selectPrimaryPortfolio,
   selectPrimaryRobinhoodAccount,
 } from './robinhoodAccount.js';
 import { extractRobinhoodQuotePrice, parseRobinhoodBatchQuotes } from './quotePrice';
+import { fetchRobinhoodCryptoHoldings, probeRobinhoodOptionPositions } from './robinhoodCrypto.js';
 
 const VAULT_FILENAME = 'robinhood_vault.json';
 
@@ -1009,7 +1008,7 @@ export async function fetchRobinhoodPositionMarks(profileId, hiddenTickers = new
 }
 
 /** Batch quote fetch — one Robinhood request for many symbols (rate-limit friendly). */
-export async function fetchRobinhoodBatchQuotes(profileId, symbols) {
+export async function fetchRobinhoodBatchQuotes(profileId, symbols, quoteOptions = {}) {
   const unique = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))];
   if (unique.length === 0) return {};
 
@@ -1032,13 +1031,13 @@ export async function fetchRobinhoodBatchQuotes(profileId, symbols) {
       if (!data || resultCount === 0) {
         await authLog(`batch quotes empty chunk=${chunk.join(',')} dataKeys=${data ? Object.keys(data).join(',') : 'null'}`);
       }
-      let parsed = parseRobinhoodBatchQuotes(data, chunk);
+      let parsed = parseRobinhoodBatchQuotes(data, chunk, quoteOptions);
 
       if (Object.keys(parsed).length === 0 && Array.isArray(data?.results)) {
         for (let j = 0; j < data.results.length && j < chunk.length; j += 1) {
           const item = data.results[j];
           if (!item || typeof item === 'string') continue;
-          const price = extractRobinhoodQuotePrice(item);
+          const price = extractRobinhoodQuotePrice(item, quoteOptions);
           if (price != null) parsed[chunk[j]] = price;
         }
       }
@@ -1073,11 +1072,11 @@ export async function fetchRobinhoodBatchQuotes(profileId, symbols) {
 /**
  * Robinhood live marks — batch first, then per-symbol /quotes/{symbol}/ (sync-proven path).
  */
-export async function fetchRobinhoodLiveQuotes(profileId, symbols) {
+export async function fetchRobinhoodLiveQuotes(profileId, symbols, quoteOptions = {}) {
   const unique = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))];
   if (unique.length === 0) return {};
 
-  const batch = await fetchRobinhoodBatchQuotes(profileId, unique);
+  const batch = await fetchRobinhoodBatchQuotes(profileId, unique, quoteOptions);
   const prices = { ...(batch || {}) };
   const missing = unique.filter((sym) => prices[sym] == null);
   if (missing.length === 0) return prices;
@@ -1109,106 +1108,110 @@ export async function fetchRobinhoodLiveQuotes(profileId, symbols) {
   return prices;
 }
 
-/** Robinhood-reported account equity (matches mobile app net equity when linked). */
-export async function fetchRobinhoodAccountSummary(profileId) {
+/** Full Robinhood account context for header equity + crypto/options sections. */
+export async function fetchRobinhoodAccountContext(profileId) {
   const { session, authenticated } = await resolveActiveRobinhoodSession(profileId);
   if (!session || !authenticated) return null;
 
-  const urls = await buildRhUrls();
   try {
-    const data = await requestGet(urls.accounts, authHeader(session));
-    const acct = selectPrimaryRobinhoodAccount(data?.results);
-    if (!acct) {
-      await authLog('account summary empty results');
-      return null;
-    }
-    const cash = extractPortfolioCash(acct);
-    let reported = extractReportedNetEquity(acct) || 0;
-    let equitySource = 'accounts';
-    let portfolioSnapshot = null;
-    const auth = authHeader(session);
-    const accountNumber = accountNumberFromRecord(acct);
-
-    if (accountNumber) {
-      try {
-        portfolioSnapshot = await requestGet(urls.portfolioByAccount(accountNumber), auth);
-        const fromDirect = extractReportedNetEquityFromPortfolio(portfolioSnapshot);
-        if (fromDirect != null && fromDirect > 0) {
-          reported = fromDirect;
-          equitySource = 'portfolio-direct';
-        }
-      } catch (err) {
-        await authLog(`direct portfolio fetch failed acct=${accountNumber}: ${err?.message || err}`);
-      }
-    }
-
-    if (!(reported > 0) && acct.portfolio) {
-      try {
-        portfolioSnapshot = await requestGet(acct.portfolio, auth);
-        const fromLinked = extractReportedNetEquityFromPortfolio(portfolioSnapshot);
-        if (fromLinked != null && fromLinked > 0) {
-          reported = fromLinked;
-          equitySource = 'portfolio-linked';
-        }
-      } catch (err) {
-        await authLog(`linked portfolio fetch failed: ${err?.message || err}`);
-      }
-    }
-
-    if (!(reported > 0)) {
-      try {
-        const pfList = await requestGet(urls.portfolios, auth);
-        portfolioSnapshot = selectPrimaryPortfolio(pfList?.results, acct.portfolio) || portfolioSnapshot;
-        const fromList = extractReportedNetEquityFromPortfolio(portfolioSnapshot);
-        if (fromList != null && fromList > 0) {
-          reported = fromList;
-          equitySource = 'portfolios-list';
-        }
-      } catch (err) {
-        await authLog(`portfolios list fetch failed: ${err?.message || err}`);
-      }
-    }
-
-    let pendingDividendTotal = 0;
-    try {
-      const dividends = await requestGet(urls.dividends, auth);
-      for (const row of (dividends?.results || [])) {
-        const state = String(row?.state || '').toLowerCase();
-        if (state && state !== 'pending' && state !== 'confirmed') continue;
-        const amount = parseFloat(row?.amount || row?.cash_amount || '0');
-        if (Number.isFinite(amount) && amount > 0) pendingDividendTotal += amount;
-      }
-      pendingDividendTotal = Math.round(pendingDividendTotal * 100) / 100;
-    } catch (err) {
-      await authLog(`dividends fetch skipped: ${err?.message || err}`);
-    }
-
-    const cashBreakdown = buildRobinhoodCashBreakdown(acct, portfolioSnapshot);
-    if (pendingDividendTotal > 0) cashBreakdown.pending_dividends = pendingDividendTotal;
-
-    await authLog(
-      `account equity profile=${profileId} source=${equitySource} accounts=${Array.isArray(data?.results) ? data.results.length : 0} `
-      + `acct_portfolio_equity=${acct.portfolio_equity} pf_equity=${portfolioSnapshot?.equity} `
-      + `pf_market_value=${portfolioSnapshot?.market_value} picked=${reported} cash=${cash} `
-      + `pending_div=${pendingDividendTotal}`,
-    );
-    return {
-      reported_equity: reported,
-      cash,
-      equity_source: equitySource,
-      cash_breakdown: cashBreakdown,
-      pending_dividends: pendingDividendTotal,
-      portfolio_equity: parseFloat(acct.portfolio_equity) || parseFloat(portfolioSnapshot?.equity) || 0,
-      portfolio_market_value: parseFloat(portfolioSnapshot?.market_value) || 0,
-      extended_hours_portfolio_equity: parseFloat(acct.extended_hours_portfolio_equity)
-        || parseFloat(portfolioSnapshot?.extended_hours_equity) || 0,
-      last_core_portfolio_equity: parseFloat(acct.last_core_portfolio_equity)
-        || parseFloat(portfolioSnapshot?.last_core_equity) || 0,
-      account_count: Array.isArray(data?.results) ? data.results.length : 0,
-      account_number: accountNumber,
-    };
-  } catch (err) {
-    await authLog(`account summary failed: ${err?.message || err}`);
+  const urls = await buildRhUrls();
+  const auth = authHeader(session);
+  const data = await requestGet(urls.accounts, auth);
+  const acct = selectPrimaryRobinhoodAccount(data?.results);
+  if (!acct) {
+    await authLog('account context empty results');
     return null;
   }
+
+  const accountNumber = accountNumberFromRecord(acct);
+  let portfolioSnapshot = null;
+  let portfolioList = [];
+
+  if (accountNumber) {
+    try {
+      portfolioSnapshot = await requestGet(urls.portfolioByAccount(accountNumber), auth);
+    } catch (err) {
+      await authLog(`direct portfolio fetch failed acct=${accountNumber}: ${err?.message || err}`);
+    }
+  }
+  if (!portfolioSnapshot && acct.portfolio) {
+    try {
+      portfolioSnapshot = await requestGet(acct.portfolio, auth);
+    } catch (err) {
+      await authLog(`linked portfolio fetch failed: ${err?.message || err}`);
+    }
+  }
+  try {
+    const pfList = await requestGet(urls.portfolios, auth);
+    portfolioList = pfList?.results || [];
+    if (!portfolioSnapshot) {
+      portfolioSnapshot = selectPrimaryPortfolio(portfolioList, acct.portfolio);
+    }
+  } catch (err) {
+    await authLog(`portfolios list fetch failed: ${err?.message || err}`);
+  }
+
+  let pendingDividendTotal = 0;
+  try {
+    const dividends = await requestGet(urls.dividends, auth);
+    for (const row of (dividends?.results || [])) {
+      const state = String(row?.state || '').toLowerCase();
+      if (state && state !== 'pending' && state !== 'confirmed') continue;
+      const amount = parseFloat(row?.amount || row?.cash_amount || '0');
+      if (Number.isFinite(amount) && amount > 0) pendingDividendTotal += amount;
+    }
+    pendingDividendTotal = Math.round(pendingDividendTotal * 100) / 100;
+  } catch (err) {
+    await authLog(`dividends fetch skipped: ${err?.message || err}`);
+  }
+
+  const margin = acct?.margin_balances || {};
+  const cash = extractPortfolioCash(acct);
+  const cashBreakdown = buildRobinhoodCashBreakdown(acct, portfolioSnapshot);
+  if (pendingDividendTotal > 0) cashBreakdown.pending_dividends = pendingDividendTotal;
+
+  const crypto = await fetchRobinhoodCryptoHoldings(session, { requestGet, authHeader, urls });
+  const options = await probeRobinhoodOptionPositions(session, { requestGet, authHeader, urls });
+
+  return {
+    session,
+    account: acct,
+    portfolio: portfolioSnapshot,
+    portfolioList,
+    account_count: Array.isArray(data?.results) ? data.results.length : 0,
+    account_number: accountNumber,
+    cash,
+    cash_breakdown: cashBreakdown,
+    pending_dividends: pendingDividendTotal,
+    cash_held_for_orders: parseFloat(acct?.cash_held_for_orders || margin?.cash_held_for_orders || '0') || 0,
+    cash_held_for_options_collateral: parseFloat(margin?.cash_held_for_options_collateral || '0') || 0,
+    crypto,
+    options,
+  };
+  } catch (err) {
+    await authLog(`account context failed: ${err?.message || err}`);
+    return null;
+  }
+}
+
+/** @deprecated Use fetchRobinhoodAccountContext + resolveAccountHeaderEquity in liveQuotes. */
+export async function fetchRobinhoodAccountSummary(profileId) {
+  const ctx = await fetchRobinhoodAccountContext(profileId);
+  if (!ctx) return null;
+  return {
+    reported_equity: 0,
+    cash: ctx.cash,
+    equity_source: 'context-only',
+    cash_breakdown: ctx.cash_breakdown,
+    pending_dividends: ctx.pending_dividends,
+    portfolio_equity: parseFloat(ctx.account?.portfolio_equity) || parseFloat(ctx.portfolio?.equity) || 0,
+    portfolio_market_value: parseFloat(ctx.portfolio?.market_value) || 0,
+    extended_hours_portfolio_equity: parseFloat(ctx.account?.extended_hours_portfolio_equity)
+      || parseFloat(ctx.portfolio?.extended_hours_equity) || 0,
+    last_core_portfolio_equity: parseFloat(ctx.account?.last_core_portfolio_equity)
+      || parseFloat(ctx.portfolio?.last_core_equity) || 0,
+    account_count: ctx.account_count,
+    account_number: ctx.account_number,
+    context: ctx,
+  };
 }

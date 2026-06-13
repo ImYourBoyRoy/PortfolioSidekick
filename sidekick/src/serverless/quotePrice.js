@@ -4,9 +4,14 @@
  * Created by: Roy Dawson IV
  */
 
-const RH_PRICE_FIELDS = [
-  'last_trade_price',
+const RH_PRICE_FIELDS_EXTENDED = [
   'last_extended_hours_trade_price',
+  'extended_hours_mark_price',
+  'adjusted_extended_hours_mark_price',
+];
+
+const RH_PRICE_FIELDS_REGULAR = [
+  'last_trade_price',
   'mark_price',
   'adjusted_mark_price',
   'bid_price',
@@ -20,18 +25,32 @@ function pickPositiveNumber(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/** Extract best available live price from a Robinhood quote object. */
-export function extractRobinhoodQuotePrice(quote) {
+function pickFromFields(quote, fields) {
   if (!quote) return null;
-  for (const field of RH_PRICE_FIELDS) {
+  for (const field of fields) {
     const price = pickPositiveNumber(quote[field]);
     if (price != null) return price;
   }
   return null;
 }
 
+/** Extract best available live price from a Robinhood quote object. */
+export function extractRobinhoodQuotePrice(quote, { preferExtendedHours = false } = {}) {
+  if (!quote) return null;
+  if (preferExtendedHours) {
+    const ext = pickFromFields(quote, RH_PRICE_FIELDS_EXTENDED);
+    if (ext != null) return ext;
+  }
+  const regular = pickFromFields(quote, RH_PRICE_FIELDS_REGULAR);
+  if (regular != null) return regular;
+  if (!preferExtendedHours) {
+    return pickFromFields(quote, RH_PRICE_FIELDS_EXTENDED);
+  }
+  return null;
+}
+
 /** Parse batch quote API payload — handles `results[]`, order-aligned rows, or a single quote. */
-export function parseRobinhoodBatchQuotes(data, symbolsOrder = []) {
+export function parseRobinhoodBatchQuotes(data, symbolsOrder = [], options = {}) {
   const prices = {};
   const items = Array.isArray(data?.results)
     ? data.results
@@ -40,7 +59,7 @@ export function parseRobinhoodBatchQuotes(data, symbolsOrder = []) {
     const q = items[i];
     if (!q || typeof q === 'string') continue;
     const symbol = q.symbol || symbolsOrder[i];
-    const price = extractRobinhoodQuotePrice(q);
+    const price = extractRobinhoodQuotePrice(q, options);
     if (symbol && price != null) prices[String(symbol).toUpperCase()] = price;
   }
   return prices;

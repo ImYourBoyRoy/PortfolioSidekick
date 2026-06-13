@@ -5,7 +5,6 @@
 import { useState } from 'react';
 import { Calendar, RefreshCw, History, Newspaper, ExternalLink, Zap, ChevronDown, ChevronRight, TrendingUp, TrendingDown } from 'lucide-react';
 import { useMarket, usePortfolio } from '../context/SidekickContext';
-import InvestorBriefPanel from '../components/InvestorBriefPanel';
 
 const NEWS_SECTIONS = [
   { key: 'today', label: 'Today', icon: Zap },
@@ -31,8 +30,6 @@ export default function NewsTab() {
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <InvestorBriefPanel compact />
-
       <div className="glass-card" style={{ padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>

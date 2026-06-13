@@ -6,12 +6,21 @@
 import { TrendingUp, TrendingDown, LayoutDashboard, RefreshCw, Plus, Info, Sliders, Sparkles, Clipboard, Brain, MousePointerClick, ChevronDown, ChevronUp } from 'lucide-react';
 import { useSidekick } from '../context/SidekickContext';
 import { formatAdvisorAction, formatAdvisorScore, formatQuoteStatusLabel, hasAdvisorScore, isNonQuotableHolding, normalizeAdvisorForUi } from '../utils/holdingDisplay';
-import InvestorBriefPanel from '../components/InvestorBriefPanel';
+import AccountSummaryDeck from '../components/AccountSummaryDeck';
 
 export default function DashboardTab() {
   const s = useSidekick();
   const holdingRow = s.holdings.find((h) => h.ticker.toUpperCase() === s.selectedTicker.toUpperCase());
+  const watchRow = s.watchlist.find((w) => w.ticker.toUpperCase() === s.selectedTicker.toUpperCase());
   const apiAdvisor = normalizeAdvisorForUi(s.advisorData);
+  const watchAdvisor = watchRow?.score != null
+    ? {
+      advisor_action: watchRow.recommendation,
+      advisor_score: watchRow.score,
+      advisor_unavailable: false,
+      price_stale: !(watchRow.current_price > 0),
+    }
+    : null;
   const selectedAdvisor = apiAdvisor
     ? {
       advisor_action: apiAdvisor.action,
@@ -19,7 +28,10 @@ export default function DashboardTab() {
       advisor_unavailable: false,
       price_stale: false,
     }
-    : holdingRow;
+    : (holdingRow || watchAdvisor);
+  const advisorStatusMessage = s.advisorData?.insufficient_data
+    ? (s.advisorData.message || 'Insufficient price history for advisor scoring.')
+    : (watchRow?.advisor_message || null);
 
   const isRobinhoodLinked = s.hasCachedRobinhoodSession
     || Boolean(s.activeProfile?.robinhood_username);
@@ -165,12 +177,10 @@ export default function DashboardTab() {
             </div>
           ) : (
             <>
-              <InvestorBriefPanel compact={s.holdings.length > 6} />
-
               {/* Main Account Metrics Summary Row */}
               <section className="metrics-deck">
                 <div className="glass-card metric-card" data-tooltip={s.summary.equity_source === 'robinhood'
-                  ? 'Net equity pulled from your linked Robinhood account (portfolio_equity) — matches the Robinhood app header.'
+                  ? 'Robinhood account-level net equity (priority field from /accounts/ or /portfolios/). Not a manual stock-quote sum.'
                   : 'Combined value of tracked stock positions plus cash. Link Robinhood for the exact app-reported net equity.'}>
                   <span className="metric-label">Account Net Equity</span>
                   <div>
@@ -179,7 +189,13 @@ export default function DashboardTab() {
                     </h2>
                     {!s.isSandbox && s.summary.equity_source === 'robinhood' && (
                       <p style={{ margin: '6px 0 0', fontSize: '9px', color: 'var(--text-muted)', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                        Robinhood-reported net equity
+                        Robinhood account-level equity
+                        {s.summary.header_equity_session && (
+                          <span style={{ display: 'block', marginTop: 4, color: '#94a3b8', textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}>
+                            Using {s.summary.header_equity_session === 'extended' ? 'extended-hours' : 'regular-hours'}
+                            {s.summary.header_equity_field ? ` · ${s.summary.header_equity_field}` : ''}
+                          </span>
+                        )}
                         {s.summary.rh_cash_breakdown && (
                           <span style={{ display: 'block', marginTop: 4, color: '#94a3b8', textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}>
                             Cash {s.formatCurrency(s.summary.rh_cash_breakdown.cash || 0)}
@@ -269,6 +285,13 @@ export default function DashboardTab() {
                 </div>
               </section>
 
+              <AccountSummaryDeck
+                summary={s.summary}
+                formatCurrency={s.formatCurrency}
+                isSandbox={s.isSandbox}
+                debugMode={s.debugMode}
+              />
+
               {/* Main Portfolio Grid: Left Holdings, Right Selected Quick Snapshot */}
               <div className="dashboard-grid">
                 {/* Holdings list */}
@@ -277,9 +300,9 @@ export default function DashboardTab() {
                     <div>
                       <h3 className="holdings-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <LayoutDashboard className="w-4 h-4 text-violet-400" />
-                        Current Portfolio Holdings
+                        Stocks / ETFs
                       </h3>
-                      <p className="holdings-subtitle">Active assets loaded from Robinhood or Manual SQLite. Click a ticker row to analyze.</p>
+                      <p className="holdings-subtitle">Synced Robinhood stock and ETF positions — not total account value.</p>
                     </div>
                   </div>
 
@@ -446,7 +469,9 @@ export default function DashboardTab() {
                   ) : (
                     <div className="glass-card" style={{ padding: '24px', textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 12 }}>
                       <span>
-                        {isNonQuotableHolding(holdingRow)
+                        {advisorStatusMessage
+                          ? advisorStatusMessage
+                          : isNonQuotableHolding(holdingRow)
                           ? 'This warrant/special symbol has no public quote feed and cannot be traded. Hide it from the dashboard if you do not want to track it here.'
                           : (holdingRow?.price_stale
                             ? 'Live quote required before advisor analysis can run for this position.'
@@ -585,7 +610,7 @@ export default function DashboardTab() {
                             </span>
                           </td>
                           <td style={{ textAlign: 'center', color: '#fff', fontSize: '11px', fontWeight: '800' }}>
-                            {w.score}%
+                            {w.score != null ? `${w.score}%` : '—'}
                           </td>
                           <td style={{ fontSize: '11px', fontWeight: '700', color: w.timing?.includes('Oversold') || w.timing?.includes('Bounce') || w.timing?.includes('Momentum') ? 'var(--color-buy)' : 'var(--text-secondary)' }}>
                             {w.timing} {w.notes ? <span style={{ color: 'var(--text-muted)', fontWeight: 'normal', fontStyle: 'italic', marginLeft: '6px' }}>— {w.notes}</span> : ''}
