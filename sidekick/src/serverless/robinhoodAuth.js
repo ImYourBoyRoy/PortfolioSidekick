@@ -1170,7 +1170,12 @@ export async function fetchRobinhoodAccountContext(profileId) {
   const cashBreakdown = buildRobinhoodCashBreakdown(acct, portfolioSnapshot);
   if (pendingDividendTotal > 0) cashBreakdown.pending_dividends = pendingDividendTotal;
 
-  const crypto = await fetchRobinhoodCryptoHoldings(session, { requestGet, authHeader, urls });
+  const crypto = await fetchRobinhoodCryptoHoldings(session, {
+    requestGet,
+    authHeader,
+    urls,
+    accountCryptoEquity: acct?.crypto_portfolio_equity,
+  });
   const options = await probeRobinhoodOptionPositions(session, { requestGet, authHeader, urls });
 
   return {

@@ -9,11 +9,14 @@
 import {
   isMoney,
   moneyAdd,
+  moneyAbs,
   moneyFormat,
   moneyFromString,
   moneySub,
   MONEY_NULL,
 } from './money.js';
+
+const UNIFIED_TIERS = new Set(['unified-extended', 'unified-regular']);
 
 const UNIFIED_EXTENDED_FIELDS = [
   'total_extended_hours_equity',
@@ -123,6 +126,59 @@ function buildManualTotal(manualBreakdown = {}) {
   return moneyAdd(...parts);
 }
 
+function pickCryptoAddon(account, manualBreakdown = {}) {
+  if (isMoney(manualBreakdown.cryptoEquity)) return manualBreakdown.cryptoEquity;
+  return moneyFromString(account?.crypto_portfolio_equity);
+}
+
+/**
+ * Brokerage-only account fields often omit crypto; pick the candidate that best matches manual totals.
+ */
+export function augmentSelectedEquityWithCrypto(selected, account, manualBreakdown = {}) {
+  if (!selected || UNIFIED_TIERS.has(selected.tier)) return selected;
+
+  const cryptoAddon = pickCryptoAddon(account, manualBreakdown);
+  if (!isMoney(cryptoAddon)) return selected;
+
+  const candidates = [selected];
+  candidates.push({
+    ...selected,
+    value: moneyAdd(selected.value, cryptoAddon),
+    sourceField: `${selected.sourceField}+crypto_portfolio_equity`,
+    tier: `${selected.tier}+crypto`,
+  });
+
+  const coreEquity = moneyFromString(account?.portfolio_equity)
+    || moneyFromString(account?.last_core_portfolio_equity);
+  if (isMoney(coreEquity)) {
+    candidates.push({
+      ...selected,
+      value: moneyAdd(coreEquity, cryptoAddon),
+      source: 'accounts',
+      sourceField: 'portfolio_equity+crypto_portfolio_equity',
+      tier: 'accounts+crypto',
+      session: selected.session,
+    });
+  }
+
+  const manualTotal = buildManualTotal(manualBreakdown);
+  if (isMoney(manualTotal) && manualBreakdown.cryptoLoaded) {
+    return candidates.reduce((best, row) => {
+      const bestDelta = moneyAbs(moneySub(best.value, manualTotal));
+      const rowDelta = moneyAbs(moneySub(row.value, manualTotal));
+      return rowDelta.cents < bestDelta.cents ? row : best;
+    }, candidates[0]);
+  }
+
+  if (isMoney(moneyFromString(account?.crypto_portfolio_equity))) {
+    return candidates.reduce((best, row) => (
+      row.value.cents > best.value.cents ? row : best
+    ), candidates[0]);
+  }
+
+  return selected;
+}
+
 /**
  * @param {object} input
  * @param {object|null} input.account
@@ -153,6 +209,10 @@ export function resolveAccountHeaderEquity(input = {}) {
       }
     }
     if (selected) break;
+  }
+
+  if (selected) {
+    selected = augmentSelectedEquityWithCrypto(selected, account, input.manualBreakdown);
   }
 
   const manualTotal = buildManualTotal(input.manualBreakdown);

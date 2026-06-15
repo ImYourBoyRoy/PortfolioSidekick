@@ -278,7 +278,7 @@ async function refreshPortfolioPricesInner(profileId, options = {}) {
       rhCashBreakdown = accountContext.cash_breakdown || null;
       pendingDividends = accountContext.pending_dividends || 0;
       cryptoHoldings = accountContext.crypto?.holdings || [];
-      cryptoLoadWarning = accountContext.crypto?.warning || null;
+      cryptoLoadWarning = accountContext.crypto?.warning || accountContext.crypto?.error || null;
       preferExtendedHours = Boolean(
         accountContext.account?.extended_hours_portfolio_equity
         || accountContext.portfolio?.extended_hours_equity,
@@ -408,7 +408,8 @@ async function refreshPortfolioPricesInner(profileId, options = {}) {
 
   const manualBreakdown = {
     stockEquity: moneyFromNumber(rhAlignedPositions),
-    cryptoEquity: accountContext?.crypto?.totalEquity || moneyFromString(accountContext?.account?.crypto_portfolio_equity),
+    cryptoEquity: accountContext?.crypto?.totalEquity
+      || moneyFromString(accountContext?.account?.crypto_portfolio_equity),
     optionEquity: accountContext?.options?.equity || null,
     cash: moneyFromNumber(cashBalance),
     cashHeldForOrders: moneyFromNumber(accountContext?.cash_held_for_orders),

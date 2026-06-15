@@ -112,3 +112,10 @@ export async function fetchPublicQuote(ticker) {
   }
   return null;
 }
+
+/** Yahoo chart quote for Robinhood crypto asset codes (BTC → BTC-USD). */
+export async function fetchPublicCryptoQuote(assetCode) {
+  const code = String(assetCode || '').toUpperCase().trim();
+  if (!code) return null;
+  return fetchPublicQuote(`${code}-USD`);
+}

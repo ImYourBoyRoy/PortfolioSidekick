@@ -62,6 +62,7 @@ export default function AccountSummaryDeck({ summary, formatCurrency, isSandbox,
                     <th>Asset</th>
                     <th style={{ textAlign: 'right' }}>Quantity</th>
                     <th style={{ textAlign: 'right' }}>Price</th>
+                    <th style={{ textAlign: 'right' }}>Invested</th>
                     <th style={{ textAlign: 'right' }}>Equity</th>
                     {debugMode && <th>Source</th>}
                   </tr>
@@ -72,6 +73,7 @@ export default function AccountSummaryDeck({ summary, formatCurrency, isSandbox,
                       <td className="ticker-td">{row.currencyCode}</td>
                       <td className="numeric-td">{row.quantity}</td>
                       <td className="numeric-td">{row.markPrice != null ? formatCurrency(row.markPrice) : '—'}</td>
+                      <td className="numeric-td">{row.investedAmount != null ? formatCurrency(row.investedAmount) : (row.costBasis != null ? formatCurrency(row.costBasis) : '—')}</td>
                       <td className="numeric-td">{row.equity != null ? formatCurrency(row.equity) : '—'}</td>
                       {debugMode && <td style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{row.priceSource || row.source}</td>}
                     </tr>

@@ -155,6 +155,8 @@ export async function buildRhUrls() {
     optionPositions: `${base}/options/positions/?nonzero=true`,
     nummusHoldings: `${nummus}/holdings/`,
     nummusAccounts: `${nummus}/accounts/`,
+    cryptoCurrencyPairs: `${nummus}/currency_pairs/`,
+    forexQuoteById: (id) => `${base}/marketdata/forex/quotes/${id}/`,
     forexQuotes: (ids) => `${base}/marketdata/forex/quotes/?ids=${ids.join(',')}`,
   };
 }

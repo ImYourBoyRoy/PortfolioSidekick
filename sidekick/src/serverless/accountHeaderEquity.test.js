@@ -28,6 +28,7 @@ describe('resolveAccountHeaderEquity', () => {
     const account = {
       portfolio_equity: '43900.42',
       extended_hours_portfolio_equity: '44492.78',
+      crypto_portfolio_equity: '592.36',
     };
     const resolved = resolveAccountHeaderEquity({
       account,
@@ -43,6 +44,26 @@ describe('resolveAccountHeaderEquity', () => {
     expect(resolved.session).toBe('extended');
     expect(resolved.reconciliation.differenceBetweenSelectedAndManual).toBe('0.00');
     expect(resolved.reconciliation.manualCryptoEquity).toBe('592.36');
+  });
+
+  it('adds crypto_portfolio_equity when brokerage extended-hours field omits crypto', () => {
+    const account = {
+      portfolio_equity: '44800.00',
+      extended_hours_portfolio_equity: '45339.78',
+      crypto_portfolio_equity: '540.32',
+    };
+    const resolved = resolveAccountHeaderEquity({
+      account,
+      marketSession: 'extended',
+      manualBreakdown: {
+        stockEquity: moneyFromString('45339.78'),
+        cryptoEquity: moneyFromString('540.32'),
+        cash: moneyFromNumber(0),
+        cryptoLoaded: true,
+      },
+    });
+    expect(moneyFormat(resolved.value)).toBe('45880.10');
+    expect(resolved.sourceField).toBe('extended_hours_portfolio_equity+crypto_portfolio_equity');
   });
 
   it('prefers extended-hours over regular portfolio equity', () => {
