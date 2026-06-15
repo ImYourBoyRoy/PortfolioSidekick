@@ -11,7 +11,6 @@ export default defineConfig([
     'ios',
     'src-tauri/target',
     'src-tauri/gen',
-    'src-tauri/patches',
   ]),
   {
     files: ['**/*.{js,jsx}'],

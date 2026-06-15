@@ -1,6 +1,6 @@
 [package]
 name = "portfolio-sidekick"
-version = "1.7.37"
+version = "1.7.38"
 description = "Portfolio Sidekick — secure local Robinhood portfolio toolkit"
 authors = ["Roy Dawson IV"]
 license = "MIT"
@@ -30,10 +30,3 @@ tauri-plugin-log = ">=2"
 tauri-plugin-fs = ">=2"
 tauri-plugin-http = ">=2"
 tauri-utils = ">=2"
-
-# time 0.3.48+ conflicts with blanket `From` impls in tauri-utils/cookie (time-rs/time#783).
-# Patch upstream fixes until crates.io releases land (tauri-apps/tauri#15525, rwf2/cookie-rs#254).
-[patch.crates-io]
-cookie = { git = "https://github.com/rwf2/cookie-rs", rev = "33a6c47bfa3749d6638b90e6ced5743e02fb9db1" }
-tauri-utils = { path = "patches/tauri-utils" }
-tauri = { path = "patches/tauri" }
