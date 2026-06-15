@@ -73,7 +73,7 @@ export default function SidekickShell() {
         <UpdateBanner />
         <TabNavigation />
 
-        <div className="tab-content-shell">
+        <div className={`tab-content-shell${(s.syncing || s.portfolioBootstrapping) ? ' is-syncing' : ''}`}>
           <TabErrorBoundary tabId={s.activeTab} key={s.activeTab}>
             <Suspense fallback={<TabLoadingFallback />}>
               <ActiveTab />

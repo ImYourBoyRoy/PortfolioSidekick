@@ -67,6 +67,16 @@ describe('normalizeCryptoHolding', () => {
     expect(row.investedAmount).toBe('2625.50');
     expect(row.equity).toBe('3000.00');
   });
+
+  it('uses stablecoin $1 peg when forex quote is missing', () => {
+    const row = normalizeCryptoHolding(
+      { quantity: '1', currency: { code: 'USDC' } },
+      null,
+    );
+    expect(row.markPrice).toBe('1.00');
+    expect(row.equity).toBe('1.00');
+    expect(row.priceSource).toBe('stablecoin_peg');
+  });
 });
 
 describe('sumCryptoEquity', () => {
@@ -94,6 +104,10 @@ describe('loadCryptoCurrencyPairIndex', () => {
     expect(index).toEqual({
       byCode: { BTC: 'pair-1', ETH: 'pair-2' },
       bySymbol: { 'BTC-USD': 'pair-1', 'ETH-USD': 'pair-2' },
+      pairs: [
+        { id: 'pair-1', asset_currency: { code: 'BTC' }, symbol: 'BTC-USD' },
+        { id: 'pair-2', asset_currency: { code: 'ETH' }, symbol: 'ETH-USD' },
+      ],
     });
   });
 });

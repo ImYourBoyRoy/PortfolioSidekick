@@ -47,6 +47,16 @@ function parseMoney(value) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+/** Extended-hours brokerage field often already embeds crypto — avoid double-counting. */
+export function cryptoLikelyIncludedInBrokerage(acct) {
+  const portfolio = parseMoney(acct?.portfolio_equity);
+  const extended = parseMoney(acct?.extended_hours_portfolio_equity);
+  const crypto = parseMoney(acct?.crypto_portfolio_equity);
+  if (crypto == null || crypto <= 0 || portfolio == null || extended == null) return false;
+  const gap = extended - portfolio;
+  return Math.abs(gap - crypto) <= 10;
+}
+
 /**
  * Best net equity across /accounts/ and every /portfolios/ snapshot.
  * Never let a lower portfolio-direct value override a higher account extended-hours field.
@@ -64,12 +74,8 @@ export function resolveRobinhoodNetEquity(acct, portfolioSnapshots = []) {
 
   // Crypto can be reported separately from stock portfolio_equity on the same account.
   const crypto = parseMoney(acct?.crypto_portfolio_equity);
-  const brokerageCore = pickPositive(
-    parseMoney(acct?.portfolio_equity),
-    parseMoney(acct?.extended_hours_portfolio_equity),
-    parseMoney(acct?.last_core_portfolio_equity),
-  );
-  if (crypto != null && crypto > 0 && brokerageCore != null) {
+  const brokerageCore = pickBestNetEquity(acct, ACCOUNT_EQUITY_FIELDS);
+  if (crypto != null && crypto > 0 && brokerageCore != null && !cryptoLikelyIncludedInBrokerage(acct)) {
     candidates.push({ value: round2(brokerageCore + crypto), source: 'accounts+crypto' });
   }
 

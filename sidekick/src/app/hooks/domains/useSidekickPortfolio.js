@@ -21,7 +21,7 @@ export function useSidekickPortfolio(shell, profilesDomain, bridgeApi) {
 
   const [pulsePreset, setPulsePreset] = useState(() => {
     const settings = localDb.getSettings();
-    return settings.pulsePreset && PULSE_PRESETS[settings.pulsePreset] ? settings.pulsePreset : 'balanced';
+    return settings.pulsePreset && PULSE_PRESETS[settings.pulsePreset] ? settings.pulsePreset : 'live';
   });
   const pulseIntervalMs = getPulseIntervalMs({ pulsePreset });
   const persistPulsePreset = useCallback((preset) => {
@@ -724,6 +724,15 @@ export function useSidekickPortfolio(shell, profilesDomain, bridgeApi) {
     }, pulseIntervalMs);
     return () => clearInterval(interval);
   }, [activeProfile, isSandbox, pulseIntervalMs, fetchPortfolio]);
+
+  useEffect(() => {
+    if (!activeProfile || isSandbox) return undefined;
+    const onVisible = () => {
+      if (!document.hidden) void fetchPortfolio({ pulse: true });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [activeProfile, isSandbox, fetchPortfolio]);
 
   useEffect(() => {
     if (!activeProfile) return undefined;

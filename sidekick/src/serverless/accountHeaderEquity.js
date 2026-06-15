@@ -11,10 +11,12 @@ import {
   moneyAdd,
   moneyAbs,
   moneyFormat,
+  moneyFromNumber,
   moneyFromString,
   moneySub,
   MONEY_NULL,
 } from './money.js';
+import { pickBestNetEquity, resolveRobinhoodNetEquity } from './robinhoodAccount.js';
 
 const UNIFIED_TIERS = new Set(['unified-extended', 'unified-regular']);
 
@@ -141,12 +143,31 @@ export function augmentSelectedEquityWithCrypto(selected, account, manualBreakdo
   if (!isMoney(cryptoAddon)) return selected;
 
   const candidates = [selected];
+
   candidates.push({
     ...selected,
     value: moneyAdd(selected.value, cryptoAddon),
     sourceField: `${selected.sourceField}+crypto_portfolio_equity`,
     tier: `${selected.tier}+crypto`,
   });
+
+  const brokerageBest = moneyFromNumber(pickBestNetEquity(account, [
+    'extended_hours_portfolio_equity',
+    'portfolio_equity',
+    'last_core_portfolio_equity',
+    'equity',
+    'extended_hours_equity',
+  ]) ?? NaN);
+  if (isMoney(brokerageBest)) {
+    candidates.push({
+      ...selected,
+      value: moneyAdd(brokerageBest, cryptoAddon),
+      source: 'accounts',
+      sourceField: 'brokerage_best+crypto_portfolio_equity',
+      tier: 'accounts+brokerage_crypto',
+      session: selected.session,
+    });
+  }
 
   const coreEquity = moneyFromString(account?.portfolio_equity)
     || moneyFromString(account?.last_core_portfolio_equity);
@@ -213,6 +234,25 @@ export function resolveAccountHeaderEquity(input = {}) {
 
   if (selected) {
     selected = augmentSelectedEquityWithCrypto(selected, account, input.manualBreakdown);
+    const rhNet = resolveRobinhoodNetEquity(
+      account,
+      (Array.isArray(input.portfolioList) ? input.portfolioList : []).map((portfolio) => ({
+        portfolio,
+        source: 'portfolios',
+      })),
+    );
+    if (rhNet.equity != null) {
+      const rhNetValue = moneyFromNumber(rhNet.equity);
+      if (isMoney(rhNetValue) && (!selected || rhNetValue.cents > selected.value.cents)) {
+        selected = {
+          value: rhNetValue,
+          source: rhNet.source,
+          sourceField: 'resolveRobinhoodNetEquity',
+          session: selected?.session || 'regular',
+          tier: 'rh-net-equity',
+        };
+      }
+    }
   }
 
   const manualTotal = buildManualTotal(input.manualBreakdown);

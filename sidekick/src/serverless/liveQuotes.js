@@ -37,8 +37,8 @@ export const RH_REQUESTS_PER_MINUTE = 50;
 
 export const PULSE_PRESETS = {
   relaxed: { label: 'Relaxed', sec: 60, hint: 'Safest — ~1 refresh/min' },
-  balanced: { label: 'Balanced', sec: 30, hint: 'Default — typical app cadence' },
-  live: { label: 'Active', sec: 15, hint: 'Fresher dashboard quotes' },
+  balanced: { label: 'Balanced', sec: 30, hint: 'Steady dashboard refresh' },
+  live: { label: 'Active', sec: 15, hint: 'Default — fresher equity and quotes' },
   turbo: { label: 'Turbo', sec: 10, hint: 'Fastest — use with fewer holdings' },
 };
 
@@ -51,7 +51,7 @@ export function getPulseIntervalMs(settings = {}) {
   if (Number.isFinite(custom) && custom >= 10 && custom <= 120) {
     return custom * 1000;
   }
-  return PULSE_PRESETS.balanced.sec * 1000;
+  return PULSE_PRESETS.live.sec * 1000;
 }
 
 function pruneRequestLog() {

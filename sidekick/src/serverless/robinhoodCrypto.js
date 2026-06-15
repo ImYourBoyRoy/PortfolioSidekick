@@ -19,6 +19,12 @@ import {
 const CRYPTO_LOAD_WARNING =
   'Crypto holdings could not be loaded. Account header may not reconcile with Robinhood.';
 
+const STABLECOIN_CODES = new Set(['USDC', 'USDT', 'DAI', 'PYUSD', 'USD']);
+
+function isStablecoinCode(code) {
+  return STABLECOIN_CODES.has(String(code || '').toUpperCase());
+}
+
 function isResourceUrl(value) {
   return typeof value === 'string' && value.startsWith('http');
 }
@@ -145,9 +151,11 @@ async function resolveCostBasis(holding, requestGet, auth) {
 export async function loadCryptoCurrencyPairIndex(requestGet, auth, urls) {
   const byCode = {};
   const bySymbol = {};
+  const pairs = [];
   try {
-    const pairs = await fetchPaginatedResults(urls.cryptoCurrencyPairs, requestGet, auth);
-    for (const pair of pairs) {
+    const rows = await fetchPaginatedResults(urls.cryptoCurrencyPairs, requestGet, auth);
+    for (const pair of rows) {
+      pairs.push(pair);
       const code = String(
         pair?.asset_currency?.code
         || pair?.symbol?.split?.('-')?.[0]
@@ -160,17 +168,30 @@ export async function loadCryptoCurrencyPairIndex(requestGet, auth, urls) {
   } catch (err) {
     console.warn('[RobinhoodCrypto] currency_pairs fetch failed:', err?.message || err);
   }
-  return { byCode, bySymbol };
+  return { byCode, bySymbol, pairs };
+}
+
+function scanPairIdByCode(code, pairIndex = {}) {
+  const normalized = String(code || '').toUpperCase();
+  if (!normalized) return null;
+  const direct = pairIndex.byCode?.[normalized]
+    || pairIndex.bySymbol?.[`${normalized}-USD`]
+    || null;
+  if (direct) return direct;
+  for (const pair of (pairIndex.pairs || [])) {
+    const pairCode = String(pair?.asset_currency?.code || '').toUpperCase();
+    if (pairCode === normalized && pair?.id) return pair.id;
+  }
+  return null;
 }
 
 export function resolveCurrencyPairId(holding, pairIndex = {}) {
-  const byCode = pairIndex.byCode || pairIndex;
-  const bySymbol = pairIndex.bySymbol || {};
   const code = resolveCryptoAssetCode(holding);
   const symbol = code ? `${code}-USD` : '';
   return holding?.currency_pair_id
-    || (symbol ? bySymbol[symbol] : null)
-    || (code ? byCode[code] : null)
+    || (symbol ? pairIndex.bySymbol?.[symbol] : null)
+    || (code ? pairIndex.byCode?.[code] : null)
+    || scanPairIdByCode(code, pairIndex)
     || holding?.currency?.currency_pair_id
     || null;
 }
@@ -187,6 +208,11 @@ export function normalizeCryptoHolding(holding, quote = null, costBasis = MONEY_
   const priced = pickCryptoPrice(quote);
   let price = priced.price;
   let priceSource = priced.source;
+
+  if (!isMoney(price) && code && isStablecoinCode(code)) {
+    price = moneyFromNumber(1);
+    priceSource = 'stablecoin_peg';
+  }
 
   if (!isMoney(price) && fallbackPrice != null && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
     price = moneyFromNumber(fallbackPrice);
@@ -241,6 +267,14 @@ async function fetchForexQuote(pairId, { requestGet, auth, urls }) {
   }
 }
 
+function normalizeForexQuoteRows(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.results)) return payload.results;
+  if (payload.id && (payload.mark_price || payload.bid_price || payload.ask_price)) return [payload];
+  return [];
+}
+
 async function fetchForexQuoteBatch(pairIds, { requestGet, auth, urls }) {
   const quoteById = {};
   if (!pairIds.length) return quoteById;
@@ -250,7 +284,7 @@ async function fetchForexQuoteBatch(pairIds, { requestGet, auth, urls }) {
     const chunk = pairIds.slice(i, i + chunkSize);
     try {
       const quotes = await requestGet(urls.forexQuotes(chunk), auth);
-      for (const q of (quotes?.results || [])) {
+      for (const q of normalizeForexQuoteRows(quotes)) {
         if (q?.id) quoteById[q.id] = q;
       }
     } catch (err) {
@@ -261,7 +295,9 @@ async function fetchForexQuoteBatch(pairIds, { requestGet, auth, urls }) {
   for (const pairId of pairIds) {
     if (!quoteById[pairId]) {
       const single = await fetchForexQuote(pairId, { requestGet, auth, urls });
-      if (single?.id) quoteById[single.id] = single;
+      const rows = normalizeForexQuoteRows(single);
+      if (rows[0]?.id) quoteById[rows[0].id] = rows[0];
+      else if (single?.id) quoteById[single.id] = single;
       else if (single) quoteById[pairId] = single;
     }
   }
@@ -281,7 +317,7 @@ async function resolveQuoteForHolding(holding, pairIndex, quoteById, { requestGe
   const code = resolveCryptoAssetCode(holding);
   if (!code) return null;
 
-  const symbolPairId = pairIndex.bySymbol?.[`${code}-USD`] || pairIndex.byCode?.[code];
+  const symbolPairId = scanPairIdByCode(code, pairIndex);
   if (symbolPairId && quoteById[symbolPairId]) return quoteById[symbolPairId];
   if (symbolPairId) {
     const single = await fetchForexQuote(symbolPairId, { requestGet, auth, urls });
@@ -289,6 +325,57 @@ async function resolveQuoteForHolding(holding, pairIndex, quoteById, { requestGe
   }
 
   return null;
+}
+
+function imputeMissingCryptoEquity(holdings, accountCryptoEquity) {
+  const accountTotal = moneyFromString(accountCryptoEquity);
+  if (!isMoney(accountTotal)) return holdings;
+
+  let knownCents = 0n;
+  const missing = [];
+  for (const row of holdings) {
+    const equity = moneyFromString(row.equity);
+    if (isMoney(equity) && equity.cents > 0n) {
+      knownCents += equity.cents;
+      continue;
+    }
+    missing.push(row);
+  }
+  if (!missing.length) return holdings;
+
+  const remainder = accountTotal.cents - knownCents;
+  if (remainder <= 0n) return holdings;
+
+  let weightTotal = 0n;
+  const weights = missing.map((row) => {
+    const invested = moneyFromString(row.investedAmount ?? row.costBasis);
+    const qty = parseFloat(row.quantity || '0');
+    const weight = isMoney(invested) && invested.cents > 0n
+      ? invested.cents
+      : (Number.isFinite(qty) && qty > 0 ? BigInt(Math.max(1, Math.round(qty * 100))) : 1n);
+    weightTotal += weight;
+    return weight;
+  });
+
+  return holdings.map((row) => {
+    const idx = missing.indexOf(row);
+    if (idx < 0) return row;
+    const share = weightTotal > 0n
+      ? (remainder * weights[idx]) / weightTotal
+      : remainder / BigInt(missing.length);
+    const equity = moneyFormat({ cents: share });
+    const qty = parseFloat(row.quantity || '0');
+    const impliedPrice = Number.isFinite(qty) && qty > 0
+      ? moneyFormat(moneyFromProduct(String(qty), equity))
+      : null;
+    return {
+      ...row,
+      equity,
+      markPrice: row.markPrice != null ? row.markPrice : impliedPrice,
+      priceSource: row.priceSource || 'account_imputed',
+      source: row.source || 'account_imputed',
+    };
+  });
 }
 
 function reconcileCryptoTotal(holdings, accountCryptoEquity) {
@@ -355,21 +442,23 @@ export async function fetchRobinhoodCryptoHoldings(session, {
     holdings.push(normalizeCryptoHolding(row, quote, costBasis, fallbackPrice));
   }
 
-  const totalEquity = reconcileCryptoTotal(holdings, accountCryptoEquity);
-  const missingEquity = holdings.some((row) => row.equity == null);
+  const pricedHoldings = imputeMissingCryptoEquity(holdings, accountCryptoEquity);
+  const totalEquity = reconcileCryptoTotal(pricedHoldings, accountCryptoEquity);
+  const missingEquity = pricedHoldings.some((row) => row.equity == null || moneyFromString(row.equity)?.cents === 0n);
   const usedAccountTotal = isMoney(totalEquity)
     && isMoney(moneyFromString(accountCryptoEquity))
     && sumCryptoEquity(holdings).cents < moneyFromString(accountCryptoEquity).cents;
+  const imputedRows = pricedHoldings.some((row) => row.priceSource === 'account_imputed');
 
   let warning = null;
-  if (missingEquity && holdings.length > 0) {
-    warning = usedAccountTotal
-      ? 'Per-asset crypto marks unavailable — using Robinhood account crypto total.'
+  if (missingEquity && pricedHoldings.length > 0) {
+    warning = usedAccountTotal || imputedRows
+      ? 'Some crypto marks estimated from Robinhood account totals.'
       : 'Some crypto positions are missing live marks — totals may be incomplete.';
   }
 
   return {
-    holdings,
+    holdings: pricedHoldings,
     loaded: true,
     totalEquity,
     warning,
