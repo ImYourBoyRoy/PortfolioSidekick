@@ -16,7 +16,7 @@ jobs:
     name: Lint, build, toolchain
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
@@ -41,7 +41,7 @@ jobs:
     name: Rust compile check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Linux Tauri dependencies
         run: |
